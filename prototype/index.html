@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小说动态漫改编工作台 — 低保真原型</title>
+  <style>
+    :root {
+      --paper: #f5f0e7;
+      --ink: #211f1a;
+      --muted: #746f65;
+      --line: #d8d0c2;
+      --panel: #fffdf8;
+      --accent: #dc593c;
+      --accent-soft: #f8ddd5;
+      --green: #315f4b;
+      --green-soft: #dfece5;
+      --blue: #285b79;
+      --blue-soft: #dceaf1;
+      --shadow: 0 18px 50px rgba(51, 42, 27, .12);
+      font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 980px; min-height: 100vh; background: var(--paper); }
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .prototype-note {
+      position: fixed; top: 12px; right: 16px; z-index: 40;
+      padding: 7px 10px; border: 1px dashed currentColor; border-radius: 4px;
+      color: #756f64; background: rgba(255,255,255,.82); font: 11px/1.2 ui-monospace, monospace;
+    }
+
+    .app-header {
+      height: 68px; display: grid; grid-template-columns: 280px 1fr 280px; align-items: center;
+      padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(255,253,248,.94);
+      position: sticky; top: 0; z-index: 20;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: .08em; }
+    .brand-mark { width: 30px; height: 30px; display: grid; place-items: center; background: var(--ink); color: #fff; border-radius: 3px; }
+    .project-title { text-align: center; }
+    .project-title strong { display: block; font-size: 15px; }
+    .project-title small { color: var(--muted); }
+    .header-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+    .btn {
+      border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 9px 13px;
+      border-radius: 4px; font-size: 13px;
+    }
+    .btn:hover { border-color: var(--ink); }
+    .btn.primary { color: white; background: var(--ink); border-color: var(--ink); }
+    .btn.accent { color: white; background: var(--accent); border-color: var(--accent); }
+    .btn.ghost { background: transparent; }
+    .btn.small { padding: 6px 9px; font-size: 12px; }
+    .btn[disabled] { opacity: .42; cursor: not-allowed; }
+
+    .pill { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); padding: 4px 8px; border-radius: 999px; font-size: 11px; color: var(--muted); }
+    .pill.ok { border-color: #a8c6b7; background: var(--green-soft); color: var(--green); }
+    .pill.warn { border-color: #e7b3a6; background: var(--accent-soft); color: #8a3826; }
+    .kicker { font: 700 11px/1.2 ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .section-title { margin: 3px 0 12px; font-size: 18px; }
+    .muted { color: var(--muted); }
+
+    .stage-rail { display: flex; justify-content: center; align-items: center; gap: 0; }
+    .stage {
+      position: relative; display: flex; align-items: center; gap: 8px; border: 0; background: transparent;
+      padding: 10px 20px; color: var(--muted); font-size: 13px;
+    }
+    .stage + .stage::before { content: ""; width: 28px; height: 1px; background: var(--line); position: absolute; left: -14px; }
+    .stage .num { width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; font: 11px ui-monospace, monospace; }
+    .stage.done { color: var(--green); }
+    .stage.done .num { background: var(--green); border-color: var(--green); color: white; }
+    .stage.active { color: var(--ink); font-weight: 800; }
+    .stage.active .num { background: var(--accent); border-color: var(--accent); color: white; }
+
+    .source-paragraph { padding: 12px 14px; border-left: 3px solid transparent; line-height: 1.9; font-size: 14px; transition: .16s ease; }
+    .source-paragraph:hover, .source-paragraph.active { background: #fff4db; border-left-color: var(--accent); }
+    .source-paragraph small { display: block; margin-bottom: 4px; color: #9b9488; font: 10px ui-monospace, monospace; }
+
+    .script-block { position: relative; padding: 14px 16px 14px 18px; border: 1px solid var(--line); background: var(--panel); border-radius: 5px; margin-bottom: 10px; }
+    .script-block:hover, .script-block.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+    .script-block .type { color: var(--accent); font: 700 10px ui-monospace, monospace; text-transform: uppercase; }
+    .script-block p { margin: 6px 0 0; line-height: 1.7; font-size: 14px; }
+    .script-block .trace { position: absolute; top: 10px; right: 10px; font: 10px ui-monospace, monospace; color: var(--muted); }
+
+    .state-panel { border: 1px solid var(--line); background: #25231f; color: #f3eadb; padding: 14px; border-radius: 5px; font: 11px/1.65 ui-monospace, monospace; white-space: pre-wrap; }
+
+    /* Variant A — trace-first */
+    .variant-a .workspace { height: calc(100vh - 68px); display: grid; grid-template-columns: 34% 42% 24%; }
+    .variant-a .pane { min-width: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--panel); }
+    .variant-a .pane:last-child { border-right: 0; background: #eee7db; }
+    .variant-a .pane-head { position: sticky; top: 0; z-index: 5; padding: 18px 20px 13px; border-bottom: 1px solid var(--line); background: rgba(255,253,248,.96); }
+    .variant-a .pane-body { padding: 14px 20px 110px; }
+    .variant-a .inspector-card { background: var(--panel); border: 1px solid var(--line); padding: 14px; margin-bottom: 12px; border-radius: 5px; }
+    .variant-a .inspector-card h4 { margin: 0 0 9px; font-size: 13px; }
+    .variant-a .decision { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* Variant B — stage-first */
+    .variant-b { background: #ede8de; min-height: 100vh; }
+    .variant-b .app-header { grid-template-columns: 240px 1fr 240px; }
+    .variant-b .shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: calc(100vh - 68px); }
+    .variant-b .side-stages { border-right: 1px solid #bdb5a8; background: #272b29; color: #fff; padding: 26px 18px 120px; }
+    .variant-b .side-stages h2 { font-size: 20px; margin: 6px 0 24px; }
+    .variant-b .stage-card { width: 100%; text-align: left; color: #dad9d2; border: 1px solid #4d514e; background: transparent; padding: 14px; margin-bottom: 9px; border-radius: 4px; }
+    .variant-b .stage-card strong { display: block; margin-bottom: 4px; }
+    .variant-b .stage-card small { color: #9ea39f; }
+    .variant-b .stage-card.active { background: #f1d36a; color: #1d211f; border-color: #f1d36a; }
+    .variant-b .stage-card.active small { color: #5b583f; }
+    .variant-b .stage-card.done::after { content: "已确认"; float: right; color: #92d5b3; font-size: 11px; }
+    .variant-b .review { min-width: 0; padding: 24px 20px 120px; }
+    .variant-b .review-head { display: flex; align-items: end; justify-content: space-between; margin-bottom: 18px; }
+    .variant-b .review-grid { display: grid; grid-template-columns: minmax(0,1fr) 285px; gap: 14px; }
+    .variant-b .review-main { background: var(--panel); border: 1px solid #c9c1b4; box-shadow: var(--shadow); }
+    .variant-b .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .variant-b .tab { padding: 12px 16px; border: 0; border-right: 1px solid var(--line); background: #f1ede5; }
+    .variant-b .tab.active { background: var(--panel); font-weight: 800; border-bottom: 2px solid var(--accent); }
+    .variant-b .comparison { display: grid; grid-template-columns: 1fr 1fr; min-height: 580px; }
+    .variant-b .comparison > div { padding: 18px; border-right: 1px solid var(--line); }
+    .variant-b .comparison > div:last-child { border-right: 0; }
+    .variant-b .approval { display: flex; flex-direction: column; gap: 12px; }
+    .variant-b .approval-card { border: 1px solid #c9c1b4; background: #fff; padding: 16px; border-radius: 5px; }
+    .variant-b .approval-card h3 { margin: 3px 0 12px; font-size: 16px; }
+    .variant-b textarea { width: 100%; min-height: 88px; resize: vertical; border: 1px solid var(--line); padding: 10px; background: #fcfaf5; }
+
+    /* Variant C — shot-first */
+    .variant-c { background: #16181b; color: #f4f1ea; min-height: 100vh; }
+    .variant-c .app-header { background: #1e2125; border-color: #393d43; color: #fff; }
+    .variant-c .btn { background: #292d31; color: #f5f1e9; border-color: #444950; }
+    .variant-c .stage-rail .stage { color: #8f959c; }
+    .variant-c .stage-rail .stage.active { color: #fff; }
+    .variant-c .stage + .stage::before { background: #444950; }
+    .variant-c .studio { padding: 16px 18px 120px; }
+    .variant-c .timeline-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .variant-c .timeline { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 16px; }
+    .variant-c .shot-chip { min-width: 154px; text-align: left; border: 1px solid #3d4249; background: #22262a; color: #d7d9dc; padding: 11px; border-radius: 4px; }
+    .variant-c .shot-chip strong { display: block; margin: 5px 0; color: #fff; }
+    .variant-c .shot-chip.active { border-color: #ffbf58; box-shadow: inset 0 -3px #ffbf58; }
+    .variant-c .shot-chip small { color: #8e959d; }
+    .variant-c .desk { display: grid; grid-template-columns: 270px minmax(360px,1fr) 300px; min-height: 610px; border: 1px solid #3c4147; }
+    .variant-c .desk-pane { min-width: 0; overflow: auto; border-right: 1px solid #3c4147; background: #1e2226; }
+    .variant-c .desk-pane:last-child { border-right: 0; background: #25292e; }
+    .variant-c .dark-head { padding: 14px 16px; border-bottom: 1px solid #3c4147; color: #aeb4ba; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+    .variant-c .shot-row { padding: 13px 15px; border-bottom: 1px solid #33383e; color: #bfc4c9; }
+    .variant-c .shot-row.active { background: #353126; border-left: 3px solid #ffbf58; color: white; }
+    .variant-c .shot-row strong { display: block; margin-bottom: 4px; }
+    .variant-c .detail { padding: 22px; }
+    .variant-c .detail h2 { margin-top: 6px; }
+    .variant-c .field { border-top: 1px solid #363b41; padding: 13px 0; }
+    .variant-c .field label { display: block; color: #8f969d; font: 10px ui-monospace, monospace; margin-bottom: 6px; text-transform: uppercase; }
+    .variant-c .trace-pane { padding: 16px; }
+    .variant-c .trace-pane .source-paragraph { color: #c6c8c9; border-color: transparent; }
+    .variant-c .trace-pane .source-paragraph.active { color: #fff; background: #3a3121; border-color: #ffbf58; }
+    .variant-c .state-panel { background: #101214; border-color: #3c4147; }
+
+    .switcher {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100;
+      display: flex; align-items: center; gap: 5px; padding: 6px; border-radius: 999px;
+      background: #0f1113; color: white; box-shadow: 0 12px 40px rgba(0,0,0,.3); font-family: ui-monospace, monospace;
+    }
+    .switcher .mode-label { padding: 0 8px; color: #aeb4ba; font-size: 11px; }
+    .switcher button { min-width: 88px; height: 36px; padding: 0 14px; border: 1px solid #3d4248; border-radius: 999px; color: #d9dde1; background: #292d32; font-size: 12px; }
+    .switcher button:hover { border-color: var(--accent); }
+    .switcher button.active { color: #101214; background: var(--accent); border-color: var(--accent); font-weight: 800; }
+
+    .toast { position: fixed; right: 18px; bottom: 82px; z-index: 90; padding: 11px 14px; background: #151719; color: white; border-radius: 4px; box-shadow: var(--shadow); font-size: 12px; opacity: 0; transform: translateY(8px); transition: .2s ease; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div class="prototype-note">PROTOTYPE · 无后端 · 不保存</div>
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // Three retained work modes over one canonical project state.
+    const modes = {
+      trace: { legacy: 'A', label: '追溯模式', name: '原文与改编映射' },
+      review: { legacy: 'B', label: '审核模式', name: '阶段确认与建议' },
+      storyboard: { legacy: 'C', label: '分镜模式', name: '镜头设计与审核' }
+    };
+
+    const source = [
+      ['P-018', '中洲西南，大秦帝朝都城，咸阳城。深秋雨后，空气里浮着泥土与枯叶的气息。'],
+      ['P-019', '一个时辰将近，无心体内的灵气越来越稀薄，最终消散，无法留存。'],
+      ['P-020', '无心睁开眼，低声唤道：“墨老。”他知道自己必须在离开前，把人间剑令交到父亲手中。'],
+      ['P-021', '墨白从阴影里走出，接过旧书。马车已在天涯阁外等候，远处宫阙笼在雨雾中。']
+    ];
+
+    const blocks = [
+      { id: 'S4-01', type: '环境镜头', text: '远景：雨后的咸阳城笼在薄雾中。屋檐滴水，湿叶贴在青石路上。', refs: ['P-018'] },
+      { id: 'S4-02', type: '动作', text: '无心缓缓吐息，掌心最后一缕灵气散去。他睁开眼，指节轻颤。', refs: ['P-019'] },
+      { id: 'S4-03', type: '对白', text: '无心：墨老，请将此书交给父亲。', refs: ['P-020'] },
+      { id: 'S4-04', type: '动作', text: '墨白从阴影中现身，双手接过旧书。', refs: ['P-021'] },
+      { id: 'S4-05', type: '环境镜头', text: '无心登上马车，回望雨雾中的宫阙。车轮碾过湿叶，驶入长街。', refs: ['P-021'] }
+    ];
+
+    const shots = [
+      { id: '04-01', duration: 4, label: '雨后咸阳', source: 'P-018', type: '远景', mood: '清冷、压抑', visual: '雨后的咸阳城沉在薄雾中，湿叶贴着青石长街。', action: '镜头越过滴水的屋檐，缓慢下降至空寂街道。', sound: '细雨、远处马蹄与屋檐滴水。', assets: ['场景/咸阳城·雨后', '画风/武侠写实'] },
+      { id: '04-02', duration: 3, label: '灵气消散', source: 'P-019', type: '手部特写', mood: '虚弱、克制', visual: '无心掌心的一缕微光变淡，最终在指缝间消散。', action: '手指轻颤后缓慢收拢，袖口随呼吸微动。', sound: '压低环境声，突出一声短促呼吸。', assets: ['角色/无心·素白练功服', '效果/灵气微光'] },
+      { id: '04-03', duration: 5, label: '托付旧书', source: 'P-020', type: '中近景', mood: '平静、决绝', visual: '无心将旧书递向墨白，镜头从书脊缓慢抬升至两人神情。', action: '无心手指短暂停顿后松开；墨白双手接书，垂眼不语。', sound: '对白清晰，底层保留雨声；交书时衣料摩擦声轻微放大。', assets: ['角色/无心·素白练功服', '角色/墨白·主形象', '道具/旧书'] },
+      { id: '04-04', duration: 4, label: '墨白接书', source: 'P-021', type: '双人中景', mood: '肃穆', visual: '墨白立在半明半暗处，旧书横在双掌之间。', action: '墨白抬眼看向无心，欲言又止，最终郑重点头。', sound: '雨声重新浮起，衣袖摩擦，人物无对白。', assets: ['角色/墨白·主形象', '场景/天涯阁·内', '道具/旧书'] },
+      { id: '04-05', duration: 6, label: '马车离阁', source: 'P-021', type: '远景跟拍', mood: '离别、余韵', visual: '马车驶入湿润长街，无心从车窗回望雨雾中的宫阙。', action: '镜头跟随车轮前行，随后停下，让马车逐渐远去。', sound: '车轮碾过湿叶，马蹄渐远，低沉钟声收尾。', assets: ['角色/无心·素白练功服', '场景/咸阳长街·雨后', '道具/马车'] }
+    ];
+
+    const state = {
+      stage: '剧本',
+      approved: ['故事知识'],
+      selectedBlock: 'S4-03',
+      selectedSource: 'P-020',
+      selectedShot: '04-03',
+      suggestionStatus: '待审核',
+      targetMinutes: 3,
+      ratio: '9:16',
+      narrative: '对白型'
+    };
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[c]));
+    }
+
+    function header(includeStages = true, forcedStage = null) {
+      const visibleStage = forcedStage || state.stage;
+      return `<header class="app-header">
+        <div class="brand"><span class="brand-mark">卷</span><span>项目代号 · 映卷</span></div>
+        ${includeStages ? `<nav class="stage-rail">${['故事知识','剧本','设定','分镜'].map((s,i)=>`<button class="stage ${state.approved.includes(s)?'done':''} ${visibleStage===s?'active':''}" data-stage="${s}"><span class="num">${i+1}</span>${s}</button>`).join('')}</nav>` : `<div class="project-title"><strong>《人间剑令》· 第一章</strong><small>动态漫改编项目</small></div>`}
+        <div class="header-actions"><span class="pill">${state.ratio}</span><span class="pill">${state.targetMinutes}分钟</span><button class="btn small">成员 3</button></div>
+      </header>`;
+    }
+
+    function sourceMarkup(compact = false) {
+      return source.map(([id,text]) => `<div class="source-paragraph ${state.selectedSource===id?'active':''}" data-source="${id}"><small>${id}</small>${compact ? escapeHtml(text.slice(0,42))+'…' : escapeHtml(text)}</div>`).join('');
+    }
+
+    function blockMarkup() {
+      return blocks.map(b => `<article class="script-block ${state.selectedBlock===b.id?'active':''}" data-block="${b.id}" data-source="${b.refs[0]}"><span class="type">${b.type}</span><span class="trace">↗ ${b.refs.join(', ')}</span><p>${escapeHtml(b.text)}</p></article>`).join('');
+    }
+
+    function stateMarkup() { return `<div class="state-panel">${escapeHtml(JSON.stringify(state, null, 2))}</div>`; }
+
+    function variantA() {
+      return `<div class="variant-a">${header(true, '剧本')}<main class="workspace">
+        <section class="pane"><div class="pane-head"><span class="kicker">Source</span><h2 class="section-title">原文章节</h2><span class="pill ok">已解析 · 2,280字</span></div><div class="pane-body">${sourceMarkup()}</div></section>
+        <section class="pane"><div class="pane-head"><span class="kicker">Adaptation</span><h2 class="section-title">场次四 · 人间剑令</h2><span class="pill warn">剧本待确认</span></div><div class="pane-body">${blockMarkup()}</div></section>
+        <aside class="pane"><div class="pane-head"><span class="kicker">Inspector</span><h2 class="section-title">追溯与审核</h2></div><div class="pane-body">
+          <div class="inspector-card"><h4>当前映射</h4><p class="muted">S4-03 对应 P-020，转换方式：原文对白精简。</p><span class="pill ok">有直接依据</span></div>
+          <div class="inspector-card"><h4>修改建议</h4><p>保留“必须在离开前”的紧迫感，在动作中加入短暂停顿。</p><div class="decision"><button class="btn small approve">接受</button><button class="btn small reject">拒绝</button></div></div>
+          <div class="inspector-card"><h4>阶段状态</h4><p class="muted">故事知识已确认。剧本确认后才能生成正式设定。</p><button class="btn accent" id="approveStage">确认剧本</button></div>
+          ${stateMarkup()}
+        </div></aside>
+      </main></div>`;
+    }
+
+    function variantB() {
+      const stageCards = ['故事知识','剧本','设定','分镜'].map((s,i)=>`<button class="stage-card ${state.stage===s?'active':''} ${state.approved.includes(s)?'done':''}" data-stage="${s}"><strong>0${i+1} · ${s}</strong><small>${i===0?'12项事实 · 2项待确认':i===1?'4场 · 1,208字':i===2?'6角色 · 4场景 · 4道具':'预计28镜头'}</small></button>`).join('');
+      return `<div class="variant-b">${header(false)}<main class="shell">
+        <aside class="side-stages"><span class="kicker" style="color:#9ea39f">Production flow</span><h2>逐阶段审核</h2>${stageCards}<div style="margin-top:24px">${stateMarkup()}</div></aside>
+        <section class="review"><div class="review-head"><div><span class="kicker">Stage 02</span><h1 style="margin:4px 0">审核剧本</h1><p class="muted" style="margin:0">确认改编内容后，才能进入视觉设定。</p></div><span class="pill warn">1项建议待处理</span></div>
+          <div class="review-grid"><div class="review-main"><div class="tabs"><button class="tab active">原文对照</button><button class="tab">仅看剧本</button><button class="tab">改编报告</button></div><div class="comparison"><div><span class="kicker">原文</span>${sourceMarkup()}</div><div><span class="kicker">剧本正文</span>${blockMarkup()}</div></div></div>
+          <aside class="approval"><div class="approval-card"><span class="kicker">Reviewer note</span><h3>编辑的修改建议</h3><p>在无心交出旧书前增加一个停顿，强化离别感。</p><textarea aria-label="审核意见">建议可以接受，但不要增加新的对白。</textarea><div style="display:flex;gap:8px;margin-top:10px"><button class="btn approve">接受建议</button><button class="btn reject">拒绝</button></div></div>
+          <div class="approval-card"><span class="kicker">Gate</span><h3>进入设定阶段</h3><p class="muted">5/5 个剧本块有原文映射，时长预计 2分47秒。</p><button class="btn accent" style="width:100%" id="approveStage">确认剧本并解锁设定</button></div></aside></div>
+        </section></main></div>`;
+    }
+
+    function variantC() {
+      const shot = shots.find(s=>s.id===state.selectedShot) || shots[0];
+      return `<div class="variant-c">${header(true, '分镜')}<main class="studio"><div class="timeline-head"><div><span class="kicker">Episode 01 · Storyboard</span><h2 style="margin:4px 0">场次四 · 人间剑令</h2></div><div><span class="pill">总时长 22秒</span> <span class="pill warn">分镜待确认</span></div></div>
+        <div class="timeline">${shots.map(s=>`<button class="shot-chip ${state.selectedShot===s.id?'active':''}" data-shot="${s.id}"><small>${s.id} · ${s.duration}s</small><strong>${s.label}</strong><small>${s.type}</small></button>`).join('')}</div>
+        <section class="desk"><aside class="desk-pane"><div class="dark-head">镜头列表 · 5</div>${shots.map(s=>`<div class="shot-row ${state.selectedShot===s.id?'active':''}" data-shot="${s.id}"><strong>${s.id} · ${s.label}</strong><small>${s.duration}秒 · ${s.type} · ${s.source}</small></div>`).join('')}</aside>
+        <article class="desk-pane detail"><span class="kicker">${shot.id}</span><h2>${shot.label}</h2><div class="field"><label>画面</label><div>${shot.visual}</div></div><div class="field"><label>人物与动作</label><div>${shot.action}</div></div><div class="field"><label>镜头语言</label><div>${shot.type} · 缓慢推近 · ${shot.duration}秒 · ${shot.mood}</div></div><div class="field"><label>声音</label><div>${shot.sound}</div></div><div class="field"><label>资产引用</label>${shot.assets.map(a=>`<span class="pill">${a}</span>`).join(' ')}</div><div class="field"><button class="btn">提交修改建议</button> <button class="btn accent" id="approveStage">确认全部分镜</button></div></article>
+        <aside class="desk-pane trace-pane"><div class="dark-head">原文依据</div>${sourceMarkup()}<div class="dark-head" style="margin-top:15px">当前状态</div>${stateMarkup()}</aside></section>
+      </main></div>`;
+    }
+
+    function currentMode() {
+      const params = new URLSearchParams(location.search);
+      const mode = params.get('mode')?.toLowerCase();
+      if (modes[mode]) return mode;
+      const legacy = params.get('variant')?.toUpperCase();
+      return Object.keys(modes).find(key => modes[key].legacy === legacy) || 'trace';
+    }
+
+    function render() {
+      const mode = currentMode();
+      document.getElementById('root').innerHTML = mode === 'trace' ? variantA() : mode === 'review' ? variantB() : variantC();
+      document.body.insertAdjacentHTML('beforeend', `<nav class="switcher" id="switcher" aria-label="工作模式"><span class="mode-label">工作模式</span>${Object.entries(modes).map(([key,item])=>`<button class="${mode===key?'active':''}" data-mode="${key}" title="${item.name}">${item.label}</button>`).join('')}</nav>`);
+      bindInteractions();
+    }
+
+    function setMode(mode) {
+      if (!modes[mode]) return;
+      const url = new URL(location.href); url.searchParams.set('mode', mode); url.searchParams.delete('variant'); history.replaceState({}, '', url); renderClean();
+    }
+
+    function changeMode(delta) {
+      const keys = Object.keys(modes); const i = keys.indexOf(currentMode()); const next = keys[(i + delta + keys.length) % keys.length];
+      setMode(next);
+    }
+
+    function renderClean() {
+      document.getElementById('switcher')?.remove(); render();
+    }
+
+    function toast(message) {
+      const el = document.getElementById('toast'); el.textContent = message; el.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer = setTimeout(()=>el.classList.remove('show'), 1800);
+    }
+
+    function bindInteractions() {
+      document.querySelectorAll('[data-mode]').forEach(el=>el.onclick=()=>setMode(el.dataset.mode));
+      document.querySelectorAll('[data-stage]').forEach(el=>el.onclick=()=>{ state.stage=el.dataset.stage; toast(`查看阶段：${state.stage}`); renderClean(); });
+      document.querySelectorAll('[data-source]').forEach(el=>el.onclick=()=>{ state.selectedSource=el.dataset.source; const block = el.dataset.block; if(block) state.selectedBlock=block; renderClean(); });
+      document.querySelectorAll('[data-shot]').forEach(el=>el.onclick=()=>{ state.selectedShot=el.dataset.shot; const shot=shots.find(s=>s.id===state.selectedShot); state.selectedSource=shot.source; renderClean(); });
+      document.querySelectorAll('.approve').forEach(el=>el.onclick=()=>{ state.suggestionStatus='已接受'; toast('修改建议已接受'); renderClean(); });
+      document.querySelectorAll('.reject').forEach(el=>el.onclick=()=>{ state.suggestionStatus='已拒绝'; toast('修改建议已拒绝'); renderClean(); });
+      const approve = document.getElementById('approveStage'); if(approve) approve.onclick=()=>{ if(!state.approved.includes(state.stage)) state.approved.push(state.stage); toast(`${state.stage} 已确认`); renderClean(); };
+    }
+
+    document.addEventListener('keydown', e => {
+      const tag = document.activeElement?.tagName; const editing = ['INPUT','TEXTAREA','SELECT'].includes(tag) || document.activeElement?.isContentEditable;
+      if (editing) return;
+      if (e.key === 'ArrowLeft') changeMode(-1);
+      if (e.key === 'ArrowRight') changeMode(1);
+    });
+    window.addEventListener('popstate', renderClean);
+    render();
+  </script>
+</body>
+</html>
