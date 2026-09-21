@@ -28,4 +28,6 @@
 - [项目章程](./docs/PROJECT_CHARTER.md)
 - [需求草案](./docs/REQUIREMENTS.md)
 - [产品规格书](./docs/PRODUCT_SPEC.md)
+- [MVP 交付计划](./docs/plans/2026-09-21-mvp-delivery.md)
+- [本地任务清单](./.scratch/novel-adaptation-mvp/issues/README.md)
 - [待决策事项](./docs/OPEN_QUESTIONS.md)

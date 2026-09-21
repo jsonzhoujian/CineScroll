@@ -1,0 +1,5 @@
+{
+  "contractVersion": "0.1.0",
+  "project": { "id": "prj_bad_urban", "workspaceId": "ws_demo", "title": "界面状态污染", "ownerUserId": "usr_owner", "aspectRatio": "16:9", "narrativeMode": "dialogue", "dataRegion": "CN", "createdAt": "2026-09-21T00:00:00Z", "workMode": "review", "selectedShotId": "shot_bad" },
+  "source": {}, "adaptationPlan": {}, "stageResults": [], "adaptationAdditions": [], "impactLinks": [], "suggestions": [], "aiJobs": [], "exportMetadata": {}
+}

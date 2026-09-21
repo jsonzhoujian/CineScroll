@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.example.cn/novel-adaptation/ai/request.schema.json",
+  "title": "AI stage request envelope",
+  "type": "object", "additionalProperties": false,
+  "required": ["contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId", "upstreamConfirmedVersionIds", "scopeKeys", "generationParameters", "input"],
+  "properties": {
+    "contractVersion": { "const": "0.1.0" }, "jobId": { "type": "string", "minLength": 1 },
+    "stage": { "enum": ["storyKnowledge", "script", "settings", "storyboard"] }, "projectId": { "type": "string", "minLength": 1 },
+    "chapterId": { "type": "string", "minLength": 1 }, "sourceVersionId": { "type": "string", "minLength": 1 },
+    "upstreamConfirmedVersionIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "scopeKeys": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "retryOfJobId": { "type": "string", "minLength": 1 },
+    "generationParameters": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetDurationSeconds", "aspectRatio", "narrativeMode"],
+      "properties": { "targetDurationSeconds": { "enum": [60, 180, 300] }, "aspectRatio": { "enum": ["9:16", "16:9"] }, "narrativeMode": { "enum": ["narration", "dialogue"] } }
+    },
+    "input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceFragments", "confirmedUpstreamContent", "approvedAdditionIds", "lockedItemIds"],
+      "properties": {
+        "sourceFragments": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["id", "text"], "properties": { "id": { "type": "string" }, "text": { "type": "string", "minLength": 1 } } } },
+        "confirmedUpstreamContent": { "type": "array", "items": { "type": "object" } },
+        "approvedAdditionIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "lockedItemIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    }
+  }
+}

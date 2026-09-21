@@ -1,0 +1,8 @@
+{
+  "contractVersion": "0.1.0",
+  "project": { "id": "prj_bad_suspense", "workspaceId": "ws_demo", "title": "无人确认", "ownerUserId": "usr_owner", "aspectRatio": "9:16", "narrativeMode": "dialogue", "dataRegion": "CN", "createdAt": "2026-09-21T00:00:00Z" },
+  "source": { "chapterId": "chp_bads", "title": "第一章", "activeSourceVersionId": "srcv_bads", "versions": [{ "id": "srcv_bads", "ordinal": 1, "createdAt": "2026-09-21T00:00:00Z", "createdBy": "usr_owner", "characterCount": 3, "fragments": [{ "id": "frag_bads", "ordinal": 1, "startOffset": 0, "endOffset": 3, "text": "铃声响", "contentHash": "hash-bads" }] }] },
+  "adaptationPlan": { "id": "plan_bads", "targetDurationSeconds": 60, "status": "confirmed", "episodes": [{ "id": "ep_bads", "ordinal": 1, "title": "铃", "sourceFragmentIds": ["frag_bads"], "coreEventFactIds": [] }] },
+  "stageResults": [{ "stage": "storyKnowledge", "activeVersionId": "cv_bads", "confirmedVersionId": "cv_bads", "versions": [{ "id": "cv_bads", "ordinal": 1, "status": "confirmed", "parentVersionId": null, "createdAt": "2026-09-21T00:00:00Z", "createdBy": "usr_owner", "creationMethod": "ai", "items": [] }] }],
+  "adaptationAdditions": [], "impactLinks": [], "suggestions": [], "aiJobs": [], "exportMetadata": { "generatedAt": "2026-09-21T00:00:00Z", "confirmationScope": "confirmed_only", "formats": ["json"] }
+}

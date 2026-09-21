@@ -1,0 +1,8 @@
+{
+  "contractVersion": "0.1.0",
+  "project": { "id": "prj_bad_fantasy", "workspaceId": "ws_demo", "title": "无出处灵诀", "ownerUserId": "usr_owner", "aspectRatio": "9:16", "narrativeMode": "narration", "dataRegion": "CN", "createdAt": "2026-09-21T00:00:00Z" },
+  "source": { "chapterId": "chp_badf", "title": "第一章", "activeSourceVersionId": "srcv_badf", "versions": [{ "id": "srcv_badf", "ordinal": 1, "createdAt": "2026-09-21T00:00:00Z", "createdBy": "usr_owner", "characterCount": 3, "fragments": [{ "id": "frag_badf", "ordinal": 1, "startOffset": 0, "endOffset": 3, "text": "灵纹现", "contentHash": "hash-badf" }] }] },
+  "adaptationPlan": { "id": "plan_badf", "targetDurationSeconds": 60, "status": "confirmed", "episodes": [{ "id": "ep_badf", "ordinal": 1, "title": "灵纹", "sourceFragmentIds": ["frag_badf"], "coreEventFactIds": [] }] },
+  "stageResults": [{ "stage": "storyKnowledge", "activeVersionId": "cv_badf", "confirmedVersionId": null, "versions": [{ "id": "cv_badf", "ordinal": 1, "status": "candidate", "parentVersionId": null, "createdAt": "2026-09-21T00:00:00Z", "createdBy": "usr_owner", "creationMethod": "ai", "items": [{ "id": "fact_badf", "kind": "storyFact", "ordinal": 1, "label": "凭空新增", "content": {}, "provenance": [], "locked": false }] }] }],
+  "adaptationAdditions": [], "impactLinks": [], "suggestions": [], "aiJobs": [], "exportMetadata": { "generatedAt": "2026-09-21T00:00:00Z", "confirmationScope": "confirmed_only", "formats": ["json"] }
+}

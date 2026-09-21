@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.example.cn/novel-adaptation/ai/storyboard.schema.json",
+  "title": "Storyboard AI stage response",
+  "type": "object", "additionalProperties": false,
+  "required": ["contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId", "upstreamConfirmedVersionIds", "status", "items"],
+  "properties": {
+    "contractVersion": { "const": "0.1.0" }, "jobId": { "type": "string" }, "stage": { "const": "storyboard" }, "projectId": { "type": "string" },
+    "chapterId": { "type": "string" }, "sourceVersionId": { "type": "string" }, "upstreamConfirmedVersionIds": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+    "status": { "enum": ["succeeded", "partially_succeeded", "failed"] }, "items": { "type": "array", "items": { "$ref": "#/$defs/itemResult" } }
+  },
+  "$defs": {
+    "provenance": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["type", "sourceVersionId", "fragmentId", "transformation"], "properties": { "type": { "const": "source_fragment" }, "sourceVersionId": { "type": "string" }, "fragmentId": { "type": "string" }, "transformation": { "enum": ["retained", "compressed", "merged", "visualized", "actionized", "narrated", "sonified"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "additionId"], "properties": { "type": { "const": "approved_addition" }, "additionId": { "type": "string" } } }
+    ] },
+    "shot": { "type": "object", "additionalProperties": false, "required": ["id", "episodeId", "sceneId", "ordinal", "visual", "characters", "action", "speech", "durationSeconds", "shotSize", "cameraAngle", "cameraMovement", "sound", "emotion", "splitReason", "assetIds", "scriptElementIds", "provenance"], "properties": {
+      "id": { "type": "string" }, "episodeId": { "type": "string" }, "sceneId": { "type": "string" }, "ordinal": { "type": "integer", "minimum": 1 },
+      "visual": { "type": "string", "minLength": 1 }, "characters": { "type": "array", "items": { "type": "string" } }, "action": { "type": "string" }, "speech": { "type": "string" },
+      "durationSeconds": { "type": "number", "exclusiveMinimum": 0 }, "shotSize": { "enum": ["extreme_wide", "wide", "full", "medium", "close_up", "extreme_close_up"] },
+      "cameraAngle": { "enum": ["eye_level", "high", "low", "overhead", "dutch", "pov"] }, "cameraMovement": { "type": "string" }, "sound": { "type": "string" }, "emotion": { "type": "string" },
+      "splitReason": { "type": "array", "minItems": 1, "items": { "enum": ["visual_focus", "action_change", "emotion_change", "information_change"] }, "uniqueItems": true },
+      "assetIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }, "scriptElementIds": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true },
+      "provenance": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/provenance" } }
+    } },
+    "failure": { "type": "object", "additionalProperties": false, "required": ["code", "message", "retryable"], "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "retryable": { "type": "boolean" } } },
+    "itemResult": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["scopeKey", "status", "value"], "properties": { "scopeKey": { "type": "string" }, "status": { "const": "succeeded" }, "value": { "$ref": "#/$defs/shot" } } },
+      { "type": "object", "additionalProperties": false, "required": ["scopeKey", "status", "error"], "properties": { "scopeKey": { "type": "string" }, "status": { "const": "failed" }, "error": { "$ref": "#/$defs/failure" } } }
+    ] }
+  }
+}

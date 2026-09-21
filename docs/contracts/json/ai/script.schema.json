@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.example.cn/novel-adaptation/ai/script.schema.json",
+  "title": "Script AI stage response",
+  "type": "object", "additionalProperties": false,
+  "required": ["contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId", "upstreamConfirmedVersionIds", "status", "items"],
+  "properties": {
+    "contractVersion": { "const": "0.1.0" }, "jobId": { "type": "string" }, "stage": { "const": "script" }, "projectId": { "type": "string" },
+    "chapterId": { "type": "string" }, "sourceVersionId": { "type": "string" }, "upstreamConfirmedVersionIds": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "status": { "enum": ["succeeded", "partially_succeeded", "failed"] }, "items": { "type": "array", "items": { "$ref": "#/$defs/itemResult" } }
+  },
+  "$defs": {
+    "provenance": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["type", "sourceVersionId", "fragmentId", "transformation"], "properties": { "type": { "const": "source_fragment" }, "sourceVersionId": { "type": "string" }, "fragmentId": { "type": "string" }, "transformation": { "enum": ["retained", "compressed", "merged", "visualized", "actionized", "narrated", "sonified"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "additionId"], "properties": { "type": { "const": "approved_addition" }, "additionId": { "type": "string" } } }
+    ] },
+    "element": { "type": "object", "additionalProperties": false, "required": ["id", "sceneId", "elementType", "text", "ordinal", "provenance"], "properties": {
+      "id": { "type": "string" }, "sceneId": { "type": "string" }, "elementType": { "enum": ["environment", "action", "dialogue", "narration", "sound"] },
+      "speaker": { "type": "string" }, "text": { "type": "string", "minLength": 1 }, "ordinal": { "type": "integer", "minimum": 1 },
+      "provenance": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/provenance" } }
+    } },
+    "failure": { "type": "object", "additionalProperties": false, "required": ["code", "message", "retryable"], "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "retryable": { "type": "boolean" } } },
+    "itemResult": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["scopeKey", "status", "value"], "properties": { "scopeKey": { "type": "string" }, "status": { "const": "succeeded" }, "value": { "$ref": "#/$defs/element" } } },
+      { "type": "object", "additionalProperties": false, "required": ["scopeKey", "status", "error"], "properties": { "scopeKey": { "type": "string" }, "status": { "const": "failed" }, "error": { "$ref": "#/$defs/failure" } } }
+    ] }
+  }
+}
