@@ -5,6 +5,7 @@
     "prototype": "python3 -m http.server 4173 -d prototype",
     "test": "node --test",
     "test:import": "node --test packages/project-import/test/*.test.ts",
+    "test:postgres": "node --test packages/project-import/test/postgres-repository.test.ts",
     "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck"
   }
 }

@@ -32,6 +32,7 @@ Deliver the first vertical slice from authentication through project creation to
 - [x] Prevent compliance-preflight bypass during import and re-import.
 - [x] Isolate DOCX parsing in a worker and guard MIME spoofing, compression bombs, external references, and path traversal.
 - [ ] Connect the compliance port to the production moderation provider.
-- [ ] Replace the in-memory repository with PostgreSQL persistence and transactions.
+- [x] Add PostgreSQL persistence, immutable version records, indexed composite foreign keys, and RLS tenant isolation.
+- [ ] Replace aggregate hydration inside write transactions with chapter-scoped append commands so lock time does not grow with full project history.
 - [ ] Expose the application seam through authenticated API endpoints and the import UI.
 - [ ] Add phone-code and WeChat authentication adapters.
