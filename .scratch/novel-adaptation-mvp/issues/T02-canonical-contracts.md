@@ -35,4 +35,4 @@ Define one canonical project model shared by trace, review, and storyboard modes
 - Completed: 2026-09-21
 - Contract index: `docs/contracts/README.md`
 - Validation: all five Schemas pass Draft 2020-12 metaschema checks; fantasy, urban, suspense project fixtures and four AI response fixtures validate; all declared invalid fixtures fail as expected.
-- T03 input: ready from T02. T03 remains blocked until T01 is complete.
+- T03 input: ready from T02. Together with completed T01a, T03 is now unblocked.

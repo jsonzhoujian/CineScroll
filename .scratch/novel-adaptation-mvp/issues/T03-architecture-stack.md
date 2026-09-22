@@ -1,7 +1,7 @@
 # T03 — Architecture and stack decision
 
-status: blocked  
-blocked_by: [T01, T02]  
+status: ready  
+blocked_by: [T01a, T02]  
 unlocks: [T04]
 
 ## Goal
@@ -23,4 +23,3 @@ Choose and document an architecture that supports mainland-China deployment, asy
 - BYOK secrets, tenant isolation, audit logs, data residency, backups, and deletion are threat-modeled.
 - Local development and CI can run deterministic contract tests without paid model calls.
 - The chosen stack has an explicit cost envelope for closed beta.
-

@@ -30,4 +30,6 @@
 - [产品规格书](./docs/PRODUCT_SPEC.md)
 - [MVP 交付计划](./docs/plans/2026-09-21-mvp-delivery.md)
 - [本地任务清单](./.scratch/novel-adaptation-mvp/issues/README.md)
+- [行业工作流与痛点证据](./docs/research/INDUSTRY_WORKFLOW_PAIN_POINTS.md)
+- [内部探索测试与测试需求](./docs/research/INTERNAL_EXPLORATORY_TEST.md)
 - [待决策事项](./docs/OPEN_QUESTIONS.md)

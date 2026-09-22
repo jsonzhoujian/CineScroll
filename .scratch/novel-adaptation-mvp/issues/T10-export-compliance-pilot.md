@@ -1,7 +1,7 @@
 # T10 — Export, compliance, operations, and closed beta
 
 status: blocked  
-blocked_by: [T08, T09]  
+blocked_by: [T01b, T08, T09]  
 unlocks: []
 
 ## Goal
@@ -17,4 +17,3 @@ Close the MVP loop with consistent exports, operational safeguards, mobile revie
 - Free-trial, studio, and advanced-studio entitlements enforce member and credit limits without charging for ordinary editing or export.
 - Production observability covers job failures, cost, latency, settlement discrepancies, and compliance actions without logging user manuscripts.
 - A release checklist supports invitation of 5–10 studios and measures the agreed completion, reuse, and willingness-to-pay signals.
-

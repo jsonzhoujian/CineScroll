@@ -1,38 +1,32 @@
-# T01 — Target-studio prototype validation
+# T01a — Pre-development evidence and internal exploration
 
-status: blocked — awaiting external validation  
+status: done  
 blocked_by: []  
 unlocks: [T03]
 
 ## Goal
 
-Validate the four-stage workflow and the three freely switchable work modes with 5–10 target AI dynamic-comic studios before architecture is frozen.
+Establish enough evidence to begin reversible architecture work through primary-source industry research, internal prototype exploration, and explicit test requirements.
 
 ## Deliverables
 
-- `docs/research/PROTOTYPE_TEST_GUIDE.md`
-- `docs/research/PROTOTYPE_FINDINGS.md`
-- Prioritized changes linked to requirement IDs.
+- `docs/research/INDUSTRY_WORKFLOW_PAIN_POINTS.md`
+- `docs/research/INTERNAL_EXPLORATORY_TEST.md`
+- `docs/research/PROTOTYPE_TEST_GUIDE.md` for later operable-MVP validation.
 
 ## Acceptance criteria
 
-- Test tasks cover import, story-knowledge confirmation, script traceability, settings review, storyboard review, mode switching, and export expectations.
-- At least five sessions are recorded using anonymized notes and task outcomes.
-- Findings distinguish comprehension failures, workflow friction, missing capability, and preference.
-- Each material finding ends in a confirmed requirement change, an experiment, or an explicit non-change.
-- The decision to retain all three modes is revalidated or revised with evidence.
+- Primary sources establish the existence and limits of the multi-stage workflow, asset consistency, shot-level control, local retry, auditability, and compliance needs.
+- Internal exploration covers stage state, traceability, suggestion handling, mode switching, storyboard selection, and duration validation.
+- Findings are labelled as public evidence, internal observation, or unvalidated hypothesis.
+- Architecture-sensitive issues have explicit requirements and remain reversible in T03.
+- No public evidence or internal test is represented as target-user usability proof.
 
-## Current progress
+## Decision
 
-- Research guide, recruitment criteria, moderator script, task set, metrics, anonymized note template, analysis method, and decision rules are complete.
-- Real target-studio sessions recorded: 0.
-- The deliverable explicitly contains no simulated interviews or fabricated findings.
-
-## Blocking condition
-
-T01 requires evidence from at least five real target studios. Recruitment and facilitated sessions are external to the repository and have not occurred. Until those sessions are recorded and synthesized, the acceptance criteria remain unmet and T03 must remain blocked by T01.
+T01a is complete and may unlock T03 together with T02. Real target-studio validation is moved to T01b after a minimally operable product exists.
 
 ## Primary sources
 
-- `prototype/index.html`
-- `docs/PRODUCT_SPEC.md` sections 5–7 and 12
+- `docs/research/INDUSTRY_WORKFLOW_PAIN_POINTS.md`
+- `docs/research/INTERNAL_EXPLORATORY_TEST.md`

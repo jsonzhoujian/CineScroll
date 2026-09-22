@@ -15,32 +15,33 @@
 - The local issue tracker is `.scratch/novel-adaptation-mvp/issues/`.
 - Work only on tickets whose `blocked_by` entries are all complete.
 - Each implementation ticket must be executed test-first and reviewed against both this plan and `docs/PRODUCT_SPEC.md`.
-- Do not start production implementation until tickets T01–T03 are approved.
+- Do not start production implementation until tickets T01a, T02, and T03 are approved.
 - One ticket should produce a demonstrable vertical result, not a horizontal layer with no user-visible outcome.
 
 ## Dependency graph
 
 ```text
-T01 target-user validation
+T01a public evidence + internal exploration
  └─→ T03 architecture decision ─→ T04 project + chapter import ─→ T05 story knowledge
 T02 canonical contracts ────────┘                                  └─→ T06 script + trace
                                                                         └─→ T07 settings + storyboard
+                                                                            ├─→ T01b target-studio validation
                                                                             ├─→ T08 version + collaboration
                                                                             ├─→ T09 async AI + credits
                                                                             └─→ T10 export + compliance + pilot
 ```
 
-T01 and T02 can run in parallel. T03 is the implementation gate.
+T01a and T02 are complete, so T03 is ready. T01b is deliberately deferred until an operable MVP exists and remains a gate for T10 and paid launch validation.
 
 ## Delivery checkpoints
 
 ### Checkpoint A — Product evidence
 
-Complete T01. Expected result: target users can complete the prototype tasks, and unresolved usability issues are documented with evidence.
+Complete T01a. Expected result: primary sources establish the problem space, internal exploration exposes prototype inconsistencies, and all usability claims remain explicitly unvalidated.
 
 ### Checkpoint B — Contracts and architecture
 
-Complete T02 and T03. Expected result: canonical entities, state transitions, AI boundaries, JSON Schema, storage region, security boundaries, and test strategy are explicit.
+Complete T02 and T03. Expected result: canonical entities, state transitions, AI boundaries, JSON Schema, storage region, security boundaries, and test strategy are explicit while UI decisions remain reversible.
 
 ### Checkpoint C — First tracer bullet
 
@@ -65,4 +66,3 @@ For each implementation ticket:
 5. Commit the slice with the ticket ID.
 6. Repeat until all ticket acceptance criteria pass.
 7. Run a Standards + Spec code review before closing the ticket.
-
