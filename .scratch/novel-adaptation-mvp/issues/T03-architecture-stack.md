@@ -1,7 +1,7 @@
 # T03 — Architecture and stack decision
 
-status: review  
-blocked_by: [T01a, T02]  
+status: done
+blocked_by: [T01a, T02]
 unlocks: [T04]
 
 ## Goal
@@ -29,4 +29,4 @@ Repository scaffolding and automated quality-check implementation are deliberate
 
 ## Review checkpoint
 
-The design package is complete and awaiting approval of the three proposed ADRs. Once accepted, change this ticket to `done` and unlock T04.
+The three ADRs were accepted when implementation of the next phase was authorized. T04 is now unlocked.

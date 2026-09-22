@@ -9,8 +9,8 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 | T01a | Public evidence and internal exploration | done | — |
 | T01b | Operable-MVP target-studio validation | blocked | T07 |
 | T02 | Canonical domain and data contracts | done | — |
-| T03 | Architecture and stack decision | review | T01a, T02 completed; awaiting ADR approval |
-| T04 | Project creation and chapter import tracer bullet | blocked | T03 |
+| T03 | Architecture and stack decision | done | T01a, T02 completed |
+| T04 | Project creation and chapter import tracer bullet | in_progress | T03 completed |
 | T05 | Story-knowledge extraction and confirmation | blocked | T04 |
 | T06 | Script generation and source traceability | blocked | T05 |
 | T07 | Settings and storyboard workflow | blocked | T06 |

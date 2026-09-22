@@ -2,7 +2,7 @@
 
 ## 状态
 
-Proposed
+Accepted
 
 ## 背景
 
@@ -50,4 +50,3 @@ Proposed
 - API 与 Worker 之外出现明确独立扩展瓶颈。
 - 开发团队超过约 10 人且模块所有权稳定。
 - 队列吞吐或可靠性超出 BullMQ/Redis 的运行边界。
-
