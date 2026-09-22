@@ -1,6 +1,6 @@
 # T03 — Architecture and stack decision
 
-status: ready  
+status: review  
 blocked_by: [T01a, T02]  
 unlocks: [T04]
 
@@ -13,8 +13,11 @@ Choose and document an architecture that supports mainland-China deployment, asy
 - `docs/adr/0001-application-architecture.md`
 - `docs/adr/0002-ai-provider-boundary-and-byok.md`
 - `docs/adr/0003-mainland-data-and-object-storage.md`
+- `docs/architecture/SYSTEM_DESIGN.md`
 - `docs/architecture/TEST_STRATEGY.md`
-- Initial production repository scaffold and automated quality checks.
+- `docs/REQUIREMENTS_MINDMAP.md`
+
+Repository scaffolding and automated quality-check implementation are deliberately deferred to T04 because the current phase excludes code implementation.
 
 ## Acceptance criteria
 
@@ -23,3 +26,7 @@ Choose and document an architecture that supports mainland-China deployment, asy
 - BYOK secrets, tenant isolation, audit logs, data residency, backups, and deletion are threat-modeled.
 - Local development and CI can run deterministic contract tests without paid model calls.
 - The chosen stack has an explicit cost envelope for closed beta.
+
+## Review checkpoint
+
+The design package is complete and awaiting approval of the three proposed ADRs. Once accepted, change this ticket to `done` and unlock T04.
