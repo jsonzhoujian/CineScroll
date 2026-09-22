@@ -26,8 +26,12 @@ Deliver the first vertical slice from authentication through project creation to
 - [x] Re-import without overwriting history and return a paragraph-level diff.
 - [x] Return indistinguishable not-found outcomes across workspace boundaries.
 - [x] Cover rights and 20,000-character limit failures with machine-readable error codes.
-- [ ] Validate project option enums and expose chapter inspection before import.
-- [ ] Add TXT decoding and DOCX extraction adapters, malformed/unsupported outcomes, and compliance scanning.
+- [x] Validate project option enums and expose chapter inspection before import.
+- [x] Add TXT decoding and a Mammoth DOCX extraction adapter.
+- [x] Normalize unsupported, malformed, and compliance-restricted inputs into distinct recoverable outcomes.
+- [x] Prevent compliance-preflight bypass during import and re-import.
+- [x] Isolate DOCX parsing in a worker and guard MIME spoofing, compression bombs, external references, and path traversal.
+- [ ] Connect the compliance port to the production moderation provider.
 - [ ] Replace the in-memory repository with PostgreSQL persistence and transactions.
 - [ ] Expose the application seam through authenticated API endpoints and the import UI.
 - [ ] Add phone-code and WeChat authentication adapters.

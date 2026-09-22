@@ -1,5 +1,20 @@
 {
   "name": "@novel-adaptation/project-import",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "mammoth": "^1.12.3",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
+    "typescript": "^7.0.2",
+    "yazl": "^3.3.1"
+  }
 }
