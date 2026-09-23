@@ -3,7 +3,9 @@ import type { Pool, PoolClient, QueryResultRow } from "pg";
 import type {
   Actor,
   Chapter,
+  ChapterHead,
   Project,
+  ProjectAccess,
   ProjectImportRepository,
   SourceFragment,
   SourceVersion,
@@ -28,18 +30,76 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     return this.inTransaction(actor, (client) => loadProject(client, projectId, false));
   }
 
-  async transactProject<T>(
+  async findProjectAccess(actor: Actor, projectId: string): Promise<ProjectAccess | null> {
+    return this.inTransaction(actor, async (client) => {
+      const result = await client.query<MemberRow>(
+        `select user_id, role from project_members
+         where project_id = $1 and workspace_id = $2 and user_id = $3`,
+        [projectId, actor.workspaceId, actor.userId],
+      );
+      return result.rows[0] ? { role: result.rows[0].role } : null;
+    });
+  }
+
+  async findChapter(actor: Actor, projectId: string, chapterId: string): Promise<Chapter | null> {
+    return this.inTransaction(actor, async (client) => {
+      const result = await client.query<ChapterRow>(
+        "select id, title, active_source_version_id from chapters where project_id = $1 and id = $2",
+        [projectId, chapterId],
+      );
+      return result.rows[0] ? loadChapter(client, projectId, result.rows[0]) : null;
+    });
+  }
+
+  async createChapter(actor: Actor, projectId: string, chapter: Chapter): Promise<Chapter> {
+    return this.inTransaction(actor, async (client) => {
+      const project = await client.query("select id from projects where id = $1 for key share", [projectId]);
+      if (project.rowCount === 0) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
+      await insertChapter(client, projectId, chapter, new Set());
+      return structuredClone(chapter);
+    });
+  }
+
+  async appendSourceVersion(
     actor: Actor,
     projectId: string,
-    operation: (project: Project) => T,
-  ): Promise<T> {
+    chapterId: string,
+    mutation: (latestVersion: SourceVersion) => { title: string; sourceVersion: SourceVersion },
+  ): Promise<{ chapter: ChapterHead; previousVersion: SourceVersion; sourceVersion: SourceVersion }> {
     return this.inTransaction(actor, async (client) => {
-      const project = await loadProject(client, projectId, true);
-      if (!project) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
-      const before = structuredClone(project);
-      const result = operation(project);
-      await persistProjectChanges(client, before, project);
-      return result;
+      const chapterResult = await client.query<ChapterRow>(
+        `select id, title, active_source_version_id from chapters
+         where project_id = $1 and id = $2 for update`,
+        [projectId, chapterId],
+      );
+      const chapter = chapterResult.rows[0];
+      if (!chapter) throw new ProjectImportError("CHAPTER_NOT_FOUND", "章节不存在或无权访问");
+      const versionResult = await client.query<SourceVersionRow>(
+        "select * from source_versions where project_id = $1 and chapter_id = $2 and id = $3",
+        [projectId, chapterId, chapter.active_source_version_id],
+      );
+      const latestRow = versionResult.rows[0];
+      if (!latestRow) throw new ProjectImportError("CHAPTER_NOT_FOUND", "章节活动版本不存在");
+      const previousVersion = await loadSourceVersion(client, latestRow);
+      const change = mutation(structuredClone(previousVersion));
+      if (change.sourceVersion.ordinal !== previousVersion.ordinal + 1) {
+        throw new Error("Source version ordinal must increment by one");
+      }
+      const knownFragmentIds = new Set(previousVersion.fragments.map(({ id }) => id));
+      await insertSourceVersion(client, projectId, chapterId, change.sourceVersion, knownFragmentIds);
+      await client.query(
+        "update chapters set title = $1, active_source_version_id = $2 where project_id = $3 and id = $4",
+        [change.title, change.sourceVersion.id, projectId, chapterId],
+      );
+      return {
+        chapter: {
+          id: chapterId,
+          title: change.title,
+          activeSourceVersionId: change.sourceVersion.id,
+        },
+        previousVersion,
+        sourceVersion: structuredClone(change.sourceVersion),
+      };
     });
   }
 
@@ -78,39 +138,6 @@ async function insertProject(client: PoolClient, project: Project): Promise<void
     );
   }
   for (const chapter of project.chapters) await insertChapter(client, project.id, chapter, new Set());
-}
-
-async function persistProjectChanges(client: PoolClient, before: Project, after: Project): Promise<void> {
-  if (before.title !== after.title) {
-    await client.query("update projects set title = $1 where id = $2", [after.title, after.id]);
-  }
-  const previousMemberIds = new Set(before.members.map(({ userId }) => userId));
-  for (const member of after.members.filter(({ userId }) => !previousMemberIds.has(userId))) {
-    await client.query(
-      "insert into project_members (project_id, workspace_id, user_id, role) values ($1,$2,$3,$4)",
-      [after.id, after.workspaceId, member.userId, member.role],
-    );
-  }
-  const previousChapters = new Map(before.chapters.map((chapter) => [chapter.id, chapter]));
-  const knownFragmentIds = new Set(before.chapters.flatMap((chapter) =>
-    chapter.versions.flatMap((version) => version.fragments.map(({ id }) => id))));
-  for (const chapter of after.chapters) {
-    const previous = previousChapters.get(chapter.id);
-    if (!previous) {
-      await insertChapter(client, after.id, chapter, knownFragmentIds);
-      continue;
-    }
-    const previousVersionIds = new Set(previous.versions.map(({ id }) => id));
-    for (const version of chapter.versions.filter(({ id }) => !previousVersionIds.has(id))) {
-      await insertSourceVersion(client, after.id, chapter.id, version, knownFragmentIds);
-    }
-    if (previous.title !== chapter.title || previous.activeSourceVersionId !== chapter.activeSourceVersionId) {
-      await client.query(
-        "update chapters set title = $1, active_source_version_id = $2 where id = $3",
-        [chapter.title, chapter.activeSourceVersionId, chapter.id],
-      );
-    }
-  }
 }
 
 async function insertChapter(
@@ -160,10 +187,13 @@ async function insertFragment(
   knownFragmentIds: Set<string>,
 ): Promise<void> {
   if (!knownFragmentIds.has(fragment.id)) {
-    await client.query(
-      "insert into source_fragments (id, project_id, chapter_id, text_content, content_hash) values ($1,$2,$3,$4,$5)",
-      [fragment.id, projectId, chapterId, fragment.text, fragment.contentHash],
-    );
+    const existing = await client.query("select 1 from source_fragments where id = $1", [fragment.id]);
+    if (existing.rowCount === 0) {
+      await client.query(
+        "insert into source_fragments (id, project_id, chapter_id, text_content, content_hash) values ($1,$2,$3,$4,$5)",
+        [fragment.id, projectId, chapterId, fragment.text, fragment.contentHash],
+      );
+    }
     knownFragmentIds.add(fragment.id);
   }
   await client.query(
@@ -189,7 +219,8 @@ async function loadProject(client: PoolClient, projectId: string, lock: boolean)
     "select id, title, active_source_version_id from chapters where project_id = $1 order by id",
     [projectId],
   );
-  const chapters = await Promise.all(chapterRows.rows.map((chapter) => loadChapter(client, projectId, chapter)));
+  const chapters: Chapter[] = [];
+  for (const chapter of chapterRows.rows) chapters.push(await loadChapter(client, projectId, chapter));
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -210,11 +241,13 @@ async function loadChapter(client: PoolClient, projectId: string, chapter: Chapt
     `select * from source_versions where project_id = $1 and chapter_id = $2 order by ordinal`,
     [projectId, chapter.id],
   );
+  const loadedVersions: SourceVersion[] = [];
+  for (const version of versions.rows) loadedVersions.push(await loadSourceVersion(client, version));
   return {
     id: chapter.id,
     title: chapter.title,
     activeSourceVersionId: chapter.active_source_version_id,
-    versions: await Promise.all(versions.rows.map((version) => loadSourceVersion(client, version))),
+    versions: loadedVersions,
   };
 }
 

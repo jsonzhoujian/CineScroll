@@ -44,15 +44,67 @@ integrationTest("PostgreSQL 持久化版本历史、事务回滚并执行租户�
     assert.deepEqual(persisted.versions.map(({ ordinal }) => ordinal), [1]);
     assert.equal(persisted.versions[0]!.text, "第一段。\n\n第二段。");
 
-    await assert.rejects(
-      () => repository.transactProject(actor, project.id, (draft) => {
-        draft.title = "不应提交";
-        throw new Error("rollback");
-      }),
-      /rollback/,
+    const reimported = await service.reimportText(actor, project.id, imported.chapter.id, {
+      fileName: "第一章-修订.txt",
+      text: "第1章 初见（修订）\n第一段。\n\n新增段落。",
+      selectedChapterIndex: 0,
+    });
+    const persistedReimport = await createService(new PostgresProjectImportRepository(pool))
+      .getChapter(actor, project.id, imported.chapter.id);
+    assert.deepEqual(persistedReimport.versions.map(({ ordinal }) => ordinal), [1, 2]);
+    assert.equal(persistedReimport.activeSourceVersionId, reimported.sourceVersion.id);
+    assert.equal(persistedReimport.versions[0]!.text, "第一段。\n\n第二段。");
+    assert.equal(
+      persistedReimport.versions[0]!.fragments[0]!.id,
+      persistedReimport.versions[1]!.fragments[0]!.id,
     );
-    const afterRollback = await repository.findProject(actor, project.id);
-    assert.equal(afterRollback!.title, "数据库项目");
+    assert.deepEqual(reimported.diff, {
+      unchanged: ["第一段。"], removed: ["第二段。"], added: ["新增段落。"],
+    });
+
+    await assert.rejects(
+      () => repository.appendSourceVersion(actor, project.id, imported.chapter.id, (latest) => ({
+        title: " ",
+        sourceVersion: {
+          ...latest,
+          id: "srcv_rollback",
+          ordinal: latest.ordinal + 1,
+          text: `${latest.text}\n\n不应残留。`,
+          characterCount: latest.characterCount + 7,
+          fragments: [...latest.fragments, {
+            id: "frag_rollback", ordinal: latest.fragments.length + 1,
+            startOffset: latest.text.length + 2, endOffset: latest.text.length + 8,
+            text: "不应残留。", contentHash: "rollback-hash",
+          }],
+        },
+      })),
+      /check constraint/,
+    );
+    const afterRollback = await repository.findChapter(actor, project.id, imported.chapter.id);
+    assert.equal(afterRollback!.title, "第1章 初见（修订）");
+    assert.deepEqual(afterRollback!.versions.map(({ ordinal }) => ordinal), [1, 2]);
+    const rollbackRows = await adminPool.query(
+      "select (select count(*) from source_versions where id = 'srcv_rollback') as versions, (select count(*) from source_fragments where id = 'frag_rollback') as fragments",
+    );
+    assert.equal(Number(rollbackRows.rows[0].versions), 0);
+    assert.equal(Number(rollbackRows.rows[0].fragments), 0);
+
+    const concurrent = await Promise.all([
+      repository.appendSourceVersion(actor, project.id, imported.chapter.id, (latest) => ({
+        title: "并发修订 A",
+        sourceVersion: { ...latest, id: "srcv_concurrent_a", ordinal: latest.ordinal + 1 },
+      })),
+      repository.appendSourceVersion(actor, project.id, imported.chapter.id, (latest) => ({
+        title: "并发修订 B",
+        sourceVersion: { ...latest, id: "srcv_concurrent_b", ordinal: latest.ordinal + 1 },
+      })),
+    ]);
+    assert.deepEqual(concurrent.map(({ sourceVersion }) => sourceVersion.ordinal).sort(), [3, 4]);
+    for (const result of concurrent) {
+      assert.equal(result.chapter.activeSourceVersionId, result.sourceVersion.id);
+    }
+    const afterConcurrent = await repository.findChapter(actor, project.id, imported.chapter.id);
+    assert.deepEqual(afterConcurrent!.versions.map(({ ordinal }) => ordinal), [1, 2, 3, 4]);
 
     await adminPool.query(
       "insert into project_members (project_id, workspace_id, user_id, role) values ($1,$2,$3,'reviewer')",
@@ -138,6 +190,7 @@ function createService(repository: PostgresProjectImportRepository) {
     repository,
     idGenerator: (prefix) => `${prefix}_pg-${++sequence}`,
     clock: () => new Date("2026-09-22T08:00:00.000Z"),
+    complianceScanner: { async scan() { return { allowed: true }; } },
   });
 }
 

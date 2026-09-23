@@ -19,6 +19,7 @@ function createService(overrides: Record<string, unknown> = {}) {
       return (prefix: string) => `${prefix}_test-${++sequence}`;
     })(),
     clock: () => new Date("2026-09-22T00:00:00.000Z"),
+    complianceScanner: { async scan() { return { allowed: true, providerRequestId: "req_test" }; } },
     ...overrides,
   });
 }
@@ -44,6 +45,7 @@ test("负责人声明改编权后可创建项目并导入一个可追溯章节",
   assert.equal(result.sourceVersion.ordinal, 1);
   assert.equal(result.sourceVersion.characterCount, 25);
   assert.equal(result.sourceVersion.text, "中洲西南，大秦帝都郢城。\n\n丞相府后院，相霜安坐。");
+  assert.equal(result.complianceProviderRequestId, "req_test");
   assert.deepEqual(result.sourceVersion.fragments.map(({ text }) => text), ["中洲西南，大秦帝都郢城。", "丞相府后院，相霜安坐。"]);
   assert.ok(result.sourceVersion.fragments.every(({ id }) => id.startsWith("frag_")));
 });
@@ -214,16 +216,37 @@ test("预检为不支持、损坏和合规受限输入返回不同错误码", as
   );
 
   const restricted = createService({
-    complianceScanner: { async scan() { return { allowed: false, reason: "命中禁止内容规则" }; } },
+    complianceScanner: {
+      async scan() {
+        return { allowed: false, reason: "命中禁止内容规则", providerRequestId: "req_restricted" };
+      },
+    },
   });
   const restrictedProject = await restricted.createProject(actor, projectInput);
   await assert.rejects(
     () => restricted.inspectDocument(actor, restrictedProject.id, { kind: "paste", fileName: "内容.txt", text: "受限内容" }),
-    { code: "COMPLIANCE_RESTRICTED" },
+    { code: "COMPLIANCE_RESTRICTED", providerRequestId: "req_restricted" },
   );
   await assert.rejects(
     () => restricted.importText(actor, restrictedProject.id, { fileName: "绕过.txt", text: "受限内容", selectedChapterIndex: 0 }),
     { code: "COMPLIANCE_RESTRICTED" },
+  );
+});
+
+test("合规供应商故障不会泄漏内部错误并允许用户稍后重试", async () => {
+  const service = createService({
+    complianceScanner: { async scan() { throw new Error("upstream token and response"); } },
+  });
+  const project = await service.createProject(actor, validProject);
+
+  await assert.rejects(
+    () => service.importText(actor, project.id, {
+      fileName: "待检测.txt", text: "正常正文", selectedChapterIndex: 0,
+    }),
+    {
+      code: "COMPLIANCE_UNAVAILABLE",
+      message: "内容合规服务暂不可用，请稍后重试",
+    },
   );
 });
 

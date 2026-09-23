@@ -35,7 +35,13 @@ export interface DocumentTextExtractor {
 }
 
 export interface ComplianceScanner {
-  scan(text: string): Promise<{ allowed: boolean; reason?: string }>;
+  scan(text: string): Promise<ComplianceResult>;
+}
+
+export interface ComplianceResult {
+  allowed: boolean;
+  reason?: string;
+  providerRequestId?: string;
 }
 
 export type ProjectImportErrorCode =
@@ -50,7 +56,8 @@ export type ProjectImportErrorCode =
   | "DOCX_EXTRACTOR_UNAVAILABLE"
   | "UNSUPPORTED_DOCUMENT_TYPE"
   | "MALFORMED_DOCUMENT"
-  | "COMPLIANCE_RESTRICTED";
+  | "COMPLIANCE_RESTRICTED"
+  | "COMPLIANCE_UNAVAILABLE";
 
 export interface SourceFragment {
   id: string;
@@ -78,6 +85,8 @@ export interface Chapter {
   versions: SourceVersion[];
 }
 
+export type ChapterHead = Pick<Chapter, "id" | "title" | "activeSourceVersionId">;
+
 export interface Project {
   id: string;
   workspaceId: string;
@@ -92,19 +101,37 @@ export interface Project {
   chapters: Chapter[];
 }
 
+export interface ProjectAccess {
+  role: "owner" | "editor" | "reviewer";
+}
+
 export interface ProjectImportRepository {
   saveProject(actor: Actor, project: Project): Promise<Project>;
   findProject(actor: Actor, projectId: string): Promise<Project | null>;
-  transactProject<T>(actor: Actor, projectId: string, operation: (project: Project) => T): Promise<T>;
+  findProjectAccess(actor: Actor, projectId: string): Promise<ProjectAccess | null>;
+  findChapter(actor: Actor, projectId: string, chapterId: string): Promise<Chapter | null>;
+  createChapter(actor: Actor, projectId: string, chapter: Chapter): Promise<Chapter>;
+  appendSourceVersion(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    mutation: (latestVersion: SourceVersion) => { title: string; sourceVersion: SourceVersion },
+  ): Promise<{ chapter: ChapterHead; previousVersion: SourceVersion; sourceVersion: SourceVersion }>;
 }
 
 export class ProjectImportError extends Error {
   readonly code: ProjectImportErrorCode;
+  readonly providerRequestId: string | undefined;
 
-  constructor(code: ProjectImportErrorCode, message: string) {
-    super(message);
+  constructor(
+    code: ProjectImportErrorCode,
+    message: string,
+    options?: { cause?: unknown; providerRequestId?: string },
+  ) {
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "ProjectImportError";
     this.code = code;
+    this.providerRequestId = options?.providerRequestId;
   }
 }
 
@@ -121,12 +148,50 @@ export class InMemoryProjectImportRepository implements ProjectImportRepository 
     return project ? structuredClone(project) : null;
   }
 
-  async transactProject<T>(actor: Actor, projectId: string, operation: (project: Project) => T): Promise<T> {
+  async findProjectAccess(actor: Actor, projectId: string): Promise<ProjectAccess | null> {
+    const project = this.#projects.get(projectId);
+    if (!project || project.workspaceId !== actor.workspaceId) return null;
+    const member = project.members.find(({ userId }) => userId === actor.userId);
+    return member ? { role: member.role } : null;
+  }
+
+  async findChapter(actor: Actor, projectId: string, chapterId: string): Promise<Chapter | null> {
+    const project = await this.findProject(actor, projectId);
+    return project?.chapters.find(({ id }) => id === chapterId) ?? null;
+  }
+
+  async createChapter(actor: Actor, projectId: string, chapter: Chapter): Promise<Chapter> {
     const project = await this.findProject(actor, projectId);
     if (!project) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
-    const result = operation(project);
+    project.chapters.push(structuredClone(chapter));
     await this.saveProject(actor, project);
-    return result;
+    return structuredClone(chapter);
+  }
+
+  async appendSourceVersion(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    mutation: (latestVersion: SourceVersion) => { title: string; sourceVersion: SourceVersion },
+  ): Promise<{ chapter: ChapterHead; previousVersion: SourceVersion; sourceVersion: SourceVersion }> {
+    const project = await this.findProject(actor, projectId);
+    if (!project) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
+    const chapter = findChapter(project, chapterId);
+    const previousVersion = structuredClone(chapter.versions.at(-1)!);
+    const change = mutation(structuredClone(previousVersion));
+    chapter.title = change.title;
+    chapter.versions.push(structuredClone(change.sourceVersion));
+    chapter.activeSourceVersionId = change.sourceVersion.id;
+    await this.saveProject(actor, project);
+    return {
+      chapter: {
+        id: chapter.id,
+        title: chapter.title,
+        activeSourceVersionId: chapter.activeSourceVersionId,
+      },
+      previousVersion,
+      sourceVersion: structuredClone(change.sourceVersion),
+    };
   }
 }
 
@@ -135,7 +200,7 @@ interface ProjectImportServiceDependencies {
   idGenerator: (prefix: string) => string;
   clock: () => Date;
   documentTextExtractor?: DocumentTextExtractor;
-  complianceScanner?: ComplianceScanner;
+  complianceScanner: ComplianceScanner;
 }
 
 export class ProjectImportService {
@@ -174,13 +239,14 @@ export class ProjectImportService {
   async inspectDocument(actor: Actor, projectId: string, input: DocumentInput) {
     await this.authorizedProject(actor, projectId, false);
     const text = await extractDocumentText(input, this.dependencies.documentTextExtractor);
-    await this.assertCompliant(text);
+    const compliance = await this.assertCompliant(text);
     const chapters = parseChapters(text);
     if (chapters.length === 0 || chapters.every(({ text: chapterText }) => chapterText.length === 0)) {
       throw new ProjectImportError("MALFORMED_DOCUMENT", "文档中没有可导入的正文");
     }
     return {
       fileName: input.fileName,
+      complianceProviderRequestId: compliance.providerRequestId,
       chapters: chapters.map((chapter, index) => ({
         index,
         title: chapter.title,
@@ -203,40 +269,38 @@ export class ProjectImportService {
 
   async importText(actor: Actor, projectId: string, input: TextImportInput) {
     await this.authorizedProject(actor, projectId, true);
-    await this.assertCompliant(input.text);
+    const compliance = await this.assertCompliant(input.text);
     const selected = selectImportChapter(input);
     const { idGenerator, clock, repository } = this.dependencies;
-    return repository.transactProject(actor, projectId, (project) => {
-      assertProjectMembership(project, actor, true);
-      const chapterId = idGenerator("chp");
-      const sourceVersion = createSourceVersion({
-        chapterId,
-        chapterText: selected.text,
-        createdBy: actor.userId,
-        createdAt: clock().toISOString(),
-        idGenerator,
-        ordinal: 1,
-      });
-      const chapter: Chapter = {
-        id: chapterId,
-        title: selected.title,
-        versions: [sourceVersion],
-        activeSourceVersionId: sourceVersion.id,
-      };
-      project.chapters.push(chapter);
-      return { chapter, sourceVersion, availableChapters: parseChapters(input.text).map(({ title }) => ({ title })) };
+    const chapterId = idGenerator("chp");
+    const sourceVersion = createSourceVersion({
+      chapterId,
+      chapterText: selected.text,
+      createdBy: actor.userId,
+      createdAt: clock().toISOString(),
+      idGenerator,
+      ordinal: 1,
     });
+    const chapter = await repository.createChapter(actor, projectId, {
+      id: chapterId,
+      title: selected.title,
+      versions: [sourceVersion],
+      activeSourceVersionId: sourceVersion.id,
+    });
+    return {
+      chapter,
+      sourceVersion,
+      complianceProviderRequestId: compliance.providerRequestId,
+      availableChapters: parseChapters(input.text).map(({ title }) => ({ title })),
+    };
   }
 
   async reimportText(actor: Actor, projectId: string, chapterId: string, input: TextImportInput) {
     await this.authorizedProject(actor, projectId, true);
-    await this.assertCompliant(input.text);
+    const compliance = await this.assertCompliant(input.text);
     const selected = selectImportChapter(input);
     const { idGenerator, clock, repository } = this.dependencies;
-    return repository.transactProject(actor, projectId, (project) => {
-      assertProjectMembership(project, actor, true);
-      const chapter = findChapter(project, chapterId);
-      const previous = chapter.versions.at(-1)!;
+    const appended = await repository.appendSourceVersion(actor, projectId, chapterId, (previous) => {
       const sourceVersion = createSourceVersion({
         chapterId,
         chapterText: selected.text,
@@ -245,41 +309,50 @@ export class ProjectImportService {
         idGenerator,
         ordinal: previous.ordinal + 1,
       });
-      const diff = compareFragments(previous.fragments, sourceVersion.fragments);
-      chapter.title = selected.title;
-      chapter.versions.push(sourceVersion);
-      chapter.activeSourceVersionId = sourceVersion.id;
-      return { chapter, sourceVersion, diff };
+      return { title: selected.title, sourceVersion };
     });
+    return {
+      chapter: appended.chapter,
+      sourceVersion: appended.sourceVersion,
+      complianceProviderRequestId: compliance.providerRequestId,
+      diff: compareFragments(appended.previousVersion.fragments, appended.sourceVersion.fragments),
+    };
   }
 
   async getChapter(actor: Actor, projectId: string, chapterId: string): Promise<Chapter> {
-    const project = await this.authorizedProject(actor, projectId, false);
-    return findChapter(project, chapterId);
+    await this.authorizedProject(actor, projectId, false);
+    const chapter = await this.dependencies.repository.findChapter(actor, projectId, chapterId);
+    if (!chapter) throw new ProjectImportError("CHAPTER_NOT_FOUND", "章节不存在或无权访问");
+    return chapter;
   }
 
-  private async authorizedProject(actor: Actor, projectId: string, requireWrite: boolean): Promise<Project> {
-    const project = await this.dependencies.repository.findProject(actor, projectId);
-    if (!project) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
-    assertProjectMembership(project, actor, requireWrite);
-    return project;
-  }
-
-  private async assertCompliant(text: string): Promise<void> {
-    const compliance = await (this.dependencies.complianceScanner ?? allowAllComplianceScanner).scan(text);
-    if (!compliance.allowed) {
-      throw new ProjectImportError("COMPLIANCE_RESTRICTED", compliance.reason ?? "内容不符合平台规范");
+  private async authorizedProject(actor: Actor, projectId: string, requireWrite: boolean): Promise<void> {
+    const access = await this.dependencies.repository.findProjectAccess(actor, projectId);
+    if (!access) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
+    if (requireWrite && access.role === "reviewer") {
+      throw new ProjectImportError("PROJECT_WRITE_FORBIDDEN", "审核人只能查看和审核，不能修改原文");
     }
   }
-}
 
-function assertProjectMembership(project: Project, actor: Actor, requireWrite: boolean): void {
-  const member = project.workspaceId === actor.workspaceId
-    ? project.members.find(({ userId }) => userId === actor.userId)
-    : undefined;
-  if (!member) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
-  if (requireWrite && member.role === "reviewer") {
-    throw new ProjectImportError("PROJECT_WRITE_FORBIDDEN", "审核人只能查看和审核，不能修改原文");
+  private async assertCompliant(text: string): Promise<ComplianceResult> {
+    let compliance: ComplianceResult;
+    try {
+      compliance = await this.dependencies.complianceScanner.scan(text);
+    } catch (cause) {
+      throw new ProjectImportError(
+        "COMPLIANCE_UNAVAILABLE",
+        "内容合规服务暂不可用，请稍后重试",
+        { cause },
+      );
+    }
+    if (!compliance.allowed) {
+      throw new ProjectImportError(
+        "COMPLIANCE_RESTRICTED",
+        compliance.reason ?? "内容不符合平台规范",
+        compliance.providerRequestId ? { providerRequestId: compliance.providerRequestId } : undefined,
+      );
+    }
+    return compliance;
   }
 }
 
@@ -323,12 +396,6 @@ async function extractDocumentText(
     throw new ProjectImportError("MALFORMED_DOCUMENT", "文件无法解析，请检查文件是否损坏或编码是否正确");
   }
 }
-
-const allowAllComplianceScanner: ComplianceScanner = {
-  async scan() {
-    return { allowed: true };
-  },
-};
 
 function selectImportChapter(input: TextImportInput) {
   const selected = parseChapters(input.text)[input.selectedChapterIndex];
