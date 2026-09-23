@@ -6,6 +6,6 @@
     "test": "node --test",
     "test:import": "node --test packages/project-import/test/*.test.ts",
     "test:postgres": "node --test packages/project-import/test/postgres-repository.test.ts",
-    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck"
+    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck"
   }
 }

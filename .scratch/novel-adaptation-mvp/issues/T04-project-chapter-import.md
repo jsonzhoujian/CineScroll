@@ -35,4 +35,4 @@ Deliver the first vertical slice from authentication through project creation to
 - [x] Add PostgreSQL persistence, immutable version records, indexed composite foreign keys, and RLS tenant isolation.
 - [x] Replace aggregate hydration inside write transactions with chapter-scoped create/append commands so lock time does not grow with full project history.
 - [ ] Expose the application seam through authenticated API endpoints and the import UI.
-- [ ] Add phone-code and WeChat authentication adapters.
+- [ ] Add phone-code and WeChat authentication adapters with persistent one-time state, account binding, and phone/IP/device rate limits.
