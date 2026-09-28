@@ -8,6 +8,8 @@
     "test:postgres": "node --test packages/project-import/test/postgres-repository.test.ts",
     "test:identity-postgres": "node --test packages/identity/test/postgres-adapters.test.ts",
     "test:api": "node --test packages/api/test/*.test.ts",
-    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck && pnpm --filter @novel-adaptation/api typecheck"
+    "test:web": "node --test packages/web/test/*.test.ts",
+    "web": "pnpm --filter @novel-adaptation/web dev",
+    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck && pnpm --filter @novel-adaptation/api typecheck && pnpm --filter @novel-adaptation/web typecheck"
   }
 }

@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 1, "column": 0}, "map": {"version":3,"sources":["turbopack:///[project]/packages/web/src/app/mobile.css"],"sourcesContent":[".mobile-gate {\n  display: none;\n}\n\n@media (max-width: 720px) {\n  .work-area > .panel {\n    display: none;\n  }\n\n  .work-area > .version-desk {\n    display: block;\n  }\n\n  .mobile-gate {\n    display: block;\n    position: relative;\n    max-width: 420px;\n    margin: 28px auto;\n    padding: 28px;\n    border: 1px solid var(--line);\n    background: var(--sheet);\n    box-shadow: var(--shadow);\n  }\n\n  .mobile-gate h2 {\n    margin: 10px 0;\n    font-size: 28px;\n    font-weight: 500;\n  }\n\n  .mobile-gate p {\n    margin-bottom: 0;\n    color: var(--muted);\n    line-height: 1.8;\n  }\n}\n"],"names":[],"mappings":"AAAA;;;;AAIA;EACE;;;;EAIA;;;;EAIA;;;;;;;;;;;EAWA;;;;;;EAMA"}}]
+}

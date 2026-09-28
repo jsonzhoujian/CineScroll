@@ -1,0 +1,36 @@
+.mobile-gate {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .work-area > .panel {
+    display: none;
+  }
+
+  .work-area > .version-desk {
+    display: block;
+  }
+
+  .mobile-gate {
+    display: block;
+    position: relative;
+    max-width: 420px;
+    margin: 28px auto;
+    padding: 28px;
+    border: 1px solid var(--line);
+    background: var(--sheet);
+    box-shadow: var(--shadow);
+  }
+
+  .mobile-gate h2 {
+    margin: 10px 0;
+    font-size: 28px;
+    font-weight: 500;
+  }
+
+  .mobile-gate p {
+    margin-bottom: 0;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+}

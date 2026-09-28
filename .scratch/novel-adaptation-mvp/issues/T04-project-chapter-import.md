@@ -38,3 +38,13 @@ Deliver the first vertical slice from authentication through project creation to
 - [x] Expose phone-code/WeChat login endpoints and compose production authentication and import adapters.
 - [ ] Build the project/chapter import UI over the authenticated API.
 - [x] Add phone-code and WeChat authentication adapters with persistent one-time state, account binding, and phone/IP/device rate limits.
+
+## UI review findings (2026-09-28)
+
+The desktop phone-login/import/re-import workbench is implemented and passes unit, type, API, and production-build checks. T04 remains in progress until these product requirements are closed:
+
+- Connect the existing WeChat login API to a browser callback/QR flow instead of displaying a disabled control.
+- Persist the complete imported document and its unselected chapter directory so remaining chapters can be processed later, as required by Q57.
+- Restore free switching among the three retained workbench modes without bypassing stage-generation gates.
+- Add repeatable browser-flow coverage for login, project creation, multi-chapter inspection, chapter import, and re-import diff.
+- Keep mobile import editing unavailable while still exposing mobile progress, review, decisions, notifications, and read-only results.
