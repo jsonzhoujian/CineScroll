@@ -61,6 +61,49 @@ test("微信扫码回调校验一次性 state 后绑定账号并签发会话", a
   );
 });
 
+test("已登录手机号账号可以绑定微信而不创建第二个账号", async () => {
+  const repository = new InMemoryIdentityRepository();
+  const service = createService({ repository });
+  const phone = await service.requestPhoneCode({ phone: "13800138000", ipAddress: "203.0.113.8", deviceId: "d1" });
+  const login = await service.verifyPhoneCode({
+    challengeId: phone.challengeId, phone: "13800138000", code: "123456",
+    ipAddress: "203.0.113.8", deviceId: "d1",
+  });
+  const binding = await service.beginWechatBinding(login.actor);
+  await service.completeWechatBinding({ code: "oauth-code", state: binding.state });
+  const wechat = await service.beginWechatLogin({ redirectUri: "https://app.example.cn/auth/wechat/callback" });
+  const wechatLogin = await service.completeWechatLogin({
+    code: "oauth-code", state: wechat.state, redirectUri: "https://app.example.cn/auth/wechat/callback",
+  });
+  assert.deepEqual(wechatLogin.actor, login.actor);
+});
+
+test("微信 openId 与 unionId 分属不同账号时拒绝登录", async () => {
+  const repository = new InMemoryIdentityRepository();
+  const first = await repository.findOrCreateByPhone("+8613800138000", () => ({
+    userId: "usr_1", workspaceId: "wsp_1", phone: "+8613800138000",
+  }));
+  const second = await repository.findOrCreateByPhone("+8613900139000", () => ({
+    userId: "usr_2", workspaceId: "wsp_2", phone: "+8613900139000",
+  }));
+  await repository.bindWechat(first, { openId: "open-1", unionId: "union-1" });
+  await repository.bindWechat(second, { openId: "open-2", unionId: "union-2" });
+  await assert.rejects(
+    () => repository.findOrCreateByWechat({ openId: "open-1", unionId: "union-2" }, () => ({
+      userId: "usr_3", workspaceId: "wsp_3", wechatOpenId: "open-1", wechatUnionId: "union-2",
+    })),
+    { code: "IDENTITY_ALREADY_BOUND" },
+  );
+});
+
+test("OAuth state 默认使用独立高熵随机值", async () => {
+  const service = createService();
+  const first = await service.beginWechatLogin({ redirectUri: "https://app.example.cn/auth/wechat/callback" });
+  const second = await service.beginWechatLogin({ redirectUri: "https://app.example.cn/auth/wechat/callback" });
+  assert.notEqual(first.state, second.state);
+  assert.ok(first.state.length >= 43);
+});
+
 test("手机号验证码按手机号、IP 和设备限流且被拒请求不发送短信", async () => {
   let deliveries = 0;
   const service = createService({
@@ -75,6 +118,18 @@ test("手机号验证码按手机号、IP 和设备限流且被拒请求不发�
   await service.requestPhoneCode(input);
   await assert.rejects(() => service.requestPhoneCode(input), { code: "RATE_LIMITED" });
   assert.equal(deliveries, 2);
+});
+
+test("限流器分别约束 IP、设备并在窗口结束后恢复", async () => {
+  const now = new Date("2026-09-23T00:00:00.000Z");
+  const byIp = new InMemoryLoginRateLimiter({ phoneLimit: 10, ipLimit: 1, deviceLimit: 10, windowMs: 1_000 });
+  assert.equal((await byIp.consume({ phone: "+8613800138000", ipAddress: "203.0.113.8", deviceId: "d1", action: "send", now })).allowed, true);
+  assert.equal((await byIp.consume({ phone: "+8613900139000", ipAddress: "203.0.113.8", deviceId: "d2", action: "send", now })).allowed, false);
+
+  const byDevice = new InMemoryLoginRateLimiter({ phoneLimit: 10, ipLimit: 10, deviceLimit: 1, windowMs: 1_000 });
+  assert.equal((await byDevice.consume({ phone: "+8613800138000", ipAddress: "203.0.113.8", deviceId: "shared", action: "send", now })).allowed, true);
+  assert.equal((await byDevice.consume({ phone: "+8613900139000", ipAddress: "203.0.113.9", deviceId: "shared", action: "send", now })).allowed, false);
+  assert.equal((await byDevice.consume({ phone: "+8613900139000", ipAddress: "203.0.113.9", deviceId: "shared", action: "send", now: new Date(now.getTime() + 1_001) })).allowed, true);
 });
 
 function createService(overrides: Record<string, unknown> = {}) {
@@ -94,6 +149,7 @@ function createService(overrides: Record<string, unknown> = {}) {
     sessionIssuer: { async issue(userId: string) { return `session_${userId}`; } },
     idGenerator: (prefix: string) => `${prefix}_${++id}`,
     clock: () => new Date("2026-09-23T00:00:00.000Z"),
+    wechatRedirectUri: "https://app.example.cn/auth/wechat/callback",
     ...overrides,
   });
 }

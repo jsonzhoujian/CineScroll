@@ -31,6 +31,7 @@ test("微信网站扫码适配器生成授权地址并在服务端交换身份",
   const provider = new WechatWebsiteLoginProvider({
     appId: "wx-app-id",
     appSecret: "wx-secret",
+    redirectUri: "https://app.example.cn/auth/wechat/callback",
     fetch: async (input) => {
       tokenUrl = String(input);
       return new Response(JSON.stringify({ openid: "openid-1", unionid: "unionid-1" }), { status: 200 });
@@ -49,4 +50,17 @@ test("微信网站扫码适配器生成授权地址并在服务端交换身份",
   assert.equal(exchange.hostname, "api.weixin.qq.com");
   assert.equal(exchange.searchParams.get("appid"), "wx-app-id");
   assert.equal(exchange.searchParams.get("code"), "oauth-code");
+  assert.throws(
+    () => provider.authorizationUrl({ state: "state-2", redirectUri: "https://evil.example/callback" }),
+    /configured callback/,
+  );
+
+  const failing = new WechatWebsiteLoginProvider({
+    appId: "wx-app-id", appSecret: "wx-secret", redirectUri,
+    fetch: async (input) => { throw new Error(`network failed: ${String(input)}`); },
+  });
+  await assert.rejects(
+    () => failing.exchangeCode({ code: "oauth-code", redirectUri }),
+    { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务暂不可用，请稍后重试" },
+  );
 });

@@ -7,7 +7,7 @@ Production adapters:
 - `HttpPhoneVerificationProvider` calls an HTTPS SMS verification gateway through `/send` and `/verify`. The deployment gateway is responsible for the chosen mainland SMS SDK and credentials; this keeps vendor signing and secrets outside the domain.
 - `WechatWebsiteLoginProvider` creates the website QR authorization URL and exchanges the callback code with WeChat from the server. The app secret never enters browser state or return values.
 
-`InMemoryIdentityRepository`, `InMemoryLoginChallengeStore` and `InMemoryLoginRateLimiter` are deterministic adapters for tests and local composition. Production API composition must replace repository, challenge storage/rate limiting, and session issuance with persistent adapters before public deployment.
+`InMemoryIdentityRepository`, `InMemoryLoginChallengeStore` and `InMemoryLoginRateLimiter` are deterministic adapters for tests and local composition. Production composition uses `PostgresIdentityRepository`, `PostgresLoginChallengeStore` and `PostgresLoginRateLimiter`; database uniqueness, atomic challenge consumption and transaction-scoped advisory locks protect concurrent requests. Session issuance remains behind `SessionIssuer` for the authenticated API layer.
 
 Run:
 

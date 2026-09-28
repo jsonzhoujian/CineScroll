@@ -65,16 +65,18 @@ export class WechatWebsiteLoginProvider implements WechatLoginProvider {
   readonly #appSecret: string;
   readonly #fetch: Fetch;
   readonly #timeoutMs: number;
+  readonly #redirectUri: string;
 
-  constructor(options: HttpProviderOptions & { appId: string; appSecret: string }) {
+  constructor(options: HttpProviderOptions & { appId: string; appSecret: string; redirectUri: string }) {
     this.#appId = requiredSecret(options.appId, "WeChat app ID");
     this.#appSecret = requiredSecret(options.appSecret, "WeChat app secret");
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#timeoutMs = positiveTimeout(options.timeoutMs);
+    this.#redirectUri = secureUrl(options.redirectUri, "WeChat redirect URI").toString();
   }
 
   authorizationUrl(input: { state: string; redirectUri: string }): string {
-    secureUrl(input.redirectUri, "WeChat redirect URI");
+    this.assertRedirectUri(input.redirectUri);
     const url = new URL("https://open.weixin.qq.com/connect/qrconnect");
     url.search = new URLSearchParams({
       appid: this.#appId,
@@ -87,7 +89,7 @@ export class WechatWebsiteLoginProvider implements WechatLoginProvider {
   }
 
   async exchangeCode(input: { code: string; redirectUri: string }) {
-    secureUrl(input.redirectUri, "WeChat redirect URI");
+    this.assertRedirectUri(input.redirectUri);
     const url = new URL("https://api.weixin.qq.com/sns/oauth2/access_token");
     url.search = new URLSearchParams({
       appid: this.#appId,
@@ -107,6 +109,12 @@ export class WechatWebsiteLoginProvider implements WechatLoginProvider {
     } catch (error) {
       if (error instanceof IdentityProviderError) throw error;
       throw new IdentityProviderError();
+    }
+  }
+
+  private assertRedirectUri(value: string): void {
+    if (secureUrl(value, "WeChat redirect URI").toString() !== this.#redirectUri) {
+      throw new Error("WeChat redirect URI must match configured callback");
     }
   }
 }

@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 export type Actor = Readonly<{ userId: string; workspaceId: string }>;
 
 export interface PhoneVerificationProvider {
@@ -25,6 +27,7 @@ export interface IdentityAccount {
 export interface IdentityRepository {
   findOrCreateByPhone(phone: string, create: () => IdentityAccount): Promise<IdentityAccount>;
   findOrCreateByWechat(identity: { openId: string; unionId?: string }, create: () => IdentityAccount): Promise<IdentityAccount>;
+  bindWechat(actor: Actor, identity: { openId: string; unionId?: string }): Promise<void>;
 }
 
 interface PhoneChallenge {
@@ -42,9 +45,10 @@ interface WechatChallenge {
   redirectUri: string;
   expiresAt: string;
   consumed: boolean;
+  bindActor?: Actor;
 }
 
-type LoginChallenge = PhoneChallenge | WechatChallenge;
+export type LoginChallenge = PhoneChallenge | WechatChallenge;
 
 export interface LoginChallengeStore {
   save(challenge: LoginChallenge): Promise<void>;
@@ -118,11 +122,31 @@ export class InMemoryIdentityRepository implements IdentityRepository {
   }
 
   async findOrCreateByWechat(identity: { openId: string; unionId?: string }, create: () => IdentityAccount) {
-    let account = this.#accounts.find((candidate) => identity.unionId
-      ? candidate.wechatUnionId === identity.unionId
-      : candidate.wechatOpenId === identity.openId);
+    const byOpenId = this.#accounts.find((candidate) => candidate.wechatOpenId === identity.openId);
+    const byUnionId = identity.unionId
+      ? this.#accounts.find((candidate) => candidate.wechatUnionId === identity.unionId)
+      : undefined;
+    if (byOpenId && byUnionId && byOpenId !== byUnionId) {
+      throw new IdentityError("IDENTITY_ALREADY_BOUND", "微信身份关联存在冲突");
+    }
+    let account = byOpenId ?? byUnionId;
     if (!account) { account = create(); this.#accounts.push(structuredClone(account)); }
+    else {
+      account.wechatOpenId ??= identity.openId;
+      if (identity.unionId) account.wechatUnionId ??= identity.unionId;
+    }
     return structuredClone(account);
+  }
+
+  async bindWechat(actor: Actor, identity: { openId: string; unionId?: string }): Promise<void> {
+    const account = this.#accounts.find(({ userId, workspaceId }) => userId === actor.userId && workspaceId === actor.workspaceId);
+    if (!account) throw new IdentityError("ACCOUNT_NOT_FOUND", "账号不存在");
+    const conflict = this.#accounts.find((candidate) => candidate !== account && (
+      candidate.wechatOpenId === identity.openId || (identity.unionId && candidate.wechatUnionId === identity.unionId)
+    ));
+    if (conflict) throw new IdentityError("IDENTITY_ALREADY_BOUND", "该微信已绑定其他账号");
+    account.wechatOpenId = identity.openId;
+    if (identity.unionId) account.wechatUnionId = identity.unionId;
   }
 }
 
@@ -161,15 +185,17 @@ interface IdentityServiceDependencies {
   wechatProvider: WechatLoginProvider;
   sessionIssuer: SessionIssuer;
   idGenerator: (prefix: string) => string;
+  oauthStateGenerator?: () => string;
   clock: () => Date;
+  wechatRedirectUri: string;
 }
 
 export class IdentityError extends Error {
-  readonly code: "INVALID_PHONE" | "INVALID_OR_EXPIRED_CODE" | "INVALID_OAUTH_STATE" | "RATE_LIMITED";
+  readonly code: "INVALID_PHONE" | "INVALID_OR_EXPIRED_CODE" | "INVALID_OAUTH_STATE" | "RATE_LIMITED" | "ACCOUNT_NOT_FOUND" | "IDENTITY_ALREADY_BOUND";
   readonly retryAfterSeconds: number | undefined;
 
   constructor(
-    code: "INVALID_PHONE" | "INVALID_OR_EXPIRED_CODE" | "INVALID_OAUTH_STATE" | "RATE_LIMITED",
+    code: "INVALID_PHONE" | "INVALID_OR_EXPIRED_CODE" | "INVALID_OAUTH_STATE" | "RATE_LIMITED" | "ACCOUNT_NOT_FOUND" | "IDENTITY_ALREADY_BOUND",
     message: string,
     options?: { retryAfterSeconds?: number },
   ) {
@@ -246,7 +272,10 @@ export class IdentityService {
   }
 
   async beginWechatLogin(input: { redirectUri: string }) {
-    const state = this.dependencies.idGenerator("oauth");
+    if (input.redirectUri !== this.dependencies.wechatRedirectUri) {
+      throw new IdentityError("INVALID_OAUTH_STATE", "微信登录回调地址无效");
+    }
+    const state = this.oauthState();
     await this.dependencies.challengeStore.save({
       kind: "wechat",
       id: state,
@@ -261,6 +290,30 @@ export class IdentityService {
         redirectUri: input.redirectUri,
       }),
     };
+  }
+
+  async beginWechatBinding(actor: Actor) {
+    const redirectUri = this.dependencies.wechatRedirectUri;
+    const state = this.oauthState();
+    await this.dependencies.challengeStore.save({
+      kind: "wechat", id: state, redirectUri,
+      expiresAt: new Date(this.dependencies.clock().getTime() + 10 * 60_000).toISOString(),
+      consumed: false, bindActor: actor,
+    });
+    return { state, authorizationUrl: this.dependencies.wechatProvider.authorizationUrl({ state, redirectUri }) };
+  }
+
+  async completeWechatBinding(input: { code: string; state: string }) {
+    const challenge = await this.dependencies.challengeStore.find(input.state);
+    if (!challenge || challenge.kind !== "wechat" || !challenge.bindActor || challenge.consumed
+      || Date.parse(challenge.expiresAt) <= this.dependencies.clock().getTime()) {
+      throw new IdentityError("INVALID_OAUTH_STATE", "微信绑定状态无效或已过期");
+    }
+    if (!(await this.dependencies.challengeStore.consume(challenge.id))) {
+      throw new IdentityError("INVALID_OAUTH_STATE", "微信绑定状态无效或已过期");
+    }
+    const identity = await this.dependencies.wechatProvider.exchangeCode({ code: input.code, redirectUri: challenge.redirectUri });
+    await this.dependencies.repository.bindWechat(challenge.bindActor, identity);
   }
 
   async completeWechatLogin(input: { code: string; state: string; redirectUri: string }) {
@@ -289,6 +342,10 @@ export class IdentityService {
       actor: { userId: account.userId, workspaceId: account.workspaceId },
       sessionToken: await this.dependencies.sessionIssuer.issue(account.userId, account.workspaceId),
     };
+  }
+
+  private oauthState(): string {
+    return this.dependencies.oauthStateGenerator?.() ?? randomBytes(32).toString("base64url");
   }
 }
 
