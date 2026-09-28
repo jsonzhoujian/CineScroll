@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type SourceVersionDiff } from "../lib/api";
 import { buildDocumentRequest, type DocumentRequest, type ProjectDraft, validateProjectDraft } from "../lib/workflow";
+import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type WorkbenchMode, workbenchModes } from "../lib/workbench-mode";
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
@@ -22,7 +23,10 @@ const initialProject: ProjectDraft = {
 
 export function ImportWorkbench() {
   const api = useMemo(() => new ApiClient(), []);
-  const [step, setStep] = useState<Step>("login");
+  const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: "login", mode: "trace" });
+  const { step, mode } = navigation;
+  const setStep = (nextStep: Step) => setNavigation((current) => ({ ...current, step: nextStep }));
+  const setMode = (nextMode: WorkbenchMode) => setNavigation((current) => switchWorkbenchMode(current, nextMode));
   const [phone, setPhone] = useState("13800138000");
   const [code, setCode] = useState("");
   const [challengeId, setChallengeId] = useState<string | null>(null);
@@ -143,11 +147,11 @@ export function ImportWorkbench() {
     setDiff(null);
   });
 
-  return <main className="app-shell">
+  return <main className={`app-shell mode-${mode}`}>
     <header className="topbar">
       <a className="brand" href="#"><span className="seal">映</span><span><b>映卷</b><small>小说动态漫改编工作台</small></span></a>
       <nav className="modes" aria-label="工作模式">
-        <button className="active">追溯</button><button disabled>审核</button><button disabled>分镜</button>
+        {workbenchModes.map((item) => <button key={item.id} type="button" className={mode === item.id ? "active" : ""} aria-pressed={mode === item.id} onClick={() => setMode(item.id)}>{item.label}</button>)}
       </nav>
       <div className="top-meta"><span>中国大陆区</span><i /> <span>{project?.title || "未命名项目"}</span></div>
     </header>
@@ -171,7 +175,7 @@ export function ImportWorkbench() {
           <h2>请在桌面端导入原文</h2>
           <p>移动端首版仅用于查看进度、审核内容、处理修改建议与接收通知。</p>
         </div>
-        {step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
+        {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>
             <button className="button secondary align-end" onClick={sendCode} disabled={busy}>获取验证码</button>
             <Field label="验证码"><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="6 位验证码" inputMode="numeric" /></Field>
@@ -179,7 +183,7 @@ export function ImportWorkbench() {
           <div className="divider"><span>或</span></div><button className="wechat-button" onClick={startWechatLogin} disabled={busy}>微信扫码登录 <small>在新窗口打开微信官方二维码</small></button>
         </Panel>}
 
-        {step === "project" && <Panel eyebrow="项目立项" title="定义这一卷如何被改编" description="这些约束会跟随章节进入后续故事知识、剧本、设定和分镜。">
+        {mode === "trace" && step === "project" && <Panel eyebrow="项目立项" title="定义这一卷如何被改编" description="这些约束会跟随章节进入后续故事知识、剧本、设定和分镜。">
           <div className="form-grid"><Field label="项目名称" wide><input value={projectDraft.title} onChange={(event) => setProjectDraft({ ...projectDraft, title: event.target.value })} placeholder="例如：人间剑令" /></Field>
             <Choice label="画面比例" value={projectDraft.aspectRatio} options={[['9:16','竖屏'],['16:9','横屏']]} onChange={(value) => setProjectDraft({ ...projectDraft, aspectRatio: value as ProjectDraft['aspectRatio'] })} />
             <Choice label="单集时长" value={String(projectDraft.targetDurationSeconds)} options={[['60','1 分钟'],['180','3 分钟'],['300','5 分钟']]} onChange={(value) => setProjectDraft({ ...projectDraft, targetDurationSeconds: Number(value) as ProjectDraft['targetDurationSeconds'] })} />
@@ -189,20 +193,21 @@ export function ImportWorkbench() {
           <Action onClick={createProject} busy={busy}>创建项目，继续导入</Action>
         </Panel>}
 
-        {step === "source" && <Panel eyebrow="原文导入" title="先预检，再决定收入哪一章" description="包含多章的文件不会被整本处理；未选章节会保留在本次文件中，不创建正式原文版本。">
+        {mode === "trace" && step === "source" && <Panel eyebrow="原文导入" title="先预检，再决定收入哪一章" description="包含多章的文件不会被整本处理；未选章节会保留在本次文件中，不创建正式原文版本。">
           <div className="source-tabs"><button className={inputMode === "paste" ? "active" : ""} onClick={() => setInputMode("paste")}>粘贴文本</button><button className={inputMode === "file" ? "active" : ""} onClick={() => setInputMode("file")}>TXT / DOCX</button></div>
           {inputMode === "paste" ? <textarea className="source-input" value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder={'第1章 青芽微澜\n在雨后的咸阳城……'} />
             : <label className="dropzone"><input type="file" accept=".txt,.docx" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><span className="drop-icon">文</span><b>{file?.name || "选择 TXT 或 DOCX 文件"}</b><small>单个文件不超过 20 MB，本次最多处理一章 20,000 字</small></label>}
           <Action onClick={inspect} busy={busy}>预检章节</Action>
         </Panel>}
 
-        {step === "chapter" && <Panel eyebrow="章节预检" title={`识别到 ${chapters.length} 个章节`} description="请选择本次处理的一章。超出 20,000 字的章节会保留，但暂不可选择。">
+        {mode === "trace" && step === "chapter" && <Panel eyebrow="章节预检" title={`识别到 ${chapters.length} 个章节`} description="请选择本次处理的一章。超出 20,000 字的章节会保留，但暂不可选择。">
           <div className="chapter-list">{chapters.map((item) => <button key={item.index} disabled={!item.selectable} className={selectedChapter === item.index ? "selected" : ""} onClick={() => setSelectedChapter(item.index)}>
             <span className="chapter-index">{String(item.index + 1).padStart(2, '0')}</span><span><b>{item.title}</b><small>{item.characterCount.toLocaleString('zh-CN')} 字 · {item.selectable ? '可导入' : '超出限制'}</small></span><span className="radio" /></button>)}</div>
           <div className="inline-actions"><button className="text-button" onClick={() => setStep("source")}>返回修改原文</button><Action onClick={importChapter} busy={busy}>确认并创建原文版本</Action></div>
         </Panel>}
 
-        {step === "version" && chapter && <VersionDesk chapter={chapter} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
+        {mode === "trace" && step === "version" && chapter && <VersionDesk chapter={chapter} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
+        {mode !== "trace" && <ModeWorkspace mode={mode} project={project} chapter={chapter} onReturnToTrace={() => setMode("trace")} />}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
 
@@ -231,3 +236,28 @@ function VersionDesk({ chapter, importedDocument, importSavedChapter, reimportTe
         {diff && <div className="diff"><Diff title="新增" tone="add" items={diff.added} /><Diff title="删除" tone="remove" items={diff.removed} /><Diff title="未变化" tone="same" items={diff.unchanged} /></div>}</aside></div></div>;
 }
 function Diff({ title, tone, items }: { title: string; tone: string; items: string[] }) { return <div className={`diff-group ${tone}`}><b>{title} · {items.length}</b>{items.map((item, index) => <p key={`${tone}-${index}`}>{item}</p>)}</div>; }
+
+function ModeWorkspace({ mode, project, chapter, onReturnToTrace }: { mode: Exclude<WorkbenchMode, "trace">; project: { id: string; title: string } | null; chapter: Chapter | null; onReturnToTrace(): void }) {
+  const readiness: StageReadiness = {
+    sourceImported: Boolean(chapter),
+    storyKnowledgeConfirmed: false,
+    scriptConfirmed: false,
+    settingsConfirmed: false,
+  };
+  const policy = describeWorkbenchMode(mode, readiness);
+  const isReview = mode === "review";
+  const stages = [
+    { label: "原文版本", requirement: "原文", ready: readiness.sourceImported },
+    { label: "故事知识", requirement: "故事知识", ready: readiness.storyKnowledgeConfirmed },
+    ...(!isReview ? [{ label: "剧本", requirement: "剧本", ready: readiness.scriptConfirmed }, { label: "设定", requirement: "设定", ready: readiness.settingsConfirmed }] : []),
+  ];
+
+  return <div className={`mode-workspace ${mode}`}>
+    <div className="mode-heading"><div><span className="eyebrow">{isReview ? "审核工作台" : "分镜工作台"}</span><h2>{isReview ? "逐项确认，保留每次判断" : "先看全局，再落到每个镜头"}</h2><p>{isReview ? "这里将承载修改建议、原文证据与接受或拒绝记录。" : "这里将承载镜头列表、镜头详情与资产引用。"}</p></div><span className="mode-index">{isReview ? "审" : "镜"}</span></div>
+    <div className="mode-sheet">
+      <section className="mode-status"><span className="eyebrow">当前上下文</span><h3>{project?.title || "尚未立项"}</h3><p>{chapter ? `已选章节：${chapter.title}` : "尚未导入可追溯的原文章节。"}</p><div className="gate-message"><i /> <span><b>正式内容尚未解锁</b><small>{policy.status}</small></span></div></section>
+      <section className="mode-gates"><span className="eyebrow">确认链</span>{stages.map((stage, index) => <div className={stage.ready ? "complete" : "pending"} key={stage.label}><span>{String(index + 1).padStart(2, "0")}</span><b>{stage.label}</b><small>{stage.ready ? "已就绪" : stage.requirement === policy.requiredConfirmation ? "下一项" : "等待前置确认"}</small></div>)}</section>
+    </div>
+    <div className="mode-actions"><p>切换工作台只改变查看方式，不会生成、修改或复制项目内容。</p><button type="button" className="button secondary" onClick={onReturnToTrace}>返回追溯，完成前置步骤</button></div>
+  </div>;
+}

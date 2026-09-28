@@ -43,7 +43,6 @@ Deliver the first vertical slice from authentication through project creation to
 
 The desktop phone-login/import/re-import workbench is implemented and passes unit, type, API, and production-build checks. T04 remains in progress until these product requirements are closed:
 
-- Restore free switching among the three retained workbench modes without bypassing stage-generation gates.
 - Add repeatable browser-flow coverage for login, project creation, multi-chapter inspection, chapter import, and re-import diff.
 - Keep mobile import editing unavailable while still exposing mobile progress, review, decisions, notifications, and read-only results.
 
@@ -51,3 +50,4 @@ Resolved after review:
 
 - [x] Persist the complete imported document and chapter directory; allow a pending chapter to be processed later without uploading the file again, as required by Q57.
 - [x] Connect the existing WeChat login API to an official QR authorization window and a state-bound browser callback flow.
+- [x] Restore free switching among trace, review, and storyboard workbenches while keeping formal generation behind stage-confirmation gates.

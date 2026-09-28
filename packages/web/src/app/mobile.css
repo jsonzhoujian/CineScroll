@@ -41,12 +41,31 @@
 }
 
 @media (max-width: 720px) {
+  .topbar .modes {
+    display: flex;
+    width: 100%;
+    margin-top: 12px;
+  }
+
+  .topbar .modes button {
+    flex: 1;
+    padding-inline: 10px;
+  }
+
   .work-area > .panel {
     display: none;
   }
 
   .work-area > .version-desk {
     display: block;
+  }
+
+  .version-desk .reimport {
+    display: none;
+  }
+
+  .version-desk .version-grid {
+    grid-template-columns: 1fr;
   }
 
   .mobile-gate {
