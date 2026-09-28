@@ -50,6 +50,8 @@ export type ProjectImportErrorCode =
   | "PROJECT_NOT_FOUND"
   | "PROJECT_WRITE_FORBIDDEN"
   | "CHAPTER_NOT_FOUND"
+  | "IMPORTED_DOCUMENT_NOT_FOUND"
+  | "CHAPTER_ALREADY_IMPORTED"
   | "CHAPTER_SELECTION_REQUIRED"
   | "EMPTY_CHAPTER"
   | "CHAPTER_TOO_LARGE"
@@ -85,6 +87,23 @@ export interface Chapter {
   versions: SourceVersion[];
 }
 
+export interface ImportedDocumentChapter {
+  index: number;
+  title: string;
+  text: string;
+  characterCount: number;
+  status: "pending" | "imported";
+  chapterId?: string;
+}
+
+export interface ImportedDocument {
+  id: string;
+  fileName: string;
+  importedAt: string;
+  importedBy: string;
+  chapters: ImportedDocumentChapter[];
+}
+
 export type ChapterHead = Pick<Chapter, "id" | "title" | "activeSourceVersionId">;
 
 export interface Project {
@@ -110,7 +129,20 @@ export interface ProjectImportRepository {
   findProject(actor: Actor, projectId: string): Promise<Project | null>;
   findProjectAccess(actor: Actor, projectId: string): Promise<ProjectAccess | null>;
   findChapter(actor: Actor, projectId: string, chapterId: string): Promise<Chapter | null>;
-  createChapter(actor: Actor, projectId: string, chapter: Chapter): Promise<Chapter>;
+  createChapterFromDocument(
+    actor: Actor,
+    projectId: string,
+    document: ImportedDocument,
+    chapter: Chapter,
+  ): Promise<Chapter>;
+  findImportedDocument(actor: Actor, projectId: string, documentId: string): Promise<ImportedDocument | null>;
+  importPendingChapter(
+    actor: Actor,
+    projectId: string,
+    documentId: string,
+    chapterIndex: number,
+    chapter: Chapter,
+  ): Promise<{ document: ImportedDocument; chapter: Chapter }>;
   appendSourceVersion(
     actor: Actor,
     projectId: string,
@@ -137,6 +169,7 @@ export class ProjectImportError extends Error {
 
 export class InMemoryProjectImportRepository implements ProjectImportRepository {
   readonly #projects = new Map<string, Project>();
+  readonly #documents = new Map<string, ImportedDocument>();
 
   async saveProject(_actor: Actor, project: Project): Promise<Project> {
     this.#projects.set(project.id, structuredClone(project));
@@ -160,12 +193,46 @@ export class InMemoryProjectImportRepository implements ProjectImportRepository 
     return project?.chapters.find(({ id }) => id === chapterId) ?? null;
   }
 
-  async createChapter(actor: Actor, projectId: string, chapter: Chapter): Promise<Chapter> {
+  async createChapterFromDocument(
+    actor: Actor,
+    projectId: string,
+    document: ImportedDocument,
+    chapter: Chapter,
+  ): Promise<Chapter> {
     const project = await this.findProject(actor, projectId);
     if (!project) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
     project.chapters.push(structuredClone(chapter));
     await this.saveProject(actor, project);
+    this.#documents.set(`${projectId}:${document.id}`, structuredClone(document));
     return structuredClone(chapter);
+  }
+
+  async findImportedDocument(actor: Actor, projectId: string, documentId: string): Promise<ImportedDocument | null> {
+    const project = await this.findProject(actor, projectId);
+    if (!project) return null;
+    const document = this.#documents.get(`${projectId}:${documentId}`);
+    return document ? structuredClone(document) : null;
+  }
+
+  async importPendingChapter(
+    actor: Actor,
+    projectId: string,
+    documentId: string,
+    chapterIndex: number,
+    chapter: Chapter,
+  ): Promise<{ document: ImportedDocument; chapter: Chapter }> {
+    const project = await this.findProject(actor, projectId);
+    const document = this.#documents.get(`${projectId}:${documentId}`);
+    if (!project || !document) throw new ProjectImportError("IMPORTED_DOCUMENT_NOT_FOUND", "导入文档不存在或无权访问");
+    const candidate = document.chapters.find(({ index }) => index === chapterIndex);
+    if (!candidate) throw new ProjectImportError("CHAPTER_SELECTION_REQUIRED", "请选择需要处理的章节");
+    if (candidate.status === "imported") throw new ProjectImportError("CHAPTER_ALREADY_IMPORTED", "该章节已经入卷");
+    project.chapters.push(structuredClone(chapter));
+    candidate.status = "imported";
+    candidate.chapterId = chapter.id;
+    await this.saveProject(actor, project);
+    this.#documents.set(`${projectId}:${documentId}`, structuredClone(document));
+    return { document: structuredClone(document), chapter: structuredClone(chapter) };
   }
 
   async appendSourceVersion(
@@ -270,18 +337,34 @@ export class ProjectImportService {
   async importText(actor: Actor, projectId: string, input: TextImportInput) {
     await this.authorizedProject(actor, projectId, true);
     const compliance = await this.assertCompliant(input.text);
-    const selected = selectImportChapter(input);
+    const parsedChapters = parseChapters(input.text);
+    const selected = selectImportChapter(input, parsedChapters);
     const { idGenerator, clock, repository } = this.dependencies;
     const chapterId = idGenerator("chp");
+    const importedAt = clock().toISOString();
     const sourceVersion = createSourceVersion({
       chapterId,
       chapterText: selected.text,
       createdBy: actor.userId,
-      createdAt: clock().toISOString(),
+      createdAt: importedAt,
       idGenerator,
       ordinal: 1,
     });
-    const chapter = await repository.createChapter(actor, projectId, {
+    const document: ImportedDocument = {
+      id: idGenerator("doc"),
+      fileName: input.fileName,
+      importedAt,
+      importedBy: actor.userId,
+      chapters: parsedChapters.map((candidate, index) => ({
+        index,
+        title: candidate.title,
+        text: candidate.text,
+        characterCount: candidate.text.length,
+        status: index === input.selectedChapterIndex ? "imported" : "pending",
+        ...(index === input.selectedChapterIndex ? { chapterId } : {}),
+      })),
+    };
+    const chapter = await repository.createChapterFromDocument(actor, projectId, document, {
       id: chapterId,
       title: selected.title,
       versions: [sourceVersion],
@@ -289,9 +372,10 @@ export class ProjectImportService {
     });
     return {
       chapter,
+      document,
       sourceVersion,
       complianceProviderRequestId: compliance.providerRequestId,
-      availableChapters: parseChapters(input.text).map(({ title }) => ({ title })),
+      availableChapters: parsedChapters.map(({ title }) => ({ title })),
     };
   }
 
@@ -324,6 +408,42 @@ export class ProjectImportService {
     const chapter = await this.dependencies.repository.findChapter(actor, projectId, chapterId);
     if (!chapter) throw new ProjectImportError("CHAPTER_NOT_FOUND", "章节不存在或无权访问");
     return chapter;
+  }
+
+  async getImportedDocument(actor: Actor, projectId: string, documentId: string): Promise<ImportedDocument> {
+    await this.authorizedProject(actor, projectId, false);
+    const document = await this.dependencies.repository.findImportedDocument(actor, projectId, documentId);
+    if (!document) throw new ProjectImportError("IMPORTED_DOCUMENT_NOT_FOUND", "导入文档不存在或无权访问");
+    return document;
+  }
+
+  async importPendingChapter(actor: Actor, projectId: string, documentId: string, chapterIndex: number) {
+    await this.authorizedProject(actor, projectId, true);
+    const document = await this.dependencies.repository.findImportedDocument(actor, projectId, documentId);
+    if (!document) throw new ProjectImportError("IMPORTED_DOCUMENT_NOT_FOUND", "导入文档不存在或无权访问");
+    const selected = document.chapters.find(({ index }) => index === chapterIndex);
+    if (!selected) throw new ProjectImportError("CHAPTER_SELECTION_REQUIRED", "请选择需要处理的章节");
+    if (selected.status === "imported") throw new ProjectImportError("CHAPTER_ALREADY_IMPORTED", "该章节已经入卷");
+    if (selected.text.length === 0) throw new ProjectImportError("EMPTY_CHAPTER", "章节正文不能为空");
+    if (selected.text.length > 20_000) throw new ProjectImportError("CHAPTER_TOO_LARGE", "单次处理的章节不能超过 20,000 字符");
+    const compliance = await this.assertCompliant(selected.text);
+    const { idGenerator, clock, repository } = this.dependencies;
+    const chapterId = idGenerator("chp");
+    const sourceVersion = createSourceVersion({
+      chapterId,
+      chapterText: selected.text,
+      createdBy: actor.userId,
+      createdAt: clock().toISOString(),
+      idGenerator,
+      ordinal: 1,
+    });
+    const imported = await repository.importPendingChapter(actor, projectId, documentId, chapterIndex, {
+      id: chapterId,
+      title: selected.title,
+      activeSourceVersionId: sourceVersion.id,
+      versions: [sourceVersion],
+    });
+    return { ...imported, sourceVersion, complianceProviderRequestId: compliance.providerRequestId };
   }
 
   private async authorizedProject(actor: Actor, projectId: string, requireWrite: boolean): Promise<void> {
@@ -397,8 +517,8 @@ async function extractDocumentText(
   }
 }
 
-function selectImportChapter(input: TextImportInput) {
-  const selected = parseChapters(input.text)[input.selectedChapterIndex];
+function selectImportChapter(input: TextImportInput, chapters = parseChapters(input.text)) {
+  const selected = chapters[input.selectedChapterIndex];
   if (!selected) {
     throw new ProjectImportError("CHAPTER_SELECTION_REQUIRED", "请选择需要处理的章节");
   }

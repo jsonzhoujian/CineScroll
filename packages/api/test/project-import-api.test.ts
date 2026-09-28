@@ -94,6 +94,22 @@ test("已认证用户可预检多章节、选择一章导入并读取可追溯�
     const imported = await request(app.getHttpServer())
       .post(`/projects/${project.body.id}/chapters/import`).set(authorized())
       .send({ document, selectedChapterIndex: 1 }).expect(201);
+    const importedDocument = await request(app.getHttpServer())
+      .get(`/projects/${project.body.id}/imported-documents/${imported.body.document.id}`)
+      .set(authorized()).expect(200);
+    assert.deepEqual(importedDocument.body.chapters.map(({ title, status }: { title: string; status: string }) => ({ title, status })), [
+      { title: "第1章 青芽微澜", status: "pending" },
+      { title: "第2章 风起", status: "imported" },
+    ]);
+    const continued = await request(app.getHttpServer())
+      .post(`/projects/${project.body.id}/imported-documents/${imported.body.document.id}/chapters/import`)
+      .set(authorized()).send({ chapterIndex: 0 }).expect(201);
+    assert.equal(continued.body.chapter.title, "第1章 青芽微澜");
+    assert.deepEqual(continued.body.document.chapters.map(({ status }: { status: string }) => status), ["imported", "imported"]);
+    const duplicate = await request(app.getHttpServer())
+      .post(`/projects/${project.body.id}/imported-documents/${imported.body.document.id}/chapters/import`)
+      .set(authorized()).send({ chapterIndex: 0 }).expect(422);
+    assert.equal(duplicate.body.code, "CHAPTER_ALREADY_IMPORTED");
     const chapter = await request(app.getHttpServer())
       .get(`/projects/${project.body.id}/chapters/${imported.body.chapter.id}`).set(authorized()).expect(200);
     assert.equal(chapter.body.title, "第2章 风起");
@@ -124,5 +140,8 @@ test("已认证用户可预检多章节、选择一章导入并读取可追溯�
       .set(outsiderAuthorization).send({ document, selectedChapterIndex: 0 }).expect(404);
     await request(app.getHttpServer()).post(`/projects/${project.body.id}/chapters/${imported.body.chapter.id}/reimport`)
       .set(outsiderAuthorization).send({ fileName: "x.txt", text: "正文", selectedChapterIndex: 0 }).expect(404);
+    await request(app.getHttpServer())
+      .get(`/projects/${project.body.id}/imported-documents/${imported.body.document.id}`)
+      .set(outsiderAuthorization).expect(404);
   } finally { await app.close(); }
 });

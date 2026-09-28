@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///Users/zhoujian/Micro-SaaS-Tool/earnMoney/node_modules/.pnpm/next@16.3.6_@types+node@26.6.2_react-dom@19.3.0_react@19.3.0__react@19.3.0/node_modules/next/src/server/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.ts"],"sourcesContent":["module.exports = (\n  require('../../module.compiled') as typeof import('../../module.compiled')\n).vendored['react-rsc']!.ReactJsxDevRuntime\n"],"names":["module","exports","require","vendored","ReactJsxDevRuntime"],"mappings":"AAAAA,OAAOC,OAAO,GACZC,QAAQ,0NACRC,QAAQ,CAAC,YAAY,CAAEC,kBAAkB","ignoreList":[0]}},
-    {"offset": {"line": 9, "column": 0}, "map": {"version":3,"sources":["file:///Users/zhoujian/Micro-SaaS-Tool/earnMoney/packages/web/src/app/layout.tsx"],"sourcesContent":["import type { Metadata } from \"next\";\nimport type { ReactNode } from \"react\";\n\nimport \"./styles.css\";\nimport \"./mobile.css\";\n\nexport const metadata: Metadata = {\n  title: \"映卷 · 小说动态漫改编工作台\",\n  description: \"从原文章节到可追溯动态漫生产资料\",\n};\n\nexport default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {\n  return <html lang=\"zh-CN\"><body>{children}</body></html>;\n}\n"],"names":["metadata","title","description","RootLayout","children","lang"],"mappings":";;;;;;;;;;AAMO,MAAMA,WAAqB;IAChCC,OAAO;IACPC,aAAa;AACf;AAEe,SAASC,WAAW,EAAEC,QAAQ,EAAqC;IAChF,qBAAO,+YAAC;QAAKC,MAAK;kBAAQ,cAAA,+YAAC;sBAAMD;;;;;;;;;;;AACnC"}}]
-}

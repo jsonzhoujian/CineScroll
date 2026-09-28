@@ -199,6 +199,46 @@ test("TXT 和 DOCX 可以从预检使用的同一文件边界选章并正式导�
   assert.equal(result.sourceVersion.text, "应被保存的章节。");
 });
 
+test("导入一章时保存整份文档目录，其余章节保持待处理", async () => {
+  const service = createService();
+  const project = await service.createProject(actor, validProject);
+  const imported = await service.importText(actor, project.id, {
+    fileName: "人间剑令.txt",
+    text: "第1章 初见\n初见正文。\n第2章 风起\n风起正文。",
+    selectedChapterIndex: 1,
+  });
+
+  const document = await service.getImportedDocument(actor, project.id, imported.document.id);
+  assert.equal(document.fileName, "人间剑令.txt");
+  assert.deepEqual(document.chapters, [
+    {
+      index: 0,
+      title: "第1章 初见",
+      text: "初见正文。",
+      characterCount: 5,
+      status: "pending",
+    },
+    {
+      index: 1,
+      title: "第2章 风起",
+      text: "风起正文。",
+      characterCount: 5,
+      status: "imported",
+      chapterId: imported.chapter.id,
+    },
+  ]);
+
+  const later = await service.importPendingChapter(actor, project.id, document.id, 0);
+  assert.equal(later.chapter.title, "第1章 初见");
+  assert.equal(later.sourceVersion.text, "初见正文。");
+  const completed = await service.getImportedDocument(actor, project.id, document.id);
+  assert.deepEqual(completed.chapters.map(({ status }) => status), ["imported", "imported"]);
+  await assert.rejects(
+    () => service.importPendingChapter(actor, project.id, document.id, 0),
+    { code: "CHAPTER_ALREADY_IMPORTED" },
+  );
+});
+
 test("预检为不支持、损坏和合规受限输入返回不同错误码", async () => {
   const projectInput = validProject;
   const unsupported = createService();

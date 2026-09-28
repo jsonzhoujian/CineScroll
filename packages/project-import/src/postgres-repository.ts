@@ -4,6 +4,7 @@ import type {
   Actor,
   Chapter,
   ChapterHead,
+  ImportedDocument,
   Project,
   ProjectAccess,
   ProjectImportRepository,
@@ -51,12 +52,56 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     });
   }
 
-  async createChapter(actor: Actor, projectId: string, chapter: Chapter): Promise<Chapter> {
+  async createChapterFromDocument(
+    actor: Actor,
+    projectId: string,
+    document: ImportedDocument,
+    chapter: Chapter,
+  ): Promise<Chapter> {
     return this.inTransaction(actor, async (client) => {
       const project = await client.query("select id from projects where id = $1 for key share", [projectId]);
       if (project.rowCount === 0) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
       await insertChapter(client, projectId, chapter, new Set());
+      await insertImportedDocument(client, projectId, document);
       return structuredClone(chapter);
+    });
+  }
+
+  async findImportedDocument(actor: Actor, projectId: string, documentId: string): Promise<ImportedDocument | null> {
+    return this.inTransaction(actor, (client) => loadImportedDocument(client, projectId, documentId));
+  }
+
+  async importPendingChapter(
+    actor: Actor,
+    projectId: string,
+    documentId: string,
+    chapterIndex: number,
+    chapter: Chapter,
+  ): Promise<{ document: ImportedDocument; chapter: Chapter }> {
+    return this.inTransaction(actor, async (client) => {
+      const documentRow = await client.query(
+        "select id from imported_documents where project_id = $1 and id = $2 for key share",
+        [projectId, documentId],
+      );
+      if (documentRow.rowCount === 0) {
+        throw new ProjectImportError("IMPORTED_DOCUMENT_NOT_FOUND", "导入文档不存在或无权访问");
+      }
+      const candidate = await client.query<{ status: "pending" | "imported" } & QueryResultRow>(
+        `select status from imported_document_chapters
+         where project_id = $1 and document_id = $2 and chapter_index = $3 for update`,
+        [projectId, documentId, chapterIndex],
+      );
+      if (!candidate.rows[0]) throw new ProjectImportError("CHAPTER_SELECTION_REQUIRED", "请选择需要处理的章节");
+      if (candidate.rows[0].status === "imported") throw new ProjectImportError("CHAPTER_ALREADY_IMPORTED", "该章节已经入卷");
+      await insertChapter(client, projectId, chapter, new Set());
+      await client.query(
+        `update imported_document_chapters set status = 'imported', chapter_id = $1
+         where project_id = $2 and document_id = $3 and chapter_index = $4`,
+        [chapter.id, projectId, documentId, chapterIndex],
+      );
+      const document = await loadImportedDocument(client, projectId, documentId);
+      if (!document) throw new ProjectImportError("IMPORTED_DOCUMENT_NOT_FOUND", "导入文档不存在或无权访问");
+      return { document, chapter: structuredClone(chapter) };
     });
   }
 
@@ -138,6 +183,23 @@ async function insertProject(client: PoolClient, project: Project): Promise<void
     );
   }
   for (const chapter of project.chapters) await insertChapter(client, project.id, chapter, new Set());
+}
+
+async function insertImportedDocument(client: PoolClient, projectId: string, document: ImportedDocument): Promise<void> {
+  await client.query(
+    `insert into imported_documents (id, project_id, file_name, imported_at, imported_by)
+     values ($1,$2,$3,$4,$5)`,
+    [document.id, projectId, document.fileName, document.importedAt, document.importedBy],
+  );
+  for (const chapter of document.chapters) {
+    await client.query(
+      `insert into imported_document_chapters
+       (document_id, project_id, chapter_index, title, source_text, character_count, status, chapter_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [document.id, projectId, chapter.index, chapter.title, chapter.text,
+        chapter.characterCount, chapter.status, chapter.chapterId ?? null],
+    );
+  }
 }
 
 async function insertChapter(
@@ -236,6 +298,38 @@ async function loadProject(client: PoolClient, projectId: string, lock: boolean)
   };
 }
 
+async function loadImportedDocument(
+  client: PoolClient,
+  projectId: string,
+  documentId: string,
+): Promise<ImportedDocument | null> {
+  const result = await client.query<ImportedDocumentRow>(
+    "select * from imported_documents where project_id = $1 and id = $2",
+    [projectId, documentId],
+  );
+  const document = result.rows[0];
+  if (!document) return null;
+  const chapters = await client.query<ImportedDocumentChapterRow>(
+    `select chapter_index, title, source_text, character_count, status, chapter_id
+     from imported_document_chapters where project_id = $1 and document_id = $2 order by chapter_index`,
+    [projectId, documentId],
+  );
+  return {
+    id: document.id,
+    fileName: document.file_name,
+    importedAt: document.imported_at.toISOString(),
+    importedBy: document.imported_by,
+    chapters: chapters.rows.map((chapter) => ({
+      index: chapter.chapter_index,
+      title: chapter.title,
+      text: chapter.source_text,
+      characterCount: chapter.character_count,
+      status: chapter.status,
+      ...(chapter.chapter_id ? { chapterId: chapter.chapter_id } : {}),
+    })),
+  };
+}
+
 async function loadChapter(client: PoolClient, projectId: string, chapter: ChapterRow): Promise<Chapter> {
   const versions = await client.query<SourceVersionRow>(
     `select * from source_versions where project_id = $1 and chapter_id = $2 order by ordinal`,
@@ -283,6 +377,13 @@ interface ProjectRow extends QueryResultRow {
   narrative_mode: Project["narrativeMode"]; data_region: "CN"; created_at: Date;
 }
 interface MemberRow extends QueryResultRow { user_id: string; role: Project["members"][number]["role"] }
+interface ImportedDocumentRow extends QueryResultRow {
+  id: string; file_name: string; imported_at: Date; imported_by: string;
+}
+interface ImportedDocumentChapterRow extends QueryResultRow {
+  chapter_index: number; title: string; source_text: string; character_count: number;
+  status: "pending" | "imported"; chapter_id: string | null;
+}
 interface ChapterRow extends QueryResultRow { id: string; title: string; active_source_version_id: string }
 interface SourceVersionRow extends QueryResultRow {
   id: string; ordinal: number; created_at: Date; created_by: string;

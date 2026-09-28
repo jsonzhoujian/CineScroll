@@ -2,6 +2,24 @@
   display: none;
 }
 
+.saved-directory {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.saved-directory p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  font-size: 12px;
+}
+
+.saved-directory small {
+  color: var(--muted);
+}
+
 @media (max-width: 720px) {
   .work-area > .panel {
     display: none;

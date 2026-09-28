@@ -165,7 +165,7 @@ function identityStatusFor(code: IdentityError["code"]): number {
 }
 
 function statusFor(code: ProjectImportError["code"]): number {
-  if (code === "PROJECT_NOT_FOUND" || code === "CHAPTER_NOT_FOUND") return 404;
+  if (code === "PROJECT_NOT_FOUND" || code === "CHAPTER_NOT_FOUND" || code === "IMPORTED_DOCUMENT_NOT_FOUND") return 404;
   if (code === "PROJECT_WRITE_FORBIDDEN") return 403;
   if (code === "CHAPTER_TOO_LARGE") return 413;
   if (code === "COMPLIANCE_UNAVAILABLE" || code === "DOCX_EXTRACTOR_UNAVAILABLE") return 503;
@@ -200,6 +200,22 @@ export class ProjectController {
 
   getChapter(request: AuthenticatedRequest, projectId: string, chapterId: string) {
     return this.projects.getChapter(request.actor!, projectId, chapterId);
+  }
+
+  getImportedDocument(request: AuthenticatedRequest, projectId: string, documentId: string) {
+    return this.projects.getImportedDocument(request.actor!, projectId, documentId);
+  }
+
+  importPendingChapter(
+    request: AuthenticatedRequest,
+    projectId: string,
+    documentId: string,
+    body: unknown,
+  ) {
+    if (!isRecord(body) || !Number.isInteger(body.chapterIndex) || (body.chapterIndex as number) < 0) {
+      throw new BadRequestException("待处理章节请求格式无效");
+    }
+    return this.projects.importPendingChapter(request.actor!, projectId, documentId, body.chapterIndex as number);
   }
 
   reimportChapter(
@@ -367,6 +383,15 @@ Get(":projectId/chapters/:chapterId")(ProjectController.prototype, "getChapter",
 Req()(ProjectController.prototype, "getChapter", 0);
 Param("projectId")(ProjectController.prototype, "getChapter", 1);
 Param("chapterId")(ProjectController.prototype, "getChapter", 2);
+Get(":projectId/imported-documents/:documentId")(ProjectController.prototype, "getImportedDocument", Object.getOwnPropertyDescriptor(ProjectController.prototype, "getImportedDocument")!);
+Req()(ProjectController.prototype, "getImportedDocument", 0);
+Param("projectId")(ProjectController.prototype, "getImportedDocument", 1);
+Param("documentId")(ProjectController.prototype, "getImportedDocument", 2);
+Post(":projectId/imported-documents/:documentId/chapters/import")(ProjectController.prototype, "importPendingChapter", Object.getOwnPropertyDescriptor(ProjectController.prototype, "importPendingChapter")!);
+Req()(ProjectController.prototype, "importPendingChapter", 0);
+Param("projectId")(ProjectController.prototype, "importPendingChapter", 1);
+Param("documentId")(ProjectController.prototype, "importPendingChapter", 2);
+Body()(ProjectController.prototype, "importPendingChapter", 3);
 Post(":projectId/chapters/:chapterId/reimport")(ProjectController.prototype, "reimportChapter", Object.getOwnPropertyDescriptor(ProjectController.prototype, "reimportChapter")!);
 Req()(ProjectController.prototype, "reimportChapter", 0);
 Param("projectId")(ProjectController.prototype, "reimportChapter", 1);

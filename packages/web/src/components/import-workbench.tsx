@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { ApiClient, type Chapter, type ChapterInspection, type SourceVersionDiff } from "../lib/api";
+import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type SourceVersionDiff } from "../lib/api";
 import { buildDocumentRequest, type DocumentRequest, type ProjectDraft, validateProjectDraft } from "../lib/workflow";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
@@ -34,6 +34,7 @@ export function ImportWorkbench() {
   const [chapters, setChapters] = useState<ChapterInspection[]>([]);
   const [selectedChapter, setSelectedChapter] = useState<number | null>(null);
   const [chapter, setChapter] = useState<Chapter | null>(null);
+  const [importedDocument, setImportedDocument] = useState<ImportedDocumentSummary | null>(null);
   const [reimportText, setReimportText] = useState("");
   const [diff, setDiff] = useState<SourceVersionDiff | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,7 +75,7 @@ export function ImportWorkbench() {
   const importChapter = () => run(async () => {
     if (!project || !document || selectedChapter === null) throw new Error("请选择一个可导入章节");
     const result = await api.importChapter(project.id, document, selectedChapter);
-    setChapter(result.chapter); setReimportText(result.chapter.versions.at(-1)?.text ?? "");
+    setChapter(result.chapter); setImportedDocument(result.document); setReimportText(result.chapter.versions.at(-1)?.text ?? "");
     setStep("version");
   });
   const reimport = () => run(async () => {
@@ -82,6 +83,14 @@ export function ImportWorkbench() {
     const result = await api.reimportChapter(project.id, chapter.id, reimportText);
     setChapter({ ...chapter, activeSourceVersionId: result.sourceVersion.id, versions: [...chapter.versions, result.sourceVersion] });
     setDiff(result.diff);
+  });
+  const importSavedChapter = (chapterIndex: number) => run(async () => {
+    if (!project || !importedDocument) return;
+    const result = await api.importPendingChapter(project.id, importedDocument.id, chapterIndex);
+    setChapter(result.chapter);
+    setImportedDocument(result.document);
+    setReimportText(result.chapter.versions.at(-1)?.text ?? "");
+    setDiff(null);
   });
 
   return <main className="app-shell">
@@ -143,7 +152,7 @@ export function ImportWorkbench() {
           <div className="inline-actions"><button className="text-button" onClick={() => setStep("source")}>返回修改原文</button><Action onClick={importChapter} busy={busy}>确认并创建原文版本</Action></div>
         </Panel>}
 
-        {step === "version" && chapter && <VersionDesk chapter={chapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
+        {step === "version" && chapter && <VersionDesk chapter={chapter} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
 
@@ -164,11 +173,11 @@ function Field({ label, wide, children }: { label: string; wide?: boolean; child
 function Choice<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: ReadonlyArray<readonly [T, string]>; onChange(value: T): void }) { return <fieldset className="choice"><legend>{label}</legend><div>{options.map(([id, name]) => <button type="button" key={id} className={value === id ? "active" : ""} onClick={() => onChange(id)}>{name}</button>)}</div></fieldset>; }
 function Action({ children, onClick, busy }: { children: React.ReactNode; onClick(): void; busy: boolean }) { return <button className="button primary action" onClick={onClick} disabled={busy}>{busy ? "处理中…" : children}<span>→</span></button>; }
 
-function VersionDesk({ chapter, reimportText, setReimportText, reimport, busy, diff }: { chapter: Chapter; reimportText: string; setReimportText(value: string): void; reimport(): void; busy: boolean; diff: SourceVersionDiff | null }) {
+function VersionDesk({ chapter, importedDocument, importSavedChapter, reimportText, setReimportText, reimport, busy, diff }: { chapter: Chapter; importedDocument: ImportedDocumentSummary | null; importSavedChapter(index: number): void; reimportText: string; setReimportText(value: string): void; reimport(): void; busy: boolean; diff: SourceVersionDiff | null }) {
   const version = chapter.versions.at(-1)!;
   return <div className="version-desk"><div className="version-head"><div><span className="eyebrow">原文版本 {String(version.ordinal).padStart(2,'0')}</span><h2>{chapter.title}</h2></div><span className="version-badge">已入卷 · {version.characterCount} 字</span></div>
     <div className="version-grid"><section className="manuscript"><div className="paper-head"><span>原文片段</span><small>{version.id}</small></div>{version.fragments.map((fragment) => <article key={fragment.id}><small>{fragment.id}</small><p>{fragment.text}</p></article>)}</section>
-      <aside className="reimport"><span className="eyebrow">重新导入</span><h3>比较新版本</h3><p>原版本不会被覆盖。修改正文后创建版本 {version.ordinal + 1}。</p><textarea value={reimportText} onChange={(event) => setReimportText(event.target.value)} /><button className="button secondary" onClick={reimport} disabled={busy}>生成差异</button>
+      <aside className="reimport">{importedDocument && <div className="saved-directory"><span className="eyebrow">已保存章节目录</span>{importedDocument.chapters.map((item) => <p key={item.index}><span><b>{item.title}</b><small>{item.status === "imported" ? "已入卷" : "待后续处理"} · {item.characterCount} 字</small></span>{item.status === "pending" && <button onClick={() => importSavedChapter(item.index)} disabled={busy}>现在处理</button>}</p>)}</div>}<span className="eyebrow">重新导入</span><h3>比较新版本</h3><p>原版本不会被覆盖。修改正文后创建版本 {version.ordinal + 1}。</p><textarea value={reimportText} onChange={(event) => setReimportText(event.target.value)} /><button className="button secondary" onClick={reimport} disabled={busy}>生成差异</button>
         {diff && <div className="diff"><Diff title="新增" tone="add" items={diff.added} /><Diff title="删除" tone="remove" items={diff.removed} /><Diff title="未变化" tone="same" items={diff.unchanged} /></div>}</aside></div></div>;
 }
 function Diff({ title, tone, items }: { title: string; tone: string; items: string[] }) { return <div className={`diff-group ${tone}`}><b>{title} · {items.length}</b>{items.map((item, index) => <p key={`${tone}-${index}`}>{item}</p>)}</div>; }

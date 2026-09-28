@@ -17,6 +17,8 @@ integrationTest("PostgreSQL 持久化版本历史、事务回滚并执行租户�
   try {
     const migration = await readFile(new URL("../migrations/0001_project_import.sql", import.meta.url), "utf8");
     await adminPool.query(migration);
+    const importedDocumentsMigration = await readFile(new URL("../migrations/0002_imported_documents.sql", import.meta.url), "utf8");
+    await adminPool.query(importedDocumentsMigration);
     await adminPool.query("truncate table projects cascade");
     await adminPool.query("drop role if exists novel_app_test");
     await adminPool.query("create role novel_app_test login password 'test-only-password' in role novel_app");
@@ -35,7 +37,7 @@ integrationTest("PostgreSQL 持久化版本历史、事务回滚并执行租户�
     });
     const imported = await service.importText(actor, project.id, {
       fileName: "第一章.txt",
-      text: "第1章 初见\n第一段。\n\n第二段。",
+      text: "第1章 初见\n第一段。\n\n第二段。\n第2章 再会\n待处理正文。",
       selectedChapterIndex: 0,
     });
 
@@ -43,6 +45,14 @@ integrationTest("PostgreSQL 持久化版本历史、事务回滚并执行租户�
     const persisted = await restartedService.getChapter(actor, project.id, imported.chapter.id);
     assert.deepEqual(persisted.versions.map(({ ordinal }) => ordinal), [1]);
     assert.equal(persisted.versions[0]!.text, "第一段。\n\n第二段。");
+    const persistedDocument = await restartedService.getImportedDocument(actor, project.id, imported.document.id);
+    assert.deepEqual(persistedDocument.chapters.map(({ title, status }) => ({ title, status })), [
+      { title: "第1章 初见", status: "imported" },
+      { title: "第2章 再会", status: "pending" },
+    ]);
+    const continued = await restartedService.importPendingChapter(actor, project.id, imported.document.id, 1);
+    assert.equal(continued.sourceVersion.text, "待处理正文。");
+    assert.deepEqual(continued.document.chapters.map(({ status }) => status), ["imported", "imported"]);
 
     const reimported = await service.reimportText(actor, project.id, imported.chapter.id, {
       fileName: "第一章-修订.txt",
@@ -131,7 +141,7 @@ integrationTest("PostgreSQL 持久化版本历史、事务回滚并执行租户�
       { code: "PROJECT_NOT_FOUND" },
     );
     const hiddenCounts = await withActor(pool, outsider, async (client) => {
-      const tables = ["chapters", "source_versions", "source_fragments", "source_version_fragments"] as const;
+      const tables = ["chapters", "source_versions", "source_fragments", "source_version_fragments", "imported_documents", "imported_document_chapters"] as const;
       const counts: number[] = [];
       for (const table of tables) {
         const result = await client.query<{ count: string } & QueryResultRow>(`select count(*) from ${table}`);
@@ -139,7 +149,7 @@ integrationTest("PostgreSQL 持久化版本历史、事务回滚并执行租户�
       }
       return counts;
     });
-    assert.deepEqual(hiddenCounts, [0, 0, 0, 0]);
+    assert.deepEqual(hiddenCounts, [0, 0, 0, 0, 0, 0]);
 
     await assert.rejects(
       () => withActor(pool!, outsider, (client) => client.query(

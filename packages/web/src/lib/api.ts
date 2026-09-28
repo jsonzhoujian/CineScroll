@@ -29,6 +29,18 @@ export type SourceVersionDiff = {
   added: string[];
 };
 
+export type ImportedDocumentSummary = {
+  id: string;
+  fileName: string;
+  chapters: Array<{
+    index: number;
+    title: string;
+    characterCount: number;
+    status: "pending" | "imported";
+    chapterId?: string;
+  }>;
+};
+
 type CredentialMode = "none" | "device" | "session";
 
 export class ApiClient {
@@ -73,9 +85,17 @@ export class ApiClient {
   }
 
   importChapter(projectId: string, document: DocumentRequest, selectedChapterIndex: number) {
-    return this.request<{ chapter: Chapter }>(`/projects/${projectId}/chapters/import`, {
+    return this.request<{ chapter: Chapter; document: ImportedDocumentSummary }>(`/projects/${projectId}/chapters/import`, {
       method: "POST", body: JSON.stringify({ document, selectedChapterIndex }),
     }, "session");
+  }
+
+  importPendingChapter(projectId: string, documentId: string, chapterIndex: number) {
+    return this.request<{ chapter: Chapter; document: ImportedDocumentSummary }>(
+      `/projects/${projectId}/imported-documents/${documentId}/chapters/import`,
+      { method: "POST", body: JSON.stringify({ chapterIndex }) },
+      "session",
+    );
   }
 
   reimportChapter(projectId: string, chapterId: string, text: string) {
