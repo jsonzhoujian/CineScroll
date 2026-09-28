@@ -91,6 +91,7 @@ export interface IdentityAccount {
 }
 
 export interface IdentityRepository {
+  findActorByUserId(userId: string): Promise<Actor | null>;
   findOrCreateByPhone(phone: string, create: () => IdentityAccount): Promise<IdentityAccount>;
   findOrCreateByWechat(identity: { openId: string; unionId?: string }, create: () => IdentityAccount): Promise<IdentityAccount>;
   bindWechat(actor: Actor, identity: { openId: string; unionId?: string }): Promise<void>;
@@ -180,6 +181,11 @@ export class InMemoryLoginRateLimiter implements LoginRateLimiter {
 
 export class InMemoryIdentityRepository implements IdentityRepository {
   readonly #accounts: IdentityAccount[] = [];
+
+  async findActorByUserId(userId: string): Promise<Actor | null> {
+    const account = this.#accounts.find((candidate) => candidate.userId === userId);
+    return account ? { userId: account.userId, workspaceId: account.workspaceId } : null;
+  }
 
   async findOrCreateByPhone(phone: string, create: () => IdentityAccount): Promise<IdentityAccount> {
     let account = this.#accounts.find((candidate) => candidate.phone === phone);
@@ -382,9 +388,21 @@ export class IdentityService {
     await this.dependencies.repository.bindWechat(challenge.bindActor, identity);
   }
 
+  async completeWechatCallback(input: { code: string; state: string; redirectUri: string }) {
+    const challenge = await this.dependencies.challengeStore.find(input.state);
+    if (!challenge || challenge.kind !== "wechat") {
+      throw new IdentityError("INVALID_OAUTH_STATE", "微信登录状态无效或已过期");
+    }
+    if (challenge.bindActor) {
+      await this.completeWechatBinding(input);
+      return { kind: "binding" as const, bound: true };
+    }
+    return { kind: "login" as const, ...await this.completeWechatLogin(input) };
+  }
+
   async completeWechatLogin(input: { code: string; state: string; redirectUri: string }) {
     const challenge = await this.dependencies.challengeStore.find(input.state);
-    const invalid = !challenge || challenge.kind !== "wechat" || challenge.consumed
+    const invalid = !challenge || challenge.kind !== "wechat" || Boolean(challenge.bindActor) || challenge.consumed
       || challenge.redirectUri !== input.redirectUri
       || Date.parse(challenge.expiresAt) <= this.dependencies.clock().getTime();
     if (invalid) throw new IdentityError("INVALID_OAUTH_STATE", "微信登录状态无效或已过期");

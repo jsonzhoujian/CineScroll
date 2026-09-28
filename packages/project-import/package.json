@@ -2,7 +2,12 @@
   "name": "@novel-adaptation/project-import",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./http-compliance-scanner": "./src/http-compliance-scanner.ts",
+    "./mammoth-docx-extractor": "./src/mammoth-docx-extractor.ts",
+    "./postgres-repository": "./src/postgres-repository.ts"
+  },
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --project tsconfig.json"

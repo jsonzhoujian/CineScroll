@@ -2,6 +2,10 @@
   "name": "@novel-adaptation/api",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./production": "./src/production.ts"
+  },
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --project tsconfig.json"
@@ -12,12 +16,14 @@
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
+    "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.6",
     "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.1.4",
     "typescript": "^7.0.2"

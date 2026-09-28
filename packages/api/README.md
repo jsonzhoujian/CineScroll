@@ -4,6 +4,12 @@ This NestJS module exposes the T04 project-import application seam without accep
 
 Implemented endpoints:
 
+- `POST /auth/device`
+- `POST /auth/phone/challenges`
+- `POST /auth/phone/verify`
+- `POST /auth/wechat/start`
+- `GET /auth/wechat/callback`
+- `POST /auth/wechat/bind/start`
 - `POST /projects`
 - `POST /projects/:projectId/imports/inspect`
 - `POST /projects/:projectId/chapters/import`
@@ -12,4 +18,6 @@ Implemented endpoints:
 
 Paste requests carry text directly. TXT and DOCX requests carry strict canonical Base64 in `contentBase64`; decoding failures return `MALFORMED_DOCUMENT`. Domain errors retain stable machine-readable codes, and cross-workspace project access uses the same `PROJECT_NOT_FOUND` response.
 
-The module intentionally leaves concrete providers to the deployment composition root. Phone-code and WeChat HTTP endpoints, production adapter composition, and the import workbench UI are the next T04 slices.
+微信登录和账号绑定使用同一个已登记回调地址，服务端根据一次性 state 的用途完成登录或绑定，避免回调串线。手机号接口从受信代理解析器获取客户端 IP，并要求服务端签名的设备 token；手机号、IP、设备三维限流仍由 identity 模块统一执行。
+
+`createProductionApi` composes the PostgreSQL repositories, HTTPS SMS/WeChat/compliance providers, DOCX worker and session verification. Production configuration requires a database CA with certificate verification, independent session/device secrets and an explicit trusted-proxy hop count. The remaining T04 slice is the project/chapter import workbench UI.

@@ -1,3 +1,6 @@
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
+
 import {
   BadRequestException,
   Body,
@@ -9,22 +12,85 @@ import {
   Module,
   Param,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import type { ArgumentsHost, CanActivate, ExceptionFilter, ExecutionContext } from "@nestjs/common";
+import type { ArgumentsHost, CanActivate, DynamicModule, ExceptionFilter, ExecutionContext } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 
-import type { Actor, SessionVerifier } from "@novel-adaptation/identity";
+import { IdentityError } from "@novel-adaptation/identity";
+import type { Actor, IdentityService, SessionVerifier } from "@novel-adaptation/identity";
+import { IdentityProviderError } from "@novel-adaptation/identity/providers";
 import { ProjectImportError } from "@novel-adaptation/project-import";
 import type { CreateProjectInput, DocumentInput, ProjectImportService, TextImportInput } from "@novel-adaptation/project-import";
 
 export const SESSION_VERIFIER = Symbol("SESSION_VERIFIER");
 export const PROJECT_IMPORT = Symbol("PROJECT_IMPORT");
+export const IDENTITY_SERVICE = Symbol("IDENTITY_SERVICE");
+export const WECHAT_REDIRECT_URI = Symbol("WECHAT_REDIRECT_URI");
+export const DEVICE_TOKENS = Symbol("DEVICE_TOKENS");
+export const CLIENT_IP_RESOLVER = Symbol("CLIENT_IP_RESOLVER");
+
+export interface DeviceTokenService {
+  issue(): string;
+  verify(token: string): string | null;
+}
+
+export class HmacDeviceTokenService implements DeviceTokenService {
+  readonly #secret: string;
+
+  constructor(secret: string) {
+    if (Buffer.byteLength(secret) < 32) throw new Error("Device token secret must be at least 32 bytes");
+    this.#secret = secret;
+  }
+
+  issue(): string {
+    const id = randomBytes(24).toString("base64url");
+    return `v1.${id}.${this.sign(id)}`;
+  }
+
+  verify(token: string): string | null {
+    const [version, id, signature, extra] = token.split(".");
+    if (version !== "v1" || !id || !signature || extra) return null;
+    const expected = Buffer.from(this.sign(id));
+    const actual = Buffer.from(signature);
+    return actual.length === expected.length && timingSafeEqual(actual, expected) ? id : null;
+  }
+
+  private sign(id: string): string {
+    return createHmac("sha256", this.#secret).update(`v1.${id}`).digest("base64url");
+  }
+}
+
+export interface ClientIpResolver {
+  resolve(request: AuthenticatedRequest): string;
+}
+
+export class ForwardedClientIpResolver implements ClientIpResolver {
+  readonly #trustedProxyHops: number;
+
+  constructor(trustedProxyHops: number) {
+    if (!Number.isInteger(trustedProxyHops) || trustedProxyHops < 0 || trustedProxyHops > 10) {
+      throw new Error("Trusted proxy hops must be an integer between 0 and 10");
+    }
+    this.#trustedProxyHops = trustedProxyHops;
+  }
+
+  resolve(request: AuthenticatedRequest): string {
+    const remote = normalizeIp(request.socket?.remoteAddress ?? request.ip);
+    if (this.#trustedProxyHops === 0) return remote;
+    const forwarded = request.headers["x-forwarded-for"];
+    const values = typeof forwarded === "string" ? forwarded.split(",").map((value) => normalizeIp(value.trim())) : [];
+    return values[Math.max(0, values.length - this.#trustedProxyHops)] ?? remote;
+  }
+}
 
 type AuthenticatedRequest = {
   headers: Record<string, string | string[] | undefined>;
+  ip?: string;
+  socket?: { remoteAddress?: string };
   actor?: Actor;
 };
 
@@ -64,6 +130,39 @@ export class ProjectImportExceptionFilter implements ExceptionFilter<ProjectImpo
 }
 
 Catch(ProjectImportError)(ProjectImportExceptionFilter);
+
+export class IdentityExceptionFilter implements ExceptionFilter<IdentityError> {
+  catch(error: IdentityError, host: ArgumentsHost): void {
+    const response = host.switchToHttp().getResponse<{
+      status(code: number): { json(body: object): void };
+      setHeader(name: string, value: string): void;
+    }>();
+    if (error.retryAfterSeconds !== undefined) response.setHeader("retry-after", String(error.retryAfterSeconds));
+    response.status(identityStatusFor(error.code)).json({ code: error.code, message: error.message });
+  }
+}
+
+Catch(IdentityError)(IdentityExceptionFilter);
+
+export class IdentityProviderExceptionFilter implements ExceptionFilter<IdentityProviderError> {
+  catch(_error: IdentityProviderError, host: ArgumentsHost): void {
+    const response = host.switchToHttp().getResponse<{ status(code: number): { json(body: object): void } }>();
+    response.status(503).json({
+      code: "IDENTITY_PROVIDER_UNAVAILABLE",
+      message: "登录服务暂不可用，请稍后重试",
+    });
+  }
+}
+
+Catch(IdentityProviderError)(IdentityProviderExceptionFilter);
+
+function identityStatusFor(code: IdentityError["code"]): number {
+  if (code === "RATE_LIMITED") return 429;
+  if (code === "INVALID_OR_EXPIRED_CODE" || code === "INVALID_OAUTH_STATE") return 401;
+  if (code === "ACCOUNT_NOT_FOUND") return 404;
+  if (code === "IDENTITY_ALREADY_BOUND") return 409;
+  return 422;
+}
 
 function statusFor(code: ProjectImportError["code"]): number {
   if (code === "PROJECT_NOT_FOUND" || code === "CHAPTER_NOT_FOUND") return 404;
@@ -111,6 +210,86 @@ export class ProjectController {
   ) {
     return this.projects.reimportText(request.actor!, projectId, chapterId, textImportFrom(body));
   }
+}
+
+export class AuthController {
+  private readonly identity: IdentityService;
+  private readonly wechatRedirectUri: string;
+  private readonly deviceTokens: DeviceTokenService;
+  private readonly clientIps: ClientIpResolver;
+
+  constructor(identity: IdentityService, wechatRedirectUri: string, deviceTokens: DeviceTokenService, clientIps: ClientIpResolver) {
+    this.identity = identity;
+    this.wechatRedirectUri = wechatRedirectUri;
+    this.deviceTokens = deviceTokens;
+    this.clientIps = clientIps;
+  }
+
+  issueDeviceToken() {
+    return { deviceToken: this.deviceTokens.issue() };
+  }
+
+  requestPhoneCode(request: AuthenticatedRequest, body: unknown) {
+    const input = phoneChallengeFrom(this.deviceTokens, this.clientIps, request, body);
+    return this.identity.requestPhoneCode(input);
+  }
+
+  verifyPhoneCode(request: AuthenticatedRequest, body: unknown) {
+    const input = phoneVerificationFrom(this.deviceTokens, this.clientIps, request, body);
+    return this.identity.verifyPhoneCode(input);
+  }
+
+  startWechatLogin() {
+    return this.identity.beginWechatLogin({ redirectUri: this.wechatRedirectUri });
+  }
+
+  completeWechatLogin(query: unknown) {
+    const input = oauthCallbackFrom(query);
+    return this.identity.completeWechatCallback({ ...input, redirectUri: this.wechatRedirectUri });
+  }
+
+  startWechatBinding(request: AuthenticatedRequest) {
+    return this.identity.beginWechatBinding(request.actor!);
+  }
+
+}
+
+function phoneChallengeFrom(deviceTokens: DeviceTokenService, clientIps: ClientIpResolver, request: AuthenticatedRequest, value: unknown) {
+  if (!isRecord(value) || typeof value.phone !== "string") throw new BadRequestException("手机号请求格式无效");
+  return { phone: value.phone, ipAddress: clientIps.resolve(request), deviceId: deviceId(deviceTokens, request) };
+}
+
+function phoneVerificationFrom(deviceTokens: DeviceTokenService, clientIps: ClientIpResolver, request: AuthenticatedRequest, value: unknown) {
+  if (!isRecord(value) || typeof value.challengeId !== "string" || typeof value.phone !== "string"
+    || typeof value.code !== "string") throw new BadRequestException("验证码请求格式无效");
+  return {
+    challengeId: value.challengeId,
+    phone: value.phone,
+    code: value.code,
+    ipAddress: clientIps.resolve(request),
+    deviceId: deviceId(deviceTokens, request),
+  };
+}
+
+function oauthCallbackFrom(value: unknown): { code: string; state: string } {
+  if (!isRecord(value) || typeof value.code !== "string" || typeof value.state !== "string"
+    || !value.code || !value.state) throw new BadRequestException("微信回调参数无效");
+  return { code: value.code, state: value.state };
+}
+
+function deviceId(deviceTokens: DeviceTokenService, request: AuthenticatedRequest): string {
+  const value = request.headers["x-device-token"];
+  const id = typeof value === "string" && value.length <= 300 ? deviceTokens.verify(value) : null;
+  if (!id) {
+    throw new BadRequestException("缺少有效的设备标识");
+  }
+  return id;
+}
+
+function normalizeIp(value: string | undefined): string {
+  const normalized = value?.startsWith("::ffff:") ? value.slice(7) : value;
+  if (!normalized || isIP(normalized) === 0) throw new BadRequestException("客户端 IP 地址无效");
+  return normalized;
 }
 
 function projectInputFrom(value: unknown): CreateProjectInput {
@@ -193,15 +372,56 @@ Req()(ProjectController.prototype, "reimportChapter", 0);
 Param("projectId")(ProjectController.prototype, "reimportChapter", 1);
 Param("chapterId")(ProjectController.prototype, "reimportChapter", 2);
 Body()(ProjectController.prototype, "reimportChapter", 3);
+Controller("auth")(AuthController);
+Inject(IDENTITY_SERVICE)(AuthController, undefined, 0);
+Inject(WECHAT_REDIRECT_URI)(AuthController, undefined, 1);
+Inject(DEVICE_TOKENS)(AuthController, undefined, 2);
+Inject(CLIENT_IP_RESOLVER)(AuthController, undefined, 3);
+Post("device")(AuthController.prototype, "issueDeviceToken", Object.getOwnPropertyDescriptor(AuthController.prototype, "issueDeviceToken")!);
+Post("phone/challenges")(AuthController.prototype, "requestPhoneCode", Object.getOwnPropertyDescriptor(AuthController.prototype, "requestPhoneCode")!);
+Req()(AuthController.prototype, "requestPhoneCode", 0);
+Body()(AuthController.prototype, "requestPhoneCode", 1);
+Post("phone/verify")(AuthController.prototype, "verifyPhoneCode", Object.getOwnPropertyDescriptor(AuthController.prototype, "verifyPhoneCode")!);
+Req()(AuthController.prototype, "verifyPhoneCode", 0);
+Body()(AuthController.prototype, "verifyPhoneCode", 1);
+Post("wechat/start")(AuthController.prototype, "startWechatLogin", Object.getOwnPropertyDescriptor(AuthController.prototype, "startWechatLogin")!);
+Get("wechat/callback")(AuthController.prototype, "completeWechatLogin", Object.getOwnPropertyDescriptor(AuthController.prototype, "completeWechatLogin")!);
+Query()(AuthController.prototype, "completeWechatLogin", 0);
+Post("wechat/bind/start")(AuthController.prototype, "startWechatBinding", Object.getOwnPropertyDescriptor(AuthController.prototype, "startWechatBinding")!);
+UseGuards(SessionGuard)(AuthController.prototype, "startWechatBinding", Object.getOwnPropertyDescriptor(AuthController.prototype, "startWechatBinding")!);
+Req()(AuthController.prototype, "startWechatBinding", 0);
 
-export class ProjectImportApiModule {}
+export interface ProjectImportApiServices {
+  identity: IdentityService;
+  sessionVerifier: SessionVerifier;
+  projectImport: ProjectImportService;
+  wechatRedirectUri: string;
+  deviceTokens: DeviceTokenService;
+  clientIpResolver: ClientIpResolver;
+}
+
+export class ProjectImportApiModule {
+  static register(services: ProjectImportApiServices): DynamicModule {
+    return {
+      module: ProjectImportApiModule,
+      providers: [
+        { provide: SESSION_VERIFIER, useValue: services.sessionVerifier },
+        { provide: PROJECT_IMPORT, useValue: services.projectImport },
+        { provide: IDENTITY_SERVICE, useValue: services.identity },
+        { provide: WECHAT_REDIRECT_URI, useValue: services.wechatRedirectUri },
+        { provide: DEVICE_TOKENS, useValue: services.deviceTokens },
+        { provide: CLIENT_IP_RESOLVER, useValue: services.clientIpResolver },
+      ],
+    };
+  }
+}
 
 Module({
-  controllers: [ProjectController],
+  controllers: [ProjectController, AuthController],
   providers: [
     SessionGuard,
     { provide: APP_FILTER, useClass: ProjectImportExceptionFilter },
-    { provide: SESSION_VERIFIER, useValue: null },
-    { provide: PROJECT_IMPORT, useValue: null },
+    { provide: APP_FILTER, useClass: IdentityExceptionFilter },
+    { provide: APP_FILTER, useClass: IdentityProviderExceptionFilter },
   ],
 })(ProjectImportApiModule);

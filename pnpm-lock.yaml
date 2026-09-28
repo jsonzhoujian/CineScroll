@@ -25,6 +25,9 @@ importers:
       '@novel-adaptation/project-import':
         specifier: workspace:*
         version: link:../project-import
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -38,6 +41,9 @@ importers:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3

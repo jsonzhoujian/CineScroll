@@ -8,6 +8,13 @@ export class PostgresIdentityRepository implements IdentityRepository {
   private readonly pool: Pool;
   constructor(pool: Pool) { this.pool = pool; }
 
+  async findActorByUserId(userId: string): Promise<Actor | null> {
+    const row = (await this.pool.query<AccountRow>(
+      "select * from identity_accounts where user_id = $1", [userId],
+    )).rows[0];
+    return row ? { userId: row.user_id, workspaceId: row.workspace_id } : null;
+  }
+
   async findOrCreateByPhone(phone: string, create: () => IdentityAccount) {
     const candidate = create();
     await this.pool.query(

@@ -19,6 +19,11 @@ integration("PostgreSQL 原子保存身份、一次性 challenge 和多维限流
       userId: `usr_${++created}`, workspaceId: `wsp_${created}`, phone: "+8613800138000",
     }))));
     assert.equal(new Set(accounts.map(({ userId }) => userId)).size, 1);
+    assert.deepEqual(await repository.findActorByUserId(accounts[0]!.userId), {
+      userId: accounts[0]!.userId,
+      workspaceId: accounts[0]!.workspaceId,
+    });
+    assert.equal(await repository.findActorByUserId("usr_missing"), null);
 
     const second = await repository.findOrCreateByPhone("+8613900139000", () => ({
       userId: "usr_second", workspaceId: "wsp_second", phone: "+8613900139000",

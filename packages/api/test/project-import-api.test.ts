@@ -5,8 +5,9 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 
 import { HmacSessionManager } from "@novel-adaptation/identity";
+import type { IdentityService } from "@novel-adaptation/identity";
 import { InMemoryProjectImportRepository, ProjectImportService } from "@novel-adaptation/project-import";
-import { ProjectImportApiModule, PROJECT_IMPORT, SESSION_VERIFIER } from "../src/index.ts";
+import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModule } from "../src/index.ts";
 
 test("项目创建 API 拒绝无 Session 请求，并只使用 Session 中的 Actor", async () => {
   let id = 0;
@@ -20,11 +21,14 @@ test("项目创建 API 拒绝无 Session 请求，并只使用 Session 中的 Ac
     idGenerator: (prefix: string) => `${prefix}_${++id}`,
     clock: () => new Date("2026-09-28T00:00:00.000Z"),
   });
-  const moduleRef = await Test.createTestingModule({
-    imports: [ProjectImportApiModule],
-  }).overrideProvider(PROJECT_IMPORT).useValue(service)
-    .overrideProvider(SESSION_VERIFIER).useValue(sessions)
-    .compile();
+  const moduleRef = await Test.createTestingModule({ imports: [ProjectImportApiModule.register({
+    identity: {} as IdentityService,
+    sessionVerifier: sessions,
+    projectImport: service,
+    wechatRedirectUri: "https://app.example.cn/auth/wechat/callback",
+    deviceTokens: new HmacDeviceTokenService("abcdef0123456789abcdef0123456789"),
+    clientIpResolver: new ForwardedClientIpResolver(0),
+  })] }).compile();
   const app = moduleRef.createNestApplication();
   await app.listen(0, "127.0.0.1");
   try {
@@ -65,10 +69,14 @@ test("已认证用户可预检多章节、选择一章导入并读取可追溯�
     idGenerator: (prefix: string) => `${prefix}_${++id}`,
     clock: () => new Date("2026-09-28T00:00:00.000Z"),
   });
-  const moduleRef = await Test.createTestingModule({ imports: [ProjectImportApiModule] })
-    .overrideProvider(PROJECT_IMPORT).useValue(service)
-    .overrideProvider(SESSION_VERIFIER).useValue(sessions)
-    .compile();
+  const moduleRef = await Test.createTestingModule({ imports: [ProjectImportApiModule.register({
+    identity: {} as IdentityService,
+    sessionVerifier: sessions,
+    projectImport: service,
+    wechatRedirectUri: "https://app.example.cn/auth/wechat/callback",
+    deviceTokens: new HmacDeviceTokenService("abcdef0123456789abcdef0123456789"),
+    clientIpResolver: new ForwardedClientIpResolver(0),
+  })] }).compile();
   const app = moduleRef.createNestApplication();
   await app.listen(0, "127.0.0.1");
   const token = await sessions.issue("usr_owner", "wsp_studio");

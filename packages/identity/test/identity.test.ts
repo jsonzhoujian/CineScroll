@@ -92,6 +92,12 @@ test("已登录手机号账号可以绑定微信而不创建第二个账号", as
     ipAddress: "203.0.113.8", deviceId: "d1",
   });
   const binding = await service.beginWechatBinding(login.actor);
+  await assert.rejects(
+    () => service.completeWechatLogin({
+      code: "oauth-code", state: binding.state, redirectUri: "https://app.example.cn/auth/wechat/callback",
+    }),
+    { code: "INVALID_OAUTH_STATE" },
+  );
   await service.completeWechatBinding({ code: "oauth-code", state: binding.state });
   const wechat = await service.beginWechatLogin({ redirectUri: "https://app.example.cn/auth/wechat/callback" });
   const wechatLogin = await service.completeWechatLogin({
