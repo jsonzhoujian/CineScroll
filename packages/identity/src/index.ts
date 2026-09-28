@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export type Actor = Readonly<{ userId: string; workspaceId: string }>;
 
@@ -14,6 +14,72 @@ export interface WechatLoginProvider {
 
 export interface SessionIssuer {
   issue(userId: string, workspaceId: string): Promise<string>;
+}
+
+export interface SessionVerifier {
+  verify(token: string): Promise<Actor>;
+}
+
+export class SessionError extends Error {
+  readonly code = "UNAUTHENTICATED";
+
+  constructor() {
+    super("登录状态无效或已过期");
+    this.name = "SessionError";
+  }
+}
+
+export class HmacSessionManager implements SessionIssuer, SessionVerifier {
+  readonly #secret: string;
+  readonly #clock: () => Date;
+  readonly #ttlMs: number;
+  readonly #resolveActor: (userId: string) => Promise<Actor | null>;
+
+  constructor(options: {
+    secret: string;
+    resolveActor: (userId: string) => Promise<Actor | null>;
+    clock?: () => Date;
+    ttlMs?: number;
+  }) {
+    if (Buffer.byteLength(options.secret) < 32) throw new Error("Session secret must be at least 32 bytes");
+    this.#secret = options.secret;
+    this.#clock = options.clock ?? (() => new Date());
+    this.#ttlMs = options.ttlMs ?? 7 * 24 * 60 * 60_000;
+    this.#resolveActor = options.resolveActor;
+  }
+
+  async issue(userId: string, _workspaceId: string): Promise<string> {
+    const payload = Buffer.from(JSON.stringify({ userId, exp: this.#clock().getTime() + this.#ttlMs })).toString("base64url");
+    return `v1.${payload}.${this.sign(payload)}`;
+  }
+
+  async verify(token: string): Promise<Actor> {
+    try {
+      const [version, payload, signature, extra] = token.split(".");
+      if (version !== "v1" || !payload || !signature || extra) throw new SessionError();
+      const expected = Buffer.from(this.sign(payload));
+      const actual = Buffer.from(signature);
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new SessionError();
+      const value: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+      if (!isSessionPayload(value) || value.exp <= this.#clock().getTime()) throw new SessionError();
+      const actor = await this.#resolveActor(value.userId);
+      if (!actor || actor.userId !== value.userId) throw new SessionError();
+      return actor;
+    } catch (error) {
+      if (error instanceof SessionError) throw error;
+      throw new SessionError();
+    }
+  }
+
+  private sign(payload: string): string {
+    return createHmac("sha256", this.#secret).update(`v1.${payload}`).digest("base64url");
+  }
+}
+
+function isSessionPayload(value: unknown): value is { userId: string; exp: number } {
+  return typeof value === "object" && value !== null
+    && typeof (value as Record<string, unknown>).userId === "string"
+    && typeof (value as Record<string, unknown>).exp === "number";
 }
 
 export interface IdentityAccount {

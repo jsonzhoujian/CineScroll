@@ -2,11 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  HmacSessionManager,
   IdentityService,
   InMemoryIdentityRepository,
   InMemoryLoginChallengeStore,
   InMemoryLoginRateLimiter,
 } from "../src/index.ts";
+
+test("签名 Session 可还原 Actor，并拒绝篡改或过期 token", async () => {
+  let now = new Date("2026-09-28T00:00:00.000Z");
+  let resolvedActor: { userId: string; workspaceId: string } | null = { userId: "usr_1", workspaceId: "wsp_1" };
+  const sessions = new HmacSessionManager({
+    secret: "0123456789abcdef0123456789abcdef",
+    clock: () => now,
+    ttlMs: 60_000,
+    resolveActor: async () => resolvedActor,
+  });
+  const actor = { userId: "usr_1", workspaceId: "wsp_1" };
+  const token = await sessions.issue(actor.userId, actor.workspaceId);
+  assert.deepEqual(await sessions.verify(token), actor);
+
+  await assert.rejects(() => sessions.verify(`${token}x`), { code: "UNAUTHENTICATED" });
+  resolvedActor = null;
+  await assert.rejects(() => sessions.verify(token), { code: "UNAUTHENTICATED" });
+  resolvedActor = actor;
+  now = new Date("2026-09-28T00:01:01.000Z");
+  await assert.rejects(() => sessions.verify(token), { code: "UNAUTHENTICATED" });
+});
 
 test("大陆手机号验证码核验成功后创建账号并签发会话", async () => {
   const sent: string[] = [];

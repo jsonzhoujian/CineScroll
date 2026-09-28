@@ -9,6 +9,8 @@ Production adapters:
 
 `InMemoryIdentityRepository`, `InMemoryLoginChallengeStore` and `InMemoryLoginRateLimiter` are deterministic adapters for tests and local composition. Production composition uses `PostgresIdentityRepository`, `PostgresLoginChallengeStore` and `PostgresLoginRateLimiter`; database uniqueness, atomic challenge consumption and transaction-scoped advisory locks protect concurrent requests. Session issuance remains behind `SessionIssuer` for the authenticated API layer.
 
+`HmacSessionManager` signs short bearer credentials but does not trust a workspace copied into the token. Its required `resolveActor` callback reloads the user's current actor on every verification, so disabling an account or changing its workspace takes effect without waiting for token expiry.
+
 Run:
 
 ```bash

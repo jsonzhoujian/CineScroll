@@ -34,5 +34,7 @@ Deliver the first vertical slice from authentication through project creation to
 - [x] Connect the compliance port to a production HTTPS moderation gateway with recoverable provider failures.
 - [x] Add PostgreSQL persistence, immutable version records, indexed composite foreign keys, and RLS tenant isolation.
 - [x] Replace aggregate hydration inside write transactions with chapter-scoped create/append commands so lock time does not grow with full project history.
-- [ ] Expose the application seam through authenticated API endpoints and the import UI.
+- [x] Expose project creation, inspection, import, re-import, and source reads through session-authenticated API endpoints.
+- [ ] Expose phone-code/WeChat login endpoints and compose production authentication and import adapters.
+- [ ] Build the project/chapter import UI over the authenticated API.
 - [x] Add phone-code and WeChat authentication adapters with persistent one-time state, account binding, and phone/IP/device rate limits.

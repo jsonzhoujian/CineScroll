@@ -2,6 +2,7 @@
   "name": "@novel-adaptation/project-import",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --project tsconfig.json"
