@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type SourceVersionDiff } from "../lib/api";
 import { buildDocumentRequest, type DocumentRequest, type ProjectDraft, validateProjectDraft } from "../lib/workflow";
+import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
 const steps: Array<{ id: Step; number: string; label: string; note: string }> = [
@@ -39,6 +40,36 @@ export function ImportWorkbench() {
   const [diff, setDiff] = useState<SourceVersionDiff | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const expectedWechatState = useRef<string | null>(null);
+  const wechatPopup = useRef<Window | null>(null);
+
+  useEffect(() => {
+    const receiveWechatLogin = (event: MessageEvent<unknown>) => {
+      const message = expectedWechatLoginMessage(event, {
+        origin: window.location.origin,
+        source: wechatPopup.current,
+        state: expectedWechatState.current,
+      });
+      if (!message) return;
+      expectedWechatState.current = null;
+      wechatPopup.current = null;
+      api.acceptSession(message.sessionToken);
+      setStep("project");
+      setNotice("微信登录成功");
+    };
+    window.addEventListener("message", receiveWechatLogin);
+    const popupMonitor = window.setInterval(() => {
+      if (wechatPopup.current?.closed && expectedWechatState.current) {
+        wechatPopup.current = null;
+        expectedWechatState.current = null;
+        setNotice("微信登录已取消，可重新发起扫码");
+      }
+    }, 500);
+    return () => {
+      window.removeEventListener("message", receiveWechatLogin);
+      window.clearInterval(popupMonitor);
+    };
+  }, [api]);
 
   const run = async (operation: () => Promise<void>) => {
     setBusy(true); setNotice(null);
@@ -56,6 +87,25 @@ export function ImportWorkbench() {
     await api.verifyPhoneCode({ challengeId, phone, code });
     setStep("project"); setNotice(null);
   });
+  const startWechatLogin = () => {
+    const popup = window.open("", "wechat-login", "popup,width=720,height=760");
+    if (!popup) { setNotice("浏览器阻止了登录窗口，请允许弹窗后重试"); return; }
+    wechatPopup.current = popup;
+    void run(async () => {
+      try {
+        const result = await api.beginWechatLogin();
+        if (!isTrustedWechatAuthorizationUrl(result.authorizationUrl)) {
+          throw new Error("微信授权地址无效，请稍后重试");
+        }
+        expectedWechatState.current = result.state;
+        popup.location.href = result.authorizationUrl;
+      } catch (error) {
+        popup.close();
+        wechatPopup.current = null;
+        throw error;
+      }
+    });
+  };
   const createProject = () => run(async () => {
     const validation = validateProjectDraft(projectDraft);
     if (!validation.ok) throw new Error(validation.message);
@@ -126,7 +176,7 @@ export function ImportWorkbench() {
             <button className="button secondary align-end" onClick={sendCode} disabled={busy}>获取验证码</button>
             <Field label="验证码"><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="6 位验证码" inputMode="numeric" /></Field>
             <button className="button primary align-end" onClick={login} disabled={busy}>验证并进入</button></div>
-          <div className="divider"><span>或</span></div><button className="wechat-button" disabled>微信扫码登录 <small>将在微信开放平台配置后启用二维码展示</small></button>
+          <div className="divider"><span>或</span></div><button className="wechat-button" onClick={startWechatLogin} disabled={busy}>微信扫码登录 <small>在新窗口打开微信官方二维码</small></button>
         </Panel>}
 
         {step === "project" && <Panel eyebrow="项目立项" title="定义这一卷如何被改编" description="这些约束会跟随章节进入后续故事知识、剧本、设定和分镜。">

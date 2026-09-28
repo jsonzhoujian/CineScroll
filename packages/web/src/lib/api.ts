@@ -72,6 +72,24 @@ export class ApiClient {
     return result;
   }
 
+  beginWechatLogin() {
+    return this.request<{ state: string; authorizationUrl: string }>("/auth/wechat/start", { method: "POST" });
+  }
+
+  completeWechatLogin(code: string, state: string) {
+    const query = new URLSearchParams({ code, state });
+    return this.request<{
+      kind: "login";
+      actor: { userId: string; workspaceId: string };
+      sessionToken: string;
+    }>(`/auth/wechat/callback?${query.toString()}`, { method: "GET" });
+  }
+
+  acceptSession(sessionToken: string) {
+    if (!sessionToken) throw new Error("登录会话无效");
+    this.#sessionToken = sessionToken;
+  }
+
   createProject(input: ProjectDraft) {
     return this.request<{ id: string; title: string }>("/projects", {
       method: "POST", body: JSON.stringify(input),
