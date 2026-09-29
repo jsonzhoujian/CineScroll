@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "../src/index.ts";
+import { type Actor, InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "../src/index.ts";
 
 const actor = { userId: "usr_owner", workspaceId: "wsp_studio" } as const;
 
@@ -462,4 +462,76 @@ test("多个失败范围可以分批关联各自来源任务完成重试", async
   });
   assert.deepEqual(retryB.facts.map(({ id }) => id), ["fact_a", "fact_b"]);
   assert.deepEqual(retryB.failures, []);
+});
+
+test("负责人或审核人可以确认候选版本并发布可追溯故事圣经", async () => {
+  const ids = ["skv_candidate", "skv_confirmed", "skv_duplicate", "skv_locked", "skv_unlocked"];
+  const accessReader = {
+    async findProjectAccess(requester: Actor) {
+      if (requester.userId === "usr_editor") return { role: "editor" as const };
+      if (requester.userId === "usr_reviewer") return { role: "reviewer" as const };
+      return { role: "owner" as const };
+    },
+  };
+  const service = new StoryKnowledgeService({
+    repository: new InMemoryStoryKnowledgeRepository(),
+    sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_1"] }; } },
+    projectAccessReader: accessReader,
+    idGenerator: () => ids.shift() ?? "unexpected",
+    clock: () => new Date("2026-09-29T17:00:00.000Z"),
+  });
+  const candidate = await service.recordExtraction(actor, {
+    contractVersion: "0.1.0", jobId: "job_confirm", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
+    items: [{ scopeKey: "fact:event", status: "succeeded", value: { id: "fact_event", factType: "event", statement: "少年觉醒灵纹", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] } }],
+  });
+  await assert.rejects(
+    () => service.confirmStage({ userId: "usr_editor", workspaceId: actor.workspaceId }, "prj_1", "chp_1", { expectedActiveVersionId: candidate.id, reason: "编辑无权确认" }),
+    { code: "FORBIDDEN" },
+  );
+
+  const confirmationCommand = { expectedActiveVersionId: candidate.id, reason: "故事事实已核对原文" };
+  const [confirmation, replayedConfirmation] = await Promise.all([
+    service.confirmStage(actor, "prj_1", "chp_1", confirmationCommand),
+    service.confirmStage(actor, "prj_1", "chp_1", confirmationCommand),
+  ]);
+
+  assert.equal(confirmation.version.status, "confirmed");
+  assert.equal(confirmation.version.parentVersionId, "skv_candidate");
+  assert.deepEqual(confirmation.storyBible, {
+    id: "bible:skv_confirmed",
+    versionId: "skv_confirmed",
+    projectId: "prj_1",
+    chapterId: "chp_1",
+    confirmedBy: "usr_owner",
+    confirmedAt: "2026-09-29T17:00:00.000Z",
+    facts: [confirmation.version.facts[0]],
+  });
+  assert.equal(replayedConfirmation.version.id, "skv_confirmed");
+
+  await assert.rejects(() => service.setFactLock(
+    { userId: "usr_editor", workspaceId: actor.workspaceId }, "prj_1", "chp_1",
+    { expectedActiveVersionId: "skv_confirmed", factId: "fact_event", action: "lock", reason: "编辑无权锁定" },
+  ), { code: "FORBIDDEN" });
+  const locked = await service.setFactLock(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_confirmed", factId: "fact_event", action: "lock", reason: "防止后续生成覆盖",
+  });
+  const unlocked = await service.setFactLock(
+    { userId: "usr_reviewer", workspaceId: actor.workspaceId }, "prj_1", "chp_1",
+    { expectedActiveVersionId: "skv_locked", factId: "fact_event", action: "unlock", reason: "允许按新原文修订" },
+  );
+  assert.equal(locked.status, "confirmed");
+  assert.equal(locked.facts[0]?.locked, true);
+  assert.equal(locked.facts[0]?.lockedBy, "usr_owner");
+  assert.equal(locked.facts[0]?.lockedAt, "2026-09-29T17:00:00.000Z");
+  assert.equal(unlocked.parentVersionId, "skv_locked");
+  assert.equal(unlocked.facts[0]?.locked, false);
+  assert.equal(unlocked.facts[0]?.lockedBy, undefined);
+  assert.equal(unlocked.facts[0]?.lockedAt, undefined);
+  assert.deepEqual(unlocked.facts[0]?.lockHistory, [
+    { action: "lock", actorId: "usr_owner", at: "2026-09-29T17:00:00.000Z", reason: "防止后续生成覆盖" },
+    { action: "unlock", actorId: "usr_reviewer", at: "2026-09-29T17:00:00.000Z", reason: "允许按新原文修订" },
+  ]);
+  const published = await service.getConfirmedStoryBible(actor, "prj_1", "chp_1");
+  assert.equal(published.versionId, "skv_unlocked");
+  assert.equal(published.facts[0]?.locked, false);
 });

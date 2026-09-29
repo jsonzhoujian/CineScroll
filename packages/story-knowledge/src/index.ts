@@ -29,6 +29,15 @@ export type StoryFact = Readonly<{
     editedAt: string;
     reason: string;
   }>;
+  locked?: boolean;
+  lockedBy?: string;
+  lockedAt?: string;
+  lockHistory?: Array<Readonly<{
+    action: "lock" | "unlock";
+    actorId: string;
+    at: string;
+    reason: string;
+  }>>;
 }>;
 
 export type ExtractionFailure = Readonly<{
@@ -63,9 +72,21 @@ export type StoryKnowledgeVersion = Readonly<{
   createdAt: string;
   createdBy: string;
   extractionStatus: "succeeded" | "partially_succeeded" | "failed";
-  status: "candidate" | "needs_resolution";
+  status: "candidate" | "needs_resolution" | "confirmed";
+  confirmedBy?: string;
+  confirmedAt?: string;
   facts: StoryFact[];
   failures: ExtractionFailure[];
+}>;
+
+export type StoryBible = Readonly<{
+  id: string;
+  versionId: string;
+  projectId: string;
+  chapterId: string;
+  confirmedBy: string;
+  confirmedAt: string;
+  facts: StoryFact[];
 }>;
 
 export interface StoryKnowledgeRepository {
@@ -94,6 +115,20 @@ export interface StoryKnowledgeRepository {
     idempotencyKey: string,
     fingerprint: string,
   ): Promise<StoryKnowledgeVersion>;
+  saveConfirmed(
+    actor: Actor,
+    version: StoryKnowledgeVersion,
+    storyBible: StoryBible,
+    expectedActiveVersionId: string,
+    confirmation?: { candidateVersionId: string; fingerprint: string },
+  ): Promise<{ version: StoryKnowledgeVersion; storyBible: StoryBible }>;
+  findConfirmedStoryBible(actor: Actor, projectId: string, chapterId: string): Promise<StoryBible | null>;
+  findConfirmationResult(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    candidateVersionId: string,
+  ): Promise<{ fingerprint: string; version: StoryKnowledgeVersion; storyBible: StoryBible } | null>;
 }
 
 export interface SourceVersionReader {
@@ -103,6 +138,13 @@ export interface SourceVersionReader {
     chapterId: string,
     sourceVersionId: string,
   ): Promise<{ id: string; fragmentIds: string[] } | null>;
+}
+
+export interface ProjectAccessReader {
+  findProjectAccess(
+    actor: Actor,
+    projectId: string,
+  ): Promise<{ role: "owner" | "editor" | "reviewer" } | null>;
 }
 
 export class StoryKnowledgeError extends Error {
@@ -116,6 +158,9 @@ export class StoryKnowledgeError extends Error {
     | "INVALID_EDIT"
     | "INVALID_REVIEW"
     | "INVALID_RETRY"
+    | "INVALID_CONFIRMATION"
+    | "INVALID_LOCK"
+    | "FORBIDDEN"
     | "VERSION_CONFLICT";
 
   constructor(code: StoryKnowledgeError["code"], message: string) {
@@ -129,6 +174,9 @@ export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepositor
   readonly #activeVersionIds = new Map<string, string>();
   readonly #versions = new Map<string, StoryKnowledgeVersion>();
   readonly #retryResults = new Map<string, { fingerprint: string; versionId: string }>();
+  readonly #confirmedVersionIds = new Map<string, string>();
+  readonly #storyBibles = new Map<string, StoryBible>();
+  readonly #confirmationResults = new Map<string, { fingerprint: string; versionId: string }>();
 
   async saveCandidate(
     actor: Actor,
@@ -197,22 +245,92 @@ export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepositor
     this.#retryResults.set(resultKey, { fingerprint, versionId: saved.id });
     return saved;
   }
+
+  async saveConfirmed(
+    actor: Actor,
+    version: StoryKnowledgeVersion,
+    storyBible: StoryBible,
+    expectedActiveVersionId: string,
+    confirmation?: { candidateVersionId: string; fingerprint: string },
+  ): Promise<{ version: StoryKnowledgeVersion; storyBible: StoryBible }> {
+    const stageKey = key(actor, version.projectId, version.chapterId);
+    if (confirmation) {
+      const resultKey = versionKey(stageKey, confirmation.candidateVersionId);
+      const existing = this.#confirmationResults.get(resultKey);
+      if (existing) {
+        if (existing.fingerprint !== confirmation.fingerprint) {
+          throw new StoryKnowledgeError("INVALID_CONFIRMATION", "同一候选版本收到了不同的确认命令");
+        }
+        const existingVersion = this.#versions.get(versionKey(stageKey, existing.versionId));
+        const existingBible = this.#storyBibles.get(versionKey(stageKey, existing.versionId));
+        if (existingVersion && existingBible) return {
+          version: structuredClone(existingVersion),
+          storyBible: structuredClone(existingBible),
+        };
+      }
+    }
+    if ((this.#activeVersionIds.get(stageKey) ?? null) !== expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    const saved = structuredClone(version);
+    this.#versions.set(versionKey(stageKey, saved.id), saved);
+    this.#activeVersionIds.set(stageKey, saved.id);
+    this.#confirmedVersionIds.set(stageKey, saved.id);
+    this.#storyBibles.set(versionKey(stageKey, saved.id), structuredClone(storyBible));
+    if (confirmation) {
+      this.#confirmationResults.set(versionKey(stageKey, confirmation.candidateVersionId), {
+        fingerprint: confirmation.fingerprint,
+        versionId: saved.id,
+      });
+    }
+    return { version: structuredClone(saved), storyBible: structuredClone(storyBible) };
+  }
+
+  async findConfirmedStoryBible(actor: Actor, projectId: string, chapterId: string): Promise<StoryBible | null> {
+    const stageKey = key(actor, projectId, chapterId);
+    const confirmedVersionId = this.#confirmedVersionIds.get(stageKey);
+    const storyBible = confirmedVersionId
+      ? this.#storyBibles.get(versionKey(stageKey, confirmedVersionId))
+      : undefined;
+    return storyBible ? structuredClone(storyBible) : null;
+  }
+
+  async findConfirmationResult(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    candidateVersionId: string,
+  ): Promise<{ fingerprint: string; version: StoryKnowledgeVersion; storyBible: StoryBible } | null> {
+    const stageKey = key(actor, projectId, chapterId);
+    const result = this.#confirmationResults.get(versionKey(stageKey, candidateVersionId));
+    if (!result) return null;
+    const version = this.#versions.get(versionKey(stageKey, result.versionId));
+    const storyBible = this.#storyBibles.get(versionKey(stageKey, result.versionId));
+    return version && storyBible ? {
+      fingerprint: result.fingerprint,
+      version: structuredClone(version),
+      storyBible: structuredClone(storyBible),
+    } : null;
+  }
 }
 
 export class StoryKnowledgeService {
   readonly #repository: StoryKnowledgeRepository;
   readonly #sourceReader: SourceVersionReader;
+  readonly #projectAccessReader: ProjectAccessReader | undefined;
   readonly #idGenerator: () => string;
   readonly #clock: () => Date;
 
   constructor(options: {
     repository: StoryKnowledgeRepository;
     sourceReader: SourceVersionReader;
+    projectAccessReader?: ProjectAccessReader;
     idGenerator: () => string;
     clock: () => Date;
   }) {
     this.#repository = options.repository;
     this.#sourceReader = options.sourceReader;
+    this.#projectAccessReader = options.projectAccessReader;
     this.#idGenerator = options.idGenerator;
     this.#clock = options.clock;
   }
@@ -600,6 +718,204 @@ export class StoryKnowledgeService {
       failures,
     }, current.id, idempotencyKey, fingerprint);
   }
+
+  async confirmStage(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    input: unknown,
+  ): Promise<{ version: StoryKnowledgeVersion; storyBible: StoryBible }> {
+    const command = parseConfirmation(input);
+    const access = await this.#projectAccessReader?.findProjectAccess(actor, projectId);
+    if (!access || (access.role !== "owner" && access.role !== "reviewer")) {
+      throw new StoryKnowledgeError("FORBIDDEN", "只有负责人或审核人可以确认故事知识");
+    }
+    const confirmationFingerprint = canonicalStringify(command);
+    const existing = await this.#repository.findConfirmationResult(
+      actor,
+      projectId,
+      chapterId,
+      command.expectedActiveVersionId,
+    );
+    if (existing) {
+      const source = await this.#sourceReader.findSourceVersion(
+        actor,
+        projectId,
+        chapterId,
+        existing.version.sourceVersionId,
+      );
+      if (!source || source.id !== existing.version.sourceVersionId) {
+        throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+      }
+      if (existing.fingerprint !== confirmationFingerprint) {
+        throw new StoryKnowledgeError("INVALID_CONFIRMATION", "同一候选版本收到了不同的确认命令");
+      }
+      return { version: existing.version, storyBible: existing.storyBible };
+    }
+    const current = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      current.sourceVersionId,
+    );
+    if (!source || source.id !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    if (current.id !== command.expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    if (current.status !== "candidate"
+      || current.failures.length > 0
+      || current.facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved")) {
+      throw new StoryKnowledgeError("INVALID_CONFIRMATION", "故事知识仍有未解决问题或失败范围");
+    }
+    const fragmentIds = new Set(source.fragmentIds);
+    if (current.facts.some((fact) => fact.evidence.length === 0 || fact.evidence.some(
+      (evidence) => evidence.sourceVersionId !== source.id || !fragmentIds.has(evidence.fragmentId),
+    ))) {
+      throw new StoryKnowledgeError("INVALID_CONFIRMATION", "故事知识包含无效原文出处");
+    }
+    const confirmedAt = this.#clock().toISOString();
+    const facts = current.facts.map((fact): StoryFact => ({
+      ...structuredClone(fact),
+      locked: false,
+      lockHistory: [],
+      ...(fact.decision ? {} : {
+        decision: {
+          outcome: "accepted" as const,
+          decidedBy: actor.userId,
+          decidedAt: confirmedAt,
+          reason: command.reason,
+        },
+      }),
+    }));
+    const acceptedFacts = facts.filter(({ decision }) => decision?.outcome === "accepted");
+    if (acceptedFacts.length === 0) {
+      throw new StoryKnowledgeError("INVALID_CONFIRMATION", "故事圣经至少需要一条已接受事实");
+    }
+    const versionId = this.#idGenerator();
+    const versionDraft: StoryKnowledgeVersion = {
+      ...current,
+      id: versionId,
+      parentVersionId: current.id,
+      createdAt: confirmedAt,
+      createdBy: actor.userId,
+      status: "confirmed",
+      confirmedBy: actor.userId,
+      confirmedAt,
+      facts,
+    };
+    const storyBible: StoryBible = {
+      id: `bible:${versionId}`,
+      versionId,
+      projectId,
+      chapterId,
+      confirmedBy: actor.userId,
+      confirmedAt,
+      facts: acceptedFacts.map((fact) => structuredClone(fact)),
+    };
+    const saved = await this.#repository.saveConfirmed(
+      actor,
+      versionDraft,
+      storyBible,
+      current.id,
+      { candidateVersionId: current.id, fingerprint: confirmationFingerprint },
+    );
+    return saved;
+  }
+
+  async getConfirmedStoryBible(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+  ): Promise<StoryBible> {
+    const storyBible = await this.#repository.findConfirmedStoryBible(actor, projectId, chapterId);
+    if (!storyBible) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "已确认故事圣经不存在");
+    const sourceVersionId = storyBible.facts[0]?.evidence[0]?.sourceVersionId;
+    if (!sourceVersionId) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "已确认故事圣经不存在");
+    const source = await this.#sourceReader.findSourceVersion(actor, projectId, chapterId, sourceVersionId);
+    if (!source || source.id !== sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "已确认故事圣经不存在");
+    }
+    return storyBible;
+  }
+
+  async setFactLock(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    input: unknown,
+  ): Promise<StoryKnowledgeVersion> {
+    const command = parseFactLock(input);
+    const access = await this.#projectAccessReader?.findProjectAccess(actor, projectId);
+    if (!access || (access.role !== "owner" && access.role !== "reviewer")) {
+      throw new StoryKnowledgeError("FORBIDDEN", "只有负责人或审核人可以锁定故事事实");
+    }
+    const current = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      current.sourceVersionId,
+    );
+    if (!source || source.id !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    if (current.id !== command.expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    if (current.status !== "confirmed") {
+      throw new StoryKnowledgeError("INVALID_LOCK", "只能锁定已确认版本中的故事事实");
+    }
+    const target = current.facts.find((fact) => fact.id === command.factId);
+    if (!target || target.decision?.outcome !== "accepted") {
+      throw new StoryKnowledgeError("FACT_NOT_FOUND", "已确认故事事实不存在");
+    }
+    const locked = target.locked ?? false;
+    if ((command.action === "lock" && locked) || (command.action === "unlock" && !locked)) {
+      throw new StoryKnowledgeError("INVALID_LOCK", "故事事实已经处于目标锁定状态");
+    }
+    const at = this.#clock().toISOString();
+    const facts = current.facts.map((fact): StoryFact => {
+      if (fact.id !== command.factId) return structuredClone(fact);
+      const history = [
+        ...(fact.lockHistory ?? []).map((entry) => structuredClone(entry)),
+        { action: command.action, actorId: actor.userId, at, reason: command.reason },
+      ];
+      const cloned = structuredClone(fact);
+      if (command.action === "lock") return {
+        ...cloned,
+        locked: true,
+        lockedBy: actor.userId,
+        lockedAt: at,
+        lockHistory: history,
+      };
+      const { lockedBy: _lockedBy, lockedAt: _lockedAt, ...withoutCurrentLock } = cloned;
+      return { ...withoutCurrentLock, locked: false, lockHistory: history };
+    });
+    const versionId = this.#idGenerator();
+    const version: StoryKnowledgeVersion = {
+      ...current,
+      id: versionId,
+      parentVersionId: current.id,
+      createdAt: at,
+      createdBy: actor.userId,
+      facts,
+    };
+    const storyBible: StoryBible = {
+      id: `bible:${versionId}`,
+      versionId,
+      projectId,
+      chapterId,
+      confirmedBy: version.confirmedBy ?? actor.userId,
+      confirmedAt: version.confirmedAt ?? at,
+      facts: facts.filter(({ decision }) => decision?.outcome === "accepted").map((fact) => structuredClone(fact)),
+    };
+    return (await this.#repository.saveConfirmed(actor, version, storyBible, current.id)).version;
+  }
 }
 
 const FACT_TYPES = ["character", "relationship", "event", "location", "prop", "worldRule"] as const;
@@ -803,6 +1119,37 @@ function parseRetryCommand(input: unknown): {
     };
   } catch {
     throw new StoryKnowledgeError("INVALID_RETRY", "局部重试命令不符合运行时契约");
+  }
+}
+
+function parseConfirmation(input: unknown): { expectedActiveVersionId: string; reason: string } {
+  try {
+    const value = recordWithKeys(input, ["expectedActiveVersionId", "reason"]);
+    return {
+      expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
+      reason: nonBlank(value.reason),
+    };
+  } catch {
+    throw new StoryKnowledgeError("INVALID_CONFIRMATION", "故事知识确认命令不符合运行时契约");
+  }
+}
+
+function parseFactLock(input: unknown): {
+  expectedActiveVersionId: string;
+  factId: string;
+  action: "lock" | "unlock";
+  reason: string;
+} {
+  try {
+    const value = recordWithKeys(input, ["expectedActiveVersionId", "factId", "action", "reason"]);
+    return {
+      expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
+      factId: nonBlank(value.factId),
+      action: enumValue(value.action, ["lock", "unlock"] as const),
+      reason: nonBlank(value.reason),
+    };
+  } catch {
+    throw new StoryKnowledgeError("INVALID_LOCK", "故事事实锁定命令不符合运行时契约");
   }
 }
 
