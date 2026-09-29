@@ -34,6 +34,21 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await expect(page.getByRole("group", { name: "新增内容" }).getByText("剑啸。", { exact: true })).toBeVisible();
   await expect(page.getByText("删除 · 1")).toBeVisible();
   await expect(page.getByRole("group", { name: "删除内容" }).getByText("剑鸣。", { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = page.getByRole("region", { name: "移动端工作区" });
+  await expect(mobile).toBeVisible();
+  await expect(mobile.getByText("第2章 风起")).toBeVisible();
+  await expect(mobile.getByText("只读结果")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "新版本正文" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "现在处理" })).toBeHidden();
+
+  await mobile.getByRole("button", { name: "审核" }).click();
+  await expect(mobile.getByText("暂无待审核内容")).toBeVisible();
+  await mobile.getByRole("button", { name: "建议" }).click();
+  await expect(mobile.getByText("暂无修改建议")).toBeVisible();
+  await mobile.getByRole("button", { name: "通知" }).click();
+  await expect(mobile.getByText("暂无新通知")).toBeVisible();
 });
 
 async function mockProjectImportApi(page: import("@playwright/test").Page) {

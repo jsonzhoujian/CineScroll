@@ -1,6 +1,6 @@
 # T04 — Project creation and chapter import tracer bullet
 
-status: in_progress
+status: done
 blocked_by: [T03]
 unlocks: [T05]
 
@@ -36,14 +36,12 @@ Deliver the first vertical slice from authentication through project creation to
 - [x] Replace aggregate hydration inside write transactions with chapter-scoped create/append commands so lock time does not grow with full project history.
 - [x] Expose project creation, inspection, import, re-import, and source reads through session-authenticated API endpoints.
 - [x] Expose phone-code/WeChat login endpoints and compose production authentication and import adapters.
-- [ ] Build the project/chapter import UI over the authenticated API.
+- [x] Build the project/chapter import UI over the authenticated API.
 - [x] Add phone-code and WeChat authentication adapters with persistent one-time state, account binding, and phone/IP/device rate limits.
 
 ## UI review findings (2026-09-28)
 
-The desktop phone-login/import/re-import workbench is implemented and passes unit, type, API, and production-build checks. T04 remains in progress until these product requirements are closed:
-
-- Keep mobile import editing unavailable while still exposing mobile progress, review, decisions, notifications, and read-only results.
+The phone-login/import/re-import workbench is implemented and passes unit, type, API, browser-flow, and production-build checks.
 
 Resolved after review:
 
@@ -51,3 +49,4 @@ Resolved after review:
 - [x] Connect the existing WeChat login API to an official QR authorization window and a state-bound browser callback flow.
 - [x] Restore free switching among trace, review, and storyboard workbenches while keeping formal generation behind stage-confirmation gates.
 - [x] Add repeatable Chromium coverage for phone login, project creation, multi-chapter inspection, selected-chapter import, and re-import diff.
+- [x] Expose a mobile review companion for progress, review, suggestions, notifications, and read-only results while keeping import mutations desktop-only.

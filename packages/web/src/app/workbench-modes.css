@@ -169,8 +169,4 @@
     flex-direction: column;
   }
 
-  .mode-review .mobile-gate,
-  .mode-storyboard .mobile-gate {
-    display: none;
-  }
 }

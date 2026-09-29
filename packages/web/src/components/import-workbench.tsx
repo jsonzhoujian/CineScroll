@@ -8,6 +8,7 @@ import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type W
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
+type MobileTab = "progress" | "review" | "decisions" | "notifications";
 const steps: Array<{ id: Step; number: string; label: string; note: string }> = [
   { id: "login", number: "壹", label: "身份", note: "进入工作室" },
   { id: "project", number: "贰", label: "立项", note: "声明与约束" },
@@ -44,6 +45,7 @@ export function ImportWorkbench() {
   const [diff, setDiff] = useState<SourceVersionDiff | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<MobileTab>("progress");
   const expectedWechatState = useRef<string | null>(null);
   const wechatPopup = useRef<Window | null>(null);
 
@@ -147,7 +149,7 @@ export function ImportWorkbench() {
     setDiff(null);
   });
 
-  return <main className={`app-shell mode-${mode}`}>
+  return <main className={`app-shell mode-${mode} step-${step}`}>
     <header className="topbar">
       <a className="brand" href="#"><span className="seal">映</span><span><b>映卷</b><small>小说动态漫改编工作台</small></span></a>
       <nav className="modes" aria-label="工作模式">
@@ -170,11 +172,7 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
-        <div className="mobile-gate">
-          <span className="eyebrow">移动端范围</span>
-          <h2>请在桌面端导入原文</h2>
-          <p>移动端首版仅用于查看进度、审核内容、处理修改建议与接收通知。</p>
-        </div>
+        <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>
             <button className="button secondary align-end" onClick={sendCode} disabled={busy}>获取验证码</button>
@@ -236,6 +234,36 @@ function VersionDesk({ chapter, importedDocument, importSavedChapter, reimportTe
         {diff && <div className="diff"><Diff title="新增" tone="add" items={diff.added} /><Diff title="删除" tone="remove" items={diff.removed} /><Diff title="未变化" tone="same" items={diff.unchanged} /></div>}</aside></div></div>;
 }
 function Diff({ title, tone, items }: { title: string; tone: string; items: string[] }) { return <div className={`diff-group ${tone}`} role="group" aria-label={`${title}内容`}><b>{title} · {items.length}</b>{items.map((item, index) => <p key={`${tone}-${index}`}>{item}</p>)}</div>; }
+
+function MobileCompanion({ tab, onTabChange, step, project, chapter }: { tab: MobileTab; onTabChange(tab: MobileTab): void; step: Step; project: { id: string; title: string } | null; chapter: Chapter | null }) {
+  const version = chapter?.versions.at(-1);
+  const tabs: ReadonlyArray<{ id: MobileTab; label: string }> = [
+    { id: "progress", label: "进度" },
+    { id: "review", label: "审核" },
+    { id: "decisions", label: "建议" },
+    { id: "notifications", label: "通知" },
+  ];
+
+  return <section className="mobile-companion" role="region" aria-label="移动端工作区">
+    <header><span className="eyebrow">随身审阅</span><h2>{project?.title || "尚未立项"}</h2><p>{chapter ? chapter.title : "项目编辑与原文导入请在桌面端完成"}</p></header>
+    <nav aria-label="移动端功能">{tabs.map((item) => <button type="button" key={item.id} className={tab === item.id ? "active" : ""} aria-pressed={tab === item.id} onClick={() => onTabChange(item.id)}>{item.label}</button>)}</nav>
+    {tab === "progress" && <div className="mobile-pane mobile-progress">
+      <div className="mobile-stage"><span className={chapter ? "done" : "current"}>01</span><p><b>原文入卷</b><small>{chapter ? "已完成" : step === "version" ? "读取中" : "等待桌面端处理"}</small></p></div>
+      <div className="mobile-stage"><span>02</span><p><b>故事知识</b><small>{chapter ? "等待生成" : "等待原文"}</small></p></div>
+      <div className="mobile-stage"><span>03</span><p><b>剧本与设定</b><small>等待前置确认</small></p></div>
+      <div className="mobile-stage"><span>04</span><p><b>分镜</b><small>等待前置确认</small></p></div>
+      {version && <section className="mobile-result" aria-label="只读结果"><div><span className="eyebrow">只读结果</span><b>版本 {String(version.ordinal).padStart(2, "0")} · {version.characterCount} 字</b></div>{version.fragments.map((fragment) => <p key={fragment.id}>{fragment.text}</p>)}</section>}
+    </div>}
+    {tab === "review" && <MobileEmpty mark="审" title="暂无待审核内容" note={chapter ? "原文已就绪；故事知识生成后，将在这里逐项审核。" : "完成原文入卷后，审核任务会出现在这里。"} />}
+    {tab === "decisions" && <MobileEmpty mark="议" title="暂无修改建议" note="成员提交建议后，可在此查看理由并接受或拒绝；移动端不直接编辑正文。" />}
+    {tab === "notifications" && <MobileEmpty mark="铃" title="暂无新通知" note="阶段完成、审核请求和建议处理结果会集中出现在这里。" />}
+    <footer><i />移动端为审阅席，不提供立项、导入或重新生成</footer>
+  </section>;
+}
+
+function MobileEmpty({ mark, title, note }: { mark: string; title: string; note: string }) {
+  return <div className="mobile-pane mobile-empty"><span>{mark}</span><h3>{title}</h3><p>{note}</p></div>;
+}
 
 function ModeWorkspace({ mode, project, chapter, onReturnToTrace }: { mode: Exclude<WorkbenchMode, "trace">; project: { id: string; title: string } | null; chapter: Chapter | null; onReturnToTrace(): void }) {
   const readiness: StageReadiness = {
