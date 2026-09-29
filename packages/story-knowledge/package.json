@@ -3,14 +3,19 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./postgres-repository": "./src/postgres-repository.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --project tsconfig.json"
   },
+  "dependencies": {
+    "pg": "^8.23.0"
+  },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
     "typescript": "^7.0.2"
   }
 }

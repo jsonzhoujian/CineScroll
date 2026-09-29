@@ -30,4 +30,5 @@ Turn a source version into reviewable story knowledge without silently resolving
   - [x] Merge retries for retryable failure scopes without replacing successful content.
   - [x] Lock and unlock confirmed facts with owner/reviewer authorization.
 - [x] Confirm the stage as an owner or reviewer and publish a versioned story bible.
-- [ ] Add persistence, authenticated API endpoints, background extraction adapter, and review UI.
+- [x] Persist immutable story-knowledge versions, retry/confirmation idempotency records, active heads, and story bibles in PostgreSQL with transactional CAS and tenant RLS.
+- [ ] Add authenticated API endpoints, background extraction adapter, and review UI.

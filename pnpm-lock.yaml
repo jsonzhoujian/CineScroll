@@ -102,10 +102,17 @@ importers:
         version: 3.3.1
 
   packages/story-knowledge:
+    dependencies:
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
     devDependencies:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
