@@ -1,6 +1,6 @@
 # T05 — Story-knowledge extraction and confirmation
 
-status: ready
+status: in_progress
 blocked_by: [T04]  
 unlocks: [T06]
 
@@ -16,3 +16,14 @@ Turn a source version into reviewable story knowledge without silently resolving
 - Users can edit, accept, reject, lock, and locally retry knowledge items.
 - Partial success persists valid items and permits retry of failed items only.
 - A responsible owner or reviewer can confirm the stage, producing a versioned story bible.
+
+## Implementation progress
+
+- [x] Establish the `StoryKnowledgeService` public seam and canonical story-fact types.
+- [x] Persist successful facts from partially successful extraction while retaining item-level failures.
+- [x] Restrict local retry scope to failures explicitly marked retryable.
+- [x] Quarantine facts with missing or invalid source-fragment evidence as retryable item failures without discarding valid facts.
+- [ ] Preserve alias, hidden-identity, and conflicting-fact candidates until user resolution.
+- [ ] Support item edit, accept, reject, lock, and local retry transitions as immutable versions.
+- [ ] Confirm the stage as an owner or reviewer and publish a versioned story bible.
+- [ ] Add persistence, authenticated API endpoints, background extraction adapter, and review UI.

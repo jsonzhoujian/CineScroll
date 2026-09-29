@@ -12,6 +12,6 @@
     "setup:web:e2e": "pnpm --filter @novel-adaptation/web install:e2e-browser",
     "test:web:e2e": "pnpm --filter @novel-adaptation/web test:e2e",
     "web": "pnpm --filter @novel-adaptation/web dev",
-    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck && pnpm --filter @novel-adaptation/api typecheck && pnpm --filter @novel-adaptation/web typecheck"
+    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck && pnpm --filter @novel-adaptation/story-knowledge typecheck && pnpm --filter @novel-adaptation/api typecheck && pnpm --filter @novel-adaptation/web typecheck"
   }
 }
