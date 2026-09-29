@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "install:e2e-browser": "playwright install --with-deps chromium",
     "test": "node --test test/*.test.ts",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -14,6 +16,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
