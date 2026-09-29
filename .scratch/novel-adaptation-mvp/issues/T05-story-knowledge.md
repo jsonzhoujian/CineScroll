@@ -25,5 +25,9 @@ Turn a source version into reviewable story knowledge without silently resolving
 - [x] Quarantine facts with missing or invalid source-fragment evidence as retryable item failures without discarding valid facts.
 - [x] Preserve alias, hidden-identity, and conflicting-fact candidates with all evidence until a recorded user resolution.
 - [ ] Support item edit, accept, reject, lock, and local retry transitions as immutable versions.
+  - [x] Edit candidate facts with evidence preservation and an auditable reason.
+  - [x] Accept or reject candidate facts without deleting their provenance.
+  - [x] Merge retries for retryable failure scopes without replacing successful content.
+  - [ ] Lock and unlock confirmed facts with owner/reviewer authorization.
 - [ ] Confirm the stage as an owner or reviewer and publish a versioned story bible.
 - [ ] Add persistence, authenticated API endpoints, background extraction adapter, and review UI.

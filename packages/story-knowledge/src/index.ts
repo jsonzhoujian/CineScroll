@@ -24,10 +24,16 @@ export type StoryFact = Readonly<{
     decidedAt: string;
     reason: string;
   }>;
+  lastEdit?: Readonly<{
+    editedBy: string;
+    editedAt: string;
+    reason: string;
+  }>;
 }>;
 
 export type ExtractionFailure = Readonly<{
   scopeKey: string;
+  originJobId: string;
   code: string;
   message: string;
   retryable: boolean;
@@ -75,6 +81,19 @@ export interface StoryKnowledgeRepository {
     chapterId: string,
     versionId: string,
   ): Promise<StoryKnowledgeVersion | null>;
+  findRetryResult(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    idempotencyKey: string,
+  ): Promise<{ fingerprint: string; version: StoryKnowledgeVersion } | null>;
+  saveRetryCandidate(
+    actor: Actor,
+    version: StoryKnowledgeVersion,
+    expectedActiveVersionId: string,
+    idempotencyKey: string,
+    fingerprint: string,
+  ): Promise<StoryKnowledgeVersion>;
 }
 
 export interface SourceVersionReader {
@@ -94,6 +113,9 @@ export class StoryKnowledgeError extends Error {
     | "FACT_NOT_FOUND"
     | "FACT_NOT_PENDING"
     | "INVALID_DECISION"
+    | "INVALID_EDIT"
+    | "INVALID_REVIEW"
+    | "INVALID_RETRY"
     | "VERSION_CONFLICT";
 
   constructor(code: StoryKnowledgeError["code"], message: string) {
@@ -106,6 +128,7 @@ export class StoryKnowledgeError extends Error {
 export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepository {
   readonly #activeVersionIds = new Map<string, string>();
   readonly #versions = new Map<string, StoryKnowledgeVersion>();
+  readonly #retryResults = new Map<string, { fingerprint: string; versionId: string }>();
 
   async saveCandidate(
     actor: Actor,
@@ -138,6 +161,41 @@ export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepositor
   ): Promise<StoryKnowledgeVersion | null> {
     const version = this.#versions.get(versionKey(key(actor, projectId, chapterId), versionId));
     return version ? structuredClone(version) : null;
+  }
+
+  async findRetryResult(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    idempotencyKey: string,
+  ): Promise<{ fingerprint: string; version: StoryKnowledgeVersion } | null> {
+    const stageKey = key(actor, projectId, chapterId);
+    const result = this.#retryResults.get(versionKey(stageKey, idempotencyKey));
+    if (!result) return null;
+    const version = this.#versions.get(versionKey(stageKey, result.versionId));
+    return version ? { fingerprint: result.fingerprint, version: structuredClone(version) } : null;
+  }
+
+  async saveRetryCandidate(
+    actor: Actor,
+    version: StoryKnowledgeVersion,
+    expectedActiveVersionId: string,
+    idempotencyKey: string,
+    fingerprint: string,
+  ): Promise<StoryKnowledgeVersion> {
+    const stageKey = key(actor, version.projectId, version.chapterId);
+    const resultKey = versionKey(stageKey, idempotencyKey);
+    const existing = this.#retryResults.get(resultKey);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new StoryKnowledgeError("INVALID_RETRY", "相同重试任务返回了不同内容");
+      }
+      const saved = this.#versions.get(versionKey(stageKey, existing.versionId));
+      if (saved) return structuredClone(saved);
+    }
+    const saved = await this.saveCandidate(actor, version, expectedActiveVersionId);
+    this.#retryResults.set(resultKey, { fingerprint, versionId: saved.id });
+    return saved;
   }
 }
 
@@ -180,12 +238,13 @@ export class StoryKnowledgeService {
     const failures: ExtractionFailure[] = [];
     for (const item of extraction.items) {
       if (item.status === "failed") {
-        failures.push({ scopeKey: item.scopeKey, ...item.error });
+        failures.push({ scopeKey: item.scopeKey, originJobId: extraction.jobId, ...item.error });
         continue;
       }
       if (item.value.evidence.length === 0) {
         failures.push({
           scopeKey: item.scopeKey,
+          originJobId: extraction.jobId,
           code: "EVIDENCE_REQUIRED",
           message: "每条故事知识必须关联至少一个原文片段",
           retryable: true,
@@ -197,6 +256,7 @@ export class StoryKnowledgeService {
       )) {
         failures.push({
           scopeKey: item.scopeKey,
+          originJobId: extraction.jobId,
           code: "INVALID_EVIDENCE",
           message: "故事知识引用了无效的原文证据",
           retryable: true,
@@ -344,6 +404,201 @@ export class StoryKnowledgeService {
       status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
       facts,
     }, current.id);
+  }
+
+  async editFact(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    input: unknown,
+  ): Promise<StoryKnowledgeVersion> {
+    const edit = parseFactEdit(input);
+    const current = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      current.sourceVersionId,
+    );
+    if (!source || source.id !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    if (current.id !== edit.expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    const target = current.facts.find((fact) => fact.id === edit.factId);
+    if (!target) throw new StoryKnowledgeError("FACT_NOT_FOUND", "故事事实不存在");
+    if (target.decision) throw new StoryKnowledgeError("INVALID_EDIT", "已接受或拒绝的故事事实不能直接编辑");
+    const editedAt = this.#clock().toISOString();
+    const facts = current.facts.map((fact): StoryFact => fact.id === edit.factId ? {
+      ...structuredClone(fact),
+      statement: edit.statement,
+      assertionKind: "user_confirmed",
+      lastEdit: { editedBy: actor.userId, editedAt, reason: edit.reason },
+    } : structuredClone(fact));
+    return this.#repository.saveCandidate(actor, {
+      ...current,
+      id: this.#idGenerator(),
+      parentVersionId: current.id,
+      createdAt: editedAt,
+      createdBy: actor.userId,
+      facts,
+    }, current.id);
+  }
+
+  async reviewFact(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    input: unknown,
+  ): Promise<StoryKnowledgeVersion> {
+    const review = parseFactReview(input);
+    const current = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      current.sourceVersionId,
+    );
+    if (!source || source.id !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    if (current.id !== review.expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    const target = current.facts.find((fact) => fact.id === review.factId);
+    if (!target) throw new StoryKnowledgeError("FACT_NOT_FOUND", "故事事实不存在");
+    if (target.resolutionStatus !== "resolved" || target.decision) {
+      throw new StoryKnowledgeError("INVALID_REVIEW", "故事事实尚不可审核或已经处理");
+    }
+    const decidedAt = this.#clock().toISOString();
+    const facts = current.facts.map((fact): StoryFact => fact.id === review.factId ? {
+      ...structuredClone(fact),
+      decision: {
+        outcome: review.outcome,
+        decidedBy: actor.userId,
+        decidedAt,
+        reason: review.reason,
+      },
+    } : structuredClone(fact));
+    return this.#repository.saveCandidate(actor, {
+      ...current,
+      id: this.#idGenerator(),
+      parentVersionId: current.id,
+      createdAt: decidedAt,
+      createdBy: actor.userId,
+      facts,
+    }, current.id);
+  }
+
+  async recordRetry(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    input: unknown,
+  ): Promise<StoryKnowledgeVersion> {
+    const command = parseRetryCommand(input);
+    const { expectedActiveVersionId, retryOfJobId, extraction } = command;
+    if (extraction.projectId !== projectId || extraction.chapterId !== chapterId) {
+      throw new StoryKnowledgeError("INVALID_RETRY", "重试结果不属于当前项目章节");
+    }
+    const requestedScopes = extraction.items.map(({ scopeKey }) => scopeKey);
+    const idempotencyKey = retryIdempotencyKey(retryOfJobId, extraction.jobId, requestedScopes);
+    const fingerprint = canonicalStringify(extraction);
+    const existing = await this.#repository.findRetryResult(
+      actor,
+      projectId,
+      chapterId,
+      idempotencyKey,
+    );
+    if (existing) {
+      const source = await this.#sourceReader.findSourceVersion(
+        actor,
+        projectId,
+        chapterId,
+        existing.version.sourceVersionId,
+      );
+      if (!source || source.id !== existing.version.sourceVersionId) {
+        throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+      }
+      if (existing.fingerprint !== fingerprint) {
+        throw new StoryKnowledgeError("INVALID_RETRY", "相同重试任务返回了不同内容");
+      }
+      return existing.version;
+    }
+    const current = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      current.sourceVersionId,
+    );
+    if (!source || source.id !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    if (current.id !== expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    if (extraction.sourceVersionId !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("INVALID_RETRY", "重试必须使用当前故事知识的原文版本");
+    }
+
+    const retryableScopes = new Set(
+      current.failures.filter(({ retryable }) => retryable).map(({ scopeKey }) => scopeKey),
+    );
+    if (new Set(requestedScopes).size !== requestedScopes.length
+      || requestedScopes.some((scopeKey) => !retryableScopes.has(scopeKey))) {
+      throw new StoryKnowledgeError("INVALID_RETRY", "只能重试当前版本中标记为可重试的失败范围");
+    }
+    if (requestedScopes.some((scopeKey) => current.failures.find(
+      (failure) => failure.scopeKey === scopeKey,
+    )?.originJobId !== retryOfJobId)) {
+      throw new StoryKnowledgeError("INVALID_RETRY", "重试任务未关联所选失败范围的来源任务");
+    }
+
+    const fragmentIds = new Set(source.fragmentIds);
+    const facts = current.facts.map((fact) => structuredClone(fact));
+    const failures = current.failures
+      .filter(({ scopeKey }) => !requestedScopes.includes(scopeKey))
+      .map((failure) => structuredClone(failure));
+    const factIds = new Set(facts.map(({ id }) => id));
+    for (const item of extraction.items) {
+      if (item.status === "failed") {
+        failures.push({ scopeKey: item.scopeKey, originJobId: extraction.jobId, ...item.error });
+        continue;
+      }
+      if (factIds.has(item.value.id)) {
+        throw new StoryKnowledgeError("INVALID_RETRY", "重试结果包含重复的故事事实");
+      }
+      if (item.value.evidence.length === 0) {
+        failures.push({ scopeKey: item.scopeKey, originJobId: extraction.jobId, code: "EVIDENCE_REQUIRED", message: "每条故事知识必须关联至少一个原文片段", retryable: true });
+        continue;
+      }
+      if (item.value.evidence.some(
+        (evidence) => evidence.sourceVersionId !== source.id || !fragmentIds.has(evidence.fragmentId),
+      )) {
+        failures.push({ scopeKey: item.scopeKey, originJobId: extraction.jobId, code: "INVALID_EVIDENCE", message: "故事知识引用了无效的原文证据", retryable: true });
+        continue;
+      }
+      factIds.add(item.value.id);
+      facts.push(structuredClone(item.value));
+    }
+
+    return this.#repository.saveRetryCandidate(actor, {
+      ...current,
+      id: this.#idGenerator(),
+      parentVersionId: current.id,
+      extractionJobId: extraction.jobId,
+      createdAt: this.#clock().toISOString(),
+      createdBy: actor.userId,
+      extractionStatus: finalExtractionStatus(facts.length, failures.length),
+      status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
+      facts,
+      failures,
+    }, current.id, idempotencyKey, fingerprint);
   }
 }
 
@@ -494,6 +749,74 @@ function parseDecision(input: unknown): {
 
 function invalidDecision(): never {
   throw new StoryKnowledgeError("INVALID_DECISION", "故事知识决定不符合运行时契约");
+}
+
+function parseFactEdit(input: unknown): {
+  expectedActiveVersionId: string;
+  factId: string;
+  statement: string;
+  reason: string;
+} {
+  try {
+    const value = recordWithKeys(input, ["expectedActiveVersionId", "factId", "statement", "reason"]);
+    return {
+      expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
+      factId: nonBlank(value.factId),
+      statement: nonBlank(value.statement),
+      reason: nonBlank(value.reason),
+    };
+  } catch {
+    throw new StoryKnowledgeError("INVALID_EDIT", "故事事实编辑不符合运行时契约");
+  }
+}
+
+function parseFactReview(input: unknown): {
+  expectedActiveVersionId: string;
+  factId: string;
+  outcome: "accepted" | "rejected";
+  reason: string;
+} {
+  try {
+    const value = recordWithKeys(input, ["expectedActiveVersionId", "factId", "outcome", "reason"]);
+    return {
+      expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
+      factId: nonBlank(value.factId),
+      outcome: enumValue(value.outcome, ["accepted", "rejected"] as const),
+      reason: nonBlank(value.reason),
+    };
+  } catch {
+    throw new StoryKnowledgeError("INVALID_REVIEW", "故事事实审核不符合运行时契约");
+  }
+}
+
+function parseRetryCommand(input: unknown): {
+  expectedActiveVersionId: string;
+  retryOfJobId: string;
+  extraction: StoryKnowledgeExtraction;
+} {
+  try {
+    const value = recordWithKeys(input, ["expectedActiveVersionId", "retryOfJobId", "extraction"]);
+    return {
+      expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
+      retryOfJobId: nonBlank(value.retryOfJobId),
+      extraction: parseExtraction(value.extraction),
+    };
+  } catch {
+    throw new StoryKnowledgeError("INVALID_RETRY", "局部重试命令不符合运行时契约");
+  }
+}
+
+function retryIdempotencyKey(retryOfJobId: string, jobId: string, scopeKeys: string[]): string {
+  return `${retryOfJobId}:${jobId}:${[...scopeKeys].sort().join(",")}`;
+}
+
+function canonicalStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalStringify).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalStringify(entry)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function finalExtractionStatus(

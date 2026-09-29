@@ -89,7 +89,7 @@ test("单条知识证据无效时保留其他有效事实，并把该条转成�
 
   assert.deepEqual(result.facts.map(({ id }) => id), ["fact_1"]);
   assert.equal(result.extractionStatus, "partially_succeeded");
-  assert.deepEqual(result.failures, [{ scopeKey: "fact:invalid", code: "EVIDENCE_REQUIRED", message: "每条故事知识必须关联至少一个原文片段", retryable: true }]);
+  assert.deepEqual(result.failures, [{ scopeKey: "fact:invalid", originJobId: "job_1", code: "EVIDENCE_REQUIRED", message: "每条故事知识必须关联至少一个原文片段", retryable: true }]);
 });
 
 test("后台响应必须通过运行时契约与任务状态一致性校验", async () => {
@@ -301,4 +301,165 @@ test("迟到的提取结果不能覆盖已经完成的人工决定", async () =>
   await assert.rejects(() => service.recordExtraction(actor, { ...extraction, jobId: "job_late" }), {
     code: "VERSION_CONFLICT",
   });
+});
+
+test("编辑候选事实时保留证据并派生可审计的新版本", async () => {
+  const ids = ["skv_base", "skv_edited"];
+  const service = new StoryKnowledgeService({
+    repository: new InMemoryStoryKnowledgeRepository(),
+    sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_1"] }; } },
+    idGenerator: () => ids.shift() ?? "unexpected",
+    clock: () => new Date("2026-09-29T13:00:00.000Z"),
+  });
+  await service.recordExtraction(actor, {
+    contractVersion: "0.1.0", jobId: "job_base", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
+    items: [{ scopeKey: "fact:event", status: "succeeded", value: { id: "fact_event", factType: "event", statement: "少年灵纹觉醒", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] } }],
+  });
+
+  const edited = await service.editFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_base",
+    factId: "fact_event",
+    statement: "少年在宗门试炼中觉醒灵纹",
+    reason: "补充原文明确给出的事件地点",
+  });
+
+  assert.equal(edited.id, "skv_edited");
+  assert.equal(edited.parentVersionId, "skv_base");
+  assert.deepEqual(edited.facts[0], {
+    id: "fact_event", factType: "event", statement: "少年在宗门试炼中觉醒灵纹",
+    assertionKind: "user_confirmed", resolutionStatus: "resolved", resolutionGroupId: null,
+    evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }],
+    lastEdit: {
+      editedBy: "usr_owner", editedAt: "2026-09-29T13:00:00.000Z",
+      reason: "补充原文明确给出的事件地点",
+    },
+  });
+  const original = await service.getVersion(actor, "prj_1", "chp_1", "skv_base");
+  assert.equal(original.facts[0]?.statement, "少年灵纹觉醒");
+});
+
+test("接受或拒绝候选事实均保留条目和证据并逐次派生版本", async () => {
+  const ids = ["skv_base", "skv_accepted", "skv_rejected"];
+  const service = new StoryKnowledgeService({
+    repository: new InMemoryStoryKnowledgeRepository(),
+    sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_1", "frag_2"] }; } },
+    idGenerator: () => ids.shift() ?? "unexpected",
+    clock: () => new Date("2026-09-29T14:00:00.000Z"),
+  });
+  await service.recordExtraction(actor, {
+    contractVersion: "0.1.0", jobId: "job_review", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
+    items: [
+      { scopeKey: "fact:one", status: "succeeded", value: { id: "fact_one", factType: "event", statement: "保留事实", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] } },
+      { scopeKey: "fact:two", status: "succeeded", value: { id: "fact_two", factType: "event", statement: "拒绝事实", assertionKind: "inferred", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_2" }] } },
+    ],
+  });
+
+  const accepted = await service.reviewFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_base",
+    factId: "fact_one", outcome: "accepted", reason: "符合原文",
+  });
+  const rejected = await service.reviewFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_accepted",
+    factId: "fact_two", outcome: "rejected", reason: "属于无依据推断",
+  });
+
+  assert.equal(accepted.parentVersionId, "skv_base");
+  assert.equal(rejected.parentVersionId, "skv_accepted");
+  assert.deepEqual(rejected.facts.map((fact) => ({
+    id: fact.id, outcome: fact.decision?.outcome, evidence: fact.evidence,
+  })), [
+    { id: "fact_one", outcome: "accepted", evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] },
+    { id: "fact_two", outcome: "rejected", evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_2" }] },
+  ]);
+  await assert.rejects(() => service.editFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_rejected", factId: "fact_two", statement: "篡改已拒绝内容", reason: "不应允许",
+  }), { code: "INVALID_EDIT" });
+  await assert.rejects(() => service.reviewFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_base", factId: "fact_one", outcome: "accepted", reason: "过期页面操作",
+  }), { code: "VERSION_CONFLICT" });
+});
+
+test("局部重试只合并可重试范围并保留既有事实与不可重试失败", async () => {
+  const ids = ["skv_partial", "skv_retry"];
+  const service = new StoryKnowledgeService({
+    repository: new InMemoryStoryKnowledgeRepository(),
+    sourceReader: { async findSourceVersion(requester: typeof actor) { return requester.userId === actor.userId ? { id: "srcv_1", fragmentIds: ["frag_1", "frag_2"] } : null; } },
+    idGenerator: () => ids.shift() ?? "unexpected",
+    clock: () => new Date("2026-09-29T15:00:00.000Z"),
+  });
+  const partial = await service.recordExtraction(actor, {
+    contractVersion: "0.1.0", jobId: "job_base", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "partially_succeeded",
+    items: [
+      { scopeKey: "fact:existing", status: "succeeded", value: { id: "fact_existing", factType: "event", statement: "既有事实", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] } },
+      { scopeKey: "fact:identity", status: "failed", error: { code: "AMBIGUOUS_IDENTITY", message: "待重试", retryable: true } },
+      { scopeKey: "fact:restricted", status: "failed", error: { code: "COMPLIANCE_RESTRICTED", message: "不可重试", retryable: false } },
+    ],
+  });
+  const retryResult = {
+    contractVersion: "0.1.0", jobId: "job_retry", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
+    items: [{ scopeKey: "fact:identity", status: "succeeded", value: { id: "fact_identity", factType: "relationship", statement: "墨白是无心的身份", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_2" }] } }],
+  };
+
+  const retryCommand = {
+    expectedActiveVersionId: partial.id,
+    retryOfJobId: "job_base",
+    extraction: retryResult,
+  };
+  await assert.rejects(
+    () => service.recordRetry({ userId: "usr_other", workspaceId: actor.workspaceId }, "prj_1", "chp_1", { ...retryCommand, expectedActiveVersionId: "guessed_version" }),
+    { code: "STAGE_RESULT_NOT_FOUND" },
+  );
+  const retried = await service.recordRetry(actor, "prj_1", "chp_1", retryCommand);
+  const idempotent = await service.recordRetry(actor, "prj_1", "chp_1", retryCommand);
+
+  assert.equal(retried.parentVersionId, "skv_partial");
+  assert.deepEqual(retried.facts.map(({ id }) => id), ["fact_existing", "fact_identity"]);
+  assert.deepEqual(retried.failures.map(({ scopeKey }) => scopeKey), ["fact:restricted"]);
+  assert.equal(retried.extractionStatus, "partially_succeeded");
+  assert.equal(idempotent.id, retried.id);
+  await assert.rejects(
+    () => service.recordRetry(actor, "prj_1", "chp_1", { ...retryCommand, extraction: { ...retryResult, items: [{ ...retryResult.items[0], value: { ...retryResult.items[0]?.value, statement: "同一幂等键的不同内容" } }] } }),
+    { code: "INVALID_RETRY" },
+  );
+  await assert.rejects(
+    () => service.recordRetry(actor, "prj_1", "chp_1", { expectedActiveVersionId: retried.id, retryOfJobId: "job_retry", extraction: { ...retryResult, jobId: "job_invalid", status: "failed", items: [{ scopeKey: "fact:restricted", status: "failed", error: { code: "STILL_RESTRICTED", message: "不可重试", retryable: false } }] } }),
+    { code: "INVALID_RETRY" },
+  );
+});
+
+test("多个失败范围可以分批关联各自来源任务完成重试", async () => {
+  const ids = ["skv_base", "skv_retry_a", "skv_retry_b"];
+  const service = new StoryKnowledgeService({
+    repository: new InMemoryStoryKnowledgeRepository(),
+    sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_a", "frag_b"] }; } },
+    idGenerator: () => ids.shift() ?? "unexpected",
+    clock: () => new Date("2026-09-29T16:00:00.000Z"),
+  });
+  const base = await service.recordExtraction(actor, {
+    contractVersion: "0.1.0", jobId: "job_base", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "failed",
+    items: [
+      { scopeKey: "fact:a", status: "failed", error: { code: "FAILED_A", message: "A失败", retryable: true } },
+      { scopeKey: "fact:b", status: "failed", error: { code: "FAILED_B", message: "B失败", retryable: true } },
+    ],
+  });
+  const retryA = await service.recordRetry(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: base.id,
+    retryOfJobId: "job_base",
+    extraction: {
+      contractVersion: "0.1.0", jobId: "job_retry_a", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
+      items: [{ scopeKey: "fact:a", status: "succeeded", value: { id: "fact_a", factType: "event", statement: "事实A", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_a" }] } }],
+    },
+  });
+  assert.deepEqual(retryA.failures, [{ scopeKey: "fact:b", originJobId: "job_base", code: "FAILED_B", message: "B失败", retryable: true }]);
+
+  const retryB = await service.recordRetry(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: retryA.id,
+    retryOfJobId: "job_base",
+    extraction: {
+      contractVersion: "0.1.0", jobId: "job_retry_b", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
+      items: [{ scopeKey: "fact:b", status: "succeeded", value: { id: "fact_b", factType: "event", statement: "事实B", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_b" }] } }],
+    },
+  });
+  assert.deepEqual(retryB.facts.map(({ id }) => id), ["fact_a", "fact_b"]);
+  assert.deepEqual(retryB.failures, []);
 });
