@@ -2,6 +2,7 @@ export type Actor = Readonly<{ userId: string; workspaceId: string }>;
 export type FactType = "character" | "relationship" | "event" | "location" | "prop" | "worldRule";
 export type AssertionKind = "explicit" | "inferred" | "user_confirmed";
 export type ResolutionStatus = "resolved" | "pending_identity" | "conflicting";
+export type ConflictClassification = "setting_change" | "character_misunderstanding" | "author_contradiction" | "other";
 
 export type SourceEvidence = Readonly<{
   sourceVersionId: string;
@@ -14,7 +15,15 @@ export type StoryFact = Readonly<{
   statement: string;
   assertionKind: AssertionKind;
   resolutionStatus: ResolutionStatus;
+  resolutionGroupId: string | null;
   evidence: SourceEvidence[];
+  decision?: Readonly<{
+    outcome: "accepted" | "rejected";
+    conflictClassification?: ConflictClassification;
+    decidedBy: string;
+    decidedAt: string;
+    reason: string;
+  }>;
 }>;
 
 export type ExtractionFailure = Readonly<{
@@ -40,6 +49,7 @@ export type StoryKnowledgeExtraction = Readonly<{
 
 export type StoryKnowledgeVersion = Readonly<{
   id: string;
+  parentVersionId: string | null;
   projectId: string;
   chapterId: string;
   sourceVersionId: string;
@@ -53,8 +63,18 @@ export type StoryKnowledgeVersion = Readonly<{
 }>;
 
 export interface StoryKnowledgeRepository {
-  saveCandidate(actor: Actor, version: StoryKnowledgeVersion): Promise<StoryKnowledgeVersion>;
+  saveCandidate(
+    actor: Actor,
+    version: StoryKnowledgeVersion,
+    expectedActiveVersionId?: string | null,
+  ): Promise<StoryKnowledgeVersion>;
   findActive(actor: Actor, projectId: string, chapterId: string): Promise<StoryKnowledgeVersion | null>;
+  findVersion(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    versionId: string,
+  ): Promise<StoryKnowledgeVersion | null>;
 }
 
 export interface SourceVersionReader {
@@ -67,7 +87,14 @@ export interface SourceVersionReader {
 }
 
 export class StoryKnowledgeError extends Error {
-  readonly code: "SOURCE_VERSION_NOT_FOUND" | "INVALID_EXTRACTION" | "STAGE_RESULT_NOT_FOUND";
+  readonly code:
+    | "SOURCE_VERSION_NOT_FOUND"
+    | "INVALID_EXTRACTION"
+    | "STAGE_RESULT_NOT_FOUND"
+    | "FACT_NOT_FOUND"
+    | "FACT_NOT_PENDING"
+    | "INVALID_DECISION"
+    | "VERSION_CONFLICT";
 
   constructor(code: StoryKnowledgeError["code"], message: string) {
     super(message);
@@ -77,16 +104,39 @@ export class StoryKnowledgeError extends Error {
 }
 
 export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepository {
+  readonly #activeVersionIds = new Map<string, string>();
   readonly #versions = new Map<string, StoryKnowledgeVersion>();
 
-  async saveCandidate(actor: Actor, version: StoryKnowledgeVersion): Promise<StoryKnowledgeVersion> {
+  async saveCandidate(
+    actor: Actor,
+    version: StoryKnowledgeVersion,
+    expectedActiveVersionId?: string | null,
+  ): Promise<StoryKnowledgeVersion> {
     const saved = structuredClone(version);
-    this.#versions.set(key(actor, version.projectId, version.chapterId), saved);
+    const stageKey = key(actor, version.projectId, version.chapterId);
+    if (expectedActiveVersionId !== undefined
+      && (this.#activeVersionIds.get(stageKey) ?? null) !== expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    this.#versions.set(versionKey(stageKey, version.id), saved);
+    this.#activeVersionIds.set(stageKey, version.id);
     return structuredClone(saved);
   }
 
   async findActive(actor: Actor, projectId: string, chapterId: string): Promise<StoryKnowledgeVersion | null> {
-    const version = this.#versions.get(key(actor, projectId, chapterId));
+    const stageKey = key(actor, projectId, chapterId);
+    const activeVersionId = this.#activeVersionIds.get(stageKey);
+    const version = activeVersionId ? this.#versions.get(versionKey(stageKey, activeVersionId)) : undefined;
+    return version ? structuredClone(version) : null;
+  }
+
+  async findVersion(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    versionId: string,
+  ): Promise<StoryKnowledgeVersion | null> {
+    const version = this.#versions.get(versionKey(key(actor, projectId, chapterId), versionId));
     return version ? structuredClone(version) : null;
   }
 }
@@ -109,7 +159,11 @@ export class StoryKnowledgeService {
     this.#clock = options.clock;
   }
 
-  async recordExtraction(actor: Actor, input: unknown): Promise<StoryKnowledgeVersion> {
+  async recordExtraction(
+    actor: Actor,
+    input: unknown,
+    expectedActiveVersionId: string | null = null,
+  ): Promise<StoryKnowledgeVersion> {
     const extraction = parseExtraction(input);
     const source = await this.#sourceReader.findSourceVersion(
       actor,
@@ -154,6 +208,7 @@ export class StoryKnowledgeService {
 
     return this.#repository.saveCandidate(actor, {
       id: this.#idGenerator(),
+      parentVersionId: expectedActiveVersionId,
       projectId: extraction.projectId,
       chapterId: extraction.chapterId,
       sourceVersionId: extraction.sourceVersionId,
@@ -164,7 +219,7 @@ export class StoryKnowledgeService {
       status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
       facts,
       failures,
-    });
+    }, expectedActiveVersionId);
   }
 
   async getRetryableScopes(actor: Actor, projectId: string, chapterId: string): Promise<string[]> {
@@ -181,12 +236,122 @@ export class StoryKnowledgeService {
     }
     return version.failures.filter(({ retryable }) => retryable).map(({ scopeKey }) => scopeKey);
   }
+
+  async getVersion(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    versionId: string,
+  ): Promise<StoryKnowledgeVersion> {
+    const version = await this.#repository.findVersion(actor, projectId, chapterId, versionId);
+    if (!version) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      version.sourceVersionId,
+    );
+    if (!source || source.id !== version.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    return version;
+  }
+
+  async resolveFact(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+    input: unknown,
+  ): Promise<StoryKnowledgeVersion> {
+    const decision = parseDecision(input);
+    const { factId, alternativeFactIds, statement, reason, conflictClassification } = decision;
+    if (new Set([factId, ...alternativeFactIds]).size !== alternativeFactIds.length + 1) {
+      throw new StoryKnowledgeError("INVALID_DECISION", "同一事实不能同时作为确认项和被否决项");
+    }
+    const current = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      current.sourceVersionId,
+    );
+    if (!source || source.id !== current.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+
+    const target = current.facts.find((fact) => fact.id === factId);
+    if (!target) throw new StoryKnowledgeError("FACT_NOT_FOUND", "待确认故事知识不存在");
+    if (target.resolutionStatus === "resolved") {
+      throw new StoryKnowledgeError("FACT_NOT_PENDING", "故事知识没有待处理的不确定项");
+    }
+    if (!target.resolutionGroupId) {
+      throw new StoryKnowledgeError("INVALID_DECISION", "待确认故事知识缺少候选组");
+    }
+    const unresolvedGroupIds = current.facts
+      .filter((fact) => fact.resolutionGroupId === target.resolutionGroupId && fact.resolutionStatus !== "resolved")
+      .map((fact) => fact.id);
+    const decidedIds = new Set([factId, ...alternativeFactIds]);
+    if (unresolvedGroupIds.length !== decidedIds.size
+      || unresolvedGroupIds.some((id) => !decidedIds.has(id))) {
+      throw new StoryKnowledgeError("INVALID_DECISION", "一次决定必须处理同一候选组的全部未决事实");
+    }
+    const involvesConflict = target.resolutionStatus === "conflicting";
+    for (const alternativeFactId of alternativeFactIds) {
+      const alternative = current.facts.find((fact) => fact.id === alternativeFactId);
+      if (!alternative) throw new StoryKnowledgeError("FACT_NOT_FOUND", "冲突故事知识不存在");
+      if (alternative.resolutionStatus === "resolved") {
+        throw new StoryKnowledgeError("FACT_NOT_PENDING", "冲突故事知识没有待处理的不确定项");
+      }
+      if (alternative.resolutionGroupId !== target.resolutionGroupId
+        || alternative.resolutionStatus !== target.resolutionStatus) {
+        throw new StoryKnowledgeError("INVALID_DECISION", "只能同时处理同一候选组中的同类事实");
+      }
+    }
+    if (involvesConflict && !conflictClassification) {
+      throw new StoryKnowledgeError("INVALID_DECISION", "冲突事实必须选择冲突分类");
+    }
+    const decidedAt = this.#clock().toISOString();
+    const rejected = new Set(alternativeFactIds);
+    const decisionDetails = {
+      decidedBy: actor.userId,
+      decidedAt,
+      reason,
+      ...(conflictClassification ? { conflictClassification } : {}),
+    };
+    const facts = current.facts.map((fact): StoryFact => {
+      if (fact.id === factId) return {
+        ...structuredClone(fact),
+        statement,
+        assertionKind: "user_confirmed",
+        resolutionStatus: "resolved",
+        decision: { outcome: "accepted", ...decisionDetails },
+      };
+      if (rejected.has(fact.id)) return {
+        ...structuredClone(fact),
+        resolutionStatus: "resolved",
+        decision: { outcome: "rejected", ...decisionDetails },
+      };
+      return structuredClone(fact);
+    });
+
+    return this.#repository.saveCandidate(actor, {
+      ...current,
+      id: this.#idGenerator(),
+      parentVersionId: current.id,
+      createdAt: decidedAt,
+      createdBy: actor.userId,
+      status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
+      facts,
+    }, current.id);
+  }
 }
 
 const FACT_TYPES = ["character", "relationship", "event", "location", "prop", "worldRule"] as const;
 const ASSERTION_KINDS = ["explicit", "inferred", "user_confirmed"] as const;
 const RESOLUTION_STATUSES = ["resolved", "pending_identity", "conflicting"] as const;
 const EXTRACTION_STATUSES = ["succeeded", "partially_succeeded", "failed"] as const;
+const CONFLICT_CLASSIFICATIONS = ["setting_change", "character_misunderstanding", "author_contradiction", "other"] as const;
 
 function parseExtraction(input: unknown): StoryKnowledgeExtraction {
   const root = recordWithKeys(input, [
@@ -201,9 +366,12 @@ function parseExtraction(input: unknown): StoryKnowledgeExtraction {
     if (item.status === "succeeded") {
       exactKeys(item, ["scopeKey", "status", "value"]);
       const value = recordWithKeys(item.value, [
-        "id", "factType", "statement", "assertionKind", "resolutionStatus", "evidence",
+        "id", "factType", "statement", "assertionKind", "resolutionStatus", "resolutionGroupId", "evidence",
       ]);
       if (!Array.isArray(value.evidence)) invalidExtraction();
+      const resolutionStatus = enumValue(value.resolutionStatus, RESOLUTION_STATUSES);
+      const resolutionGroupId = value.resolutionGroupId === null ? null : nonBlank(value.resolutionGroupId);
+      if (resolutionStatus !== "resolved" && resolutionGroupId === null) invalidExtraction();
       return {
         scopeKey: nonBlank(item.scopeKey),
         status: "succeeded",
@@ -212,7 +380,8 @@ function parseExtraction(input: unknown): StoryKnowledgeExtraction {
           factType: enumValue(value.factType, FACT_TYPES),
           statement: nonBlank(value.statement),
           assertionKind: enumValue(value.assertionKind, ASSERTION_KINDS),
-          resolutionStatus: enumValue(value.resolutionStatus, RESOLUTION_STATUSES),
+          resolutionStatus,
+          resolutionGroupId,
           evidence: value.evidence.map((candidateEvidence) => {
             const evidence = recordWithKeys(candidateEvidence, ["sourceVersionId", "fragmentId"]);
             return {
@@ -292,6 +461,41 @@ function invalidExtraction(): never {
   throw new StoryKnowledgeError("INVALID_EXTRACTION", "故事知识提取结果不符合运行时契约");
 }
 
+function parseDecision(input: unknown): {
+  factId: string;
+  alternativeFactIds: string[];
+  statement: string;
+  reason: string;
+  conflictClassification?: ConflictClassification;
+} {
+  let value: Record<string, unknown>;
+  try {
+    value = record(input);
+  } catch {
+    return invalidDecision();
+  }
+  const allowed = new Set(["factId", "alternativeFactIds", "statement", "reason", "conflictClassification"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) invalidDecision();
+  if (value.alternativeFactIds !== undefined && !Array.isArray(value.alternativeFactIds)) invalidDecision();
+  try {
+    return {
+      factId: nonBlank(value.factId),
+      alternativeFactIds: (value.alternativeFactIds ?? []).map((id) => nonBlank(id)),
+      statement: nonBlank(value.statement),
+      reason: nonBlank(value.reason),
+      ...(value.conflictClassification === undefined ? {} : {
+        conflictClassification: enumValue(value.conflictClassification, CONFLICT_CLASSIFICATIONS),
+      }),
+    };
+  } catch {
+    return invalidDecision();
+  }
+}
+
+function invalidDecision(): never {
+  throw new StoryKnowledgeError("INVALID_DECISION", "故事知识决定不符合运行时契约");
+}
+
 function finalExtractionStatus(
   succeeded: number,
   failed: number,
@@ -303,4 +507,8 @@ function finalExtractionStatus(
 
 function key(actor: Actor, projectId: string, chapterId: string): string {
   return `${actor.workspaceId}:${projectId}:${chapterId}`;
+}
+
+function versionKey(stageKey: string, versionId: string): string {
+  return `${stageKey}:${versionId}`;
 }

@@ -23,7 +23,7 @@ Turn a source version into reviewable story knowledge without silently resolving
 - [x] Persist successful facts from partially successful extraction while retaining item-level failures.
 - [x] Restrict local retry scope to failures explicitly marked retryable.
 - [x] Quarantine facts with missing or invalid source-fragment evidence as retryable item failures without discarding valid facts.
-- [ ] Preserve alias, hidden-identity, and conflicting-fact candidates until user resolution.
+- [x] Preserve alias, hidden-identity, and conflicting-fact candidates with all evidence until a recorded user resolution.
 - [ ] Support item edit, accept, reject, lock, and local retry transitions as immutable versions.
 - [ ] Confirm the stage as an owner or reviewer and publish a versioned story bible.
 - [ ] Add persistence, authenticated API endpoints, background extraction adapter, and review UI.
