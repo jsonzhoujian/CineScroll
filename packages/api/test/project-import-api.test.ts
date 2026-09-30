@@ -7,6 +7,7 @@ import request from "supertest";
 import { HmacSessionManager } from "@novel-adaptation/identity";
 import type { IdentityService } from "@novel-adaptation/identity";
 import { InMemoryProjectImportRepository, ProjectImportService } from "@novel-adaptation/project-import";
+import type { StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModule } from "../src/index.ts";
 
 test("项目创建 API 拒绝无 Session 请求，并只使用 Session 中的 Actor", async () => {
@@ -25,6 +26,7 @@ test("项目创建 API 拒绝无 Session 请求，并只使用 Session 中的 Ac
     identity: {} as IdentityService,
     sessionVerifier: sessions,
     projectImport: service,
+    storyKnowledge: {} as StoryKnowledgeService,
     wechatRedirectUri: "https://app.example.cn/auth/wechat/callback",
     deviceTokens: new HmacDeviceTokenService("abcdef0123456789abcdef0123456789"),
     clientIpResolver: new ForwardedClientIpResolver(0),
@@ -73,6 +75,7 @@ test("已认证用户可预检多章节、选择一章导入并读取可追溯�
     identity: {} as IdentityService,
     sessionVerifier: sessions,
     projectImport: service,
+    storyKnowledge: {} as StoryKnowledgeService,
     wechatRedirectUri: "https://app.example.cn/auth/wechat/callback",
     deviceTokens: new HmacDeviceTokenService("abcdef0123456789abcdef0123456789"),
     clientIpResolver: new ForwardedClientIpResolver(0),

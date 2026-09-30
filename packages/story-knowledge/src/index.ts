@@ -415,6 +415,25 @@ export class StoryKnowledgeService {
     return version.failures.filter(({ retryable }) => retryable).map(({ scopeKey }) => scopeKey);
   }
 
+  async getActive(
+    actor: Actor,
+    projectId: string,
+    chapterId: string,
+  ): Promise<StoryKnowledgeVersion> {
+    const version = await this.#repository.findActive(actor, projectId, chapterId);
+    if (!version) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    const source = await this.#sourceReader.findSourceVersion(
+      actor,
+      projectId,
+      chapterId,
+      version.sourceVersionId,
+    );
+    if (!source || source.id !== version.sourceVersionId) {
+      throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    return version;
+  }
+
   async getVersion(
     actor: Actor,
     projectId: string,
@@ -442,7 +461,7 @@ export class StoryKnowledgeService {
     input: unknown,
   ): Promise<StoryKnowledgeVersion> {
     const decision = parseDecision(input);
-    const { factId, alternativeFactIds, statement, reason, conflictClassification } = decision;
+    const { expectedActiveVersionId, factId, alternativeFactIds, statement, reason, conflictClassification } = decision;
     if (new Set([factId, ...alternativeFactIds]).size !== alternativeFactIds.length + 1) {
       throw new StoryKnowledgeError("INVALID_DECISION", "同一事实不能同时作为确认项和被否决项");
     }
@@ -456,6 +475,9 @@ export class StoryKnowledgeService {
     );
     if (!source || source.id !== current.sourceVersionId) {
       throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
+    }
+    if (current.id !== expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
     }
 
     const target = current.facts.find((fact) => fact.id === factId);
@@ -1033,6 +1055,7 @@ function invalidExtraction(): never {
 }
 
 function parseDecision(input: unknown): {
+  expectedActiveVersionId: string;
   factId: string;
   alternativeFactIds: string[];
   statement: string;
@@ -1045,11 +1068,12 @@ function parseDecision(input: unknown): {
   } catch {
     return invalidDecision();
   }
-  const allowed = new Set(["factId", "alternativeFactIds", "statement", "reason", "conflictClassification"]);
+  const allowed = new Set(["expectedActiveVersionId", "factId", "alternativeFactIds", "statement", "reason", "conflictClassification"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) invalidDecision();
   if (value.alternativeFactIds !== undefined && !Array.isArray(value.alternativeFactIds)) invalidDecision();
   try {
     return {
+      expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
       factId: nonBlank(value.factId),
       alternativeFactIds: (value.alternativeFactIds ?? []).map((id) => nonBlank(id)),
       statement: nonBlank(value.statement),

@@ -158,6 +158,7 @@ test("用户确认隐藏身份候选时派生新版本并完整保留候选证�
   });
 
   const resolved = await service.resolveFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_candidate",
     factId: "fact_identity",
     statement: "墨白是无心使用的身份",
     reason: "原文两处称谓和行动线索一致",
@@ -213,6 +214,7 @@ test("解决冲突事实时保留胜出项与被否决项的全部证据", async
   });
 
   await assert.rejects(() => service.resolveFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_conflict",
     factId: "fact_winter",
     statement: "事件发生在冬季",
     reason: "未处理同组的春季候选",
@@ -220,6 +222,7 @@ test("解决冲突事实时保留胜出项与被否决项的全部证据", async
   }), { code: "INVALID_DECISION" });
 
   const decided = await service.resolveFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_conflict",
     factId: "fact_winter",
     alternativeFactIds: ["fact_spring"],
     conflictClassification: "character_misunderstanding",
@@ -257,12 +260,13 @@ test("冲突决定拒绝跨候选组事实，并在并发修改时只接受一�
   });
 
   await assert.rejects(() => service.resolveFact(actor, "prj_1", "chp_1", {
+    expectedActiveVersionId: "skv_base",
     factId: "fact_a", alternativeFactIds: ["fact_b"], statement: "甲结论", reason: "不同问题不能合并裁决", conflictClassification: "other",
   }), { code: "INVALID_DECISION" });
 
   const decisions = await Promise.allSettled([
-    service.resolveFact(actor, "prj_1", "chp_1", { factId: "fact_a", statement: "甲结论一", reason: "决定一", conflictClassification: "other" }),
-    service.resolveFact(actor, "prj_1", "chp_1", { factId: "fact_a", statement: "甲结论二", reason: "决定二", conflictClassification: "other" }),
+    service.resolveFact(actor, "prj_1", "chp_1", { expectedActiveVersionId: "skv_base", factId: "fact_a", statement: "甲结论一", reason: "决定一", conflictClassification: "other" }),
+    service.resolveFact(actor, "prj_1", "chp_1", { expectedActiveVersionId: "skv_base", factId: "fact_a", statement: "甲结论二", reason: "决定二", conflictClassification: "other" }),
   ]);
   assert.equal(decisions.filter(({ status }) => status === "fulfilled").length, 1);
   assert.equal(decisions.filter(({ status }) => status === "rejected").length, 1);
@@ -296,7 +300,7 @@ test("迟到的提取结果不能覆盖已经完成的人工决定", async () =>
     items: [{ scopeKey: "fact:identity", status: "succeeded", value: { id: "fact_identity", factType: "relationship", statement: "身份待确认", assertionKind: "inferred", resolutionStatus: "pending_identity", resolutionGroupId: "issue:identity", evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] } }],
   };
   await service.recordExtraction(actor, extraction);
-  await service.resolveFact(actor, "prj_1", "chp_1", { factId: "fact_identity", statement: "身份已确认", reason: "人工确认" });
+  await service.resolveFact(actor, "prj_1", "chp_1", { expectedActiveVersionId: "skv_base", factId: "fact_identity", statement: "身份已确认", reason: "人工确认" });
 
   await assert.rejects(() => service.recordExtraction(actor, { ...extraction, jobId: "job_late" }), {
     code: "VERSION_CONFLICT",

@@ -25,6 +25,8 @@ import type { Actor, IdentityService, SessionVerifier } from "@novel-adaptation/
 import { IdentityProviderError } from "@novel-adaptation/identity/providers";
 import { ProjectImportError } from "@novel-adaptation/project-import";
 import type { CreateProjectInput, DocumentInput, ProjectImportService, TextImportInput } from "@novel-adaptation/project-import";
+import { StoryKnowledgeError } from "@novel-adaptation/story-knowledge";
+import type { StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
 export const SESSION_VERIFIER = Symbol("SESSION_VERIFIER");
 export const PROJECT_IMPORT = Symbol("PROJECT_IMPORT");
@@ -32,6 +34,7 @@ export const IDENTITY_SERVICE = Symbol("IDENTITY_SERVICE");
 export const WECHAT_REDIRECT_URI = Symbol("WECHAT_REDIRECT_URI");
 export const DEVICE_TOKENS = Symbol("DEVICE_TOKENS");
 export const CLIENT_IP_RESOLVER = Symbol("CLIENT_IP_RESOLVER");
+export const STORY_KNOWLEDGE = Symbol("STORY_KNOWLEDGE");
 
 export interface DeviceTokenService {
   issue(): string;
@@ -131,6 +134,15 @@ export class ProjectImportExceptionFilter implements ExceptionFilter<ProjectImpo
 
 Catch(ProjectImportError)(ProjectImportExceptionFilter);
 
+export class StoryKnowledgeExceptionFilter implements ExceptionFilter<StoryKnowledgeError> {
+  catch(error: StoryKnowledgeError, host: ArgumentsHost): void {
+    const response = host.switchToHttp().getResponse<{ status(code: number): { json(body: object): void } }>();
+    response.status(storyKnowledgeStatusFor(error.code)).json({ code: error.code, message: error.message });
+  }
+}
+
+Catch(StoryKnowledgeError)(StoryKnowledgeExceptionFilter);
+
 export class IdentityExceptionFilter implements ExceptionFilter<IdentityError> {
   catch(error: IdentityError, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<{
@@ -169,6 +181,13 @@ function statusFor(code: ProjectImportError["code"]): number {
   if (code === "PROJECT_WRITE_FORBIDDEN") return 403;
   if (code === "CHAPTER_TOO_LARGE") return 413;
   if (code === "COMPLIANCE_UNAVAILABLE" || code === "DOCX_EXTRACTOR_UNAVAILABLE") return 503;
+  return 422;
+}
+
+function storyKnowledgeStatusFor(code: StoryKnowledgeError["code"]): number {
+  if (code === "STAGE_RESULT_NOT_FOUND" || code === "SOURCE_VERSION_NOT_FOUND" || code === "FACT_NOT_FOUND") return 404;
+  if (code === "FORBIDDEN") return 403;
+  if (code === "VERSION_CONFLICT") return 409;
   return 422;
 }
 
@@ -268,6 +287,62 @@ export class AuthController {
     return this.identity.beginWechatBinding(request.actor!);
   }
 
+}
+
+export class StoryKnowledgeController {
+  private readonly storyKnowledge: StoryKnowledgeService;
+
+  constructor(storyKnowledge: StoryKnowledgeService) {
+    this.storyKnowledge = storyKnowledge;
+  }
+
+  getActive(request: AuthenticatedRequest, projectId: string, chapterId: string) {
+    return this.service().getActive(request.actor!, projectId, chapterId);
+  }
+
+  getVersion(request: AuthenticatedRequest, projectId: string, chapterId: string, versionId: string) {
+    return this.service().getVersion(request.actor!, projectId, chapterId, versionId);
+  }
+
+  async getRetryableScopes(request: AuthenticatedRequest, projectId: string, chapterId: string) {
+    return { scopeKeys: await this.service().getRetryableScopes(request.actor!, projectId, chapterId) };
+  }
+
+  getConfirmedStoryBible(request: AuthenticatedRequest, projectId: string, chapterId: string) {
+    return this.service().getConfirmedStoryBible(request.actor!, projectId, chapterId);
+  }
+
+  resolveFact(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string, body: unknown) {
+    return this.service().resolveFact(request.actor!, projectId, chapterId, factCommand(body, factId));
+  }
+
+  editFact(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string, body: unknown) {
+    return this.service().editFact(request.actor!, projectId, chapterId, factCommand(body, factId));
+  }
+
+  reviewFact(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string, body: unknown) {
+    return this.service().reviewFact(request.actor!, projectId, chapterId, factCommand(body, factId));
+  }
+
+  retry(request: AuthenticatedRequest, projectId: string, chapterId: string, body: unknown) {
+    return this.service().recordRetry(request.actor!, projectId, chapterId, body);
+  }
+
+  confirm(request: AuthenticatedRequest, projectId: string, chapterId: string, body: unknown) {
+    return this.service().confirmStage(request.actor!, projectId, chapterId, body);
+  }
+
+  setFactLock(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string, body: unknown) {
+    return this.service().setFactLock(request.actor!, projectId, chapterId, factCommand(body, factId));
+  }
+
+  private service(): StoryKnowledgeService {
+    return this.storyKnowledge;
+  }
+}
+
+function factCommand(body: unknown, factId: string): Record<string, unknown> {
+  return { ...(isRecord(body) ? body : {}), factId };
 }
 
 function phoneChallengeFrom(deviceTokens: DeviceTokenService, clientIps: ClientIpResolver, request: AuthenticatedRequest, value: unknown) {
@@ -397,6 +472,60 @@ Req()(ProjectController.prototype, "reimportChapter", 0);
 Param("projectId")(ProjectController.prototype, "reimportChapter", 1);
 Param("chapterId")(ProjectController.prototype, "reimportChapter", 2);
 Body()(ProjectController.prototype, "reimportChapter", 3);
+Controller("projects/:projectId/chapters/:chapterId/story-knowledge")(StoryKnowledgeController);
+UseGuards(SessionGuard)(StoryKnowledgeController);
+Inject(STORY_KNOWLEDGE)(StoryKnowledgeController, undefined, 0);
+Get()(StoryKnowledgeController.prototype, "getActive", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "getActive")!);
+Req()(StoryKnowledgeController.prototype, "getActive", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "getActive", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "getActive", 2);
+Get("versions/:versionId")(StoryKnowledgeController.prototype, "getVersion", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "getVersion")!);
+Req()(StoryKnowledgeController.prototype, "getVersion", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "getVersion", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "getVersion", 2);
+Param("versionId")(StoryKnowledgeController.prototype, "getVersion", 3);
+Get("retryable-scopes")(StoryKnowledgeController.prototype, "getRetryableScopes", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "getRetryableScopes")!);
+Req()(StoryKnowledgeController.prototype, "getRetryableScopes", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "getRetryableScopes", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "getRetryableScopes", 2);
+Get("story-bible")(StoryKnowledgeController.prototype, "getConfirmedStoryBible", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "getConfirmedStoryBible")!);
+Req()(StoryKnowledgeController.prototype, "getConfirmedStoryBible", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "getConfirmedStoryBible", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "getConfirmedStoryBible", 2);
+Post("facts/:factId/resolve")(StoryKnowledgeController.prototype, "resolveFact", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "resolveFact")!);
+Req()(StoryKnowledgeController.prototype, "resolveFact", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "resolveFact", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "resolveFact", 2);
+Param("factId")(StoryKnowledgeController.prototype, "resolveFact", 3);
+Body()(StoryKnowledgeController.prototype, "resolveFact", 4);
+Post("facts/:factId/edit")(StoryKnowledgeController.prototype, "editFact", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "editFact")!);
+Req()(StoryKnowledgeController.prototype, "editFact", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "editFact", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "editFact", 2);
+Param("factId")(StoryKnowledgeController.prototype, "editFact", 3);
+Body()(StoryKnowledgeController.prototype, "editFact", 4);
+Post("facts/:factId/review")(StoryKnowledgeController.prototype, "reviewFact", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "reviewFact")!);
+Req()(StoryKnowledgeController.prototype, "reviewFact", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "reviewFact", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "reviewFact", 2);
+Param("factId")(StoryKnowledgeController.prototype, "reviewFact", 3);
+Body()(StoryKnowledgeController.prototype, "reviewFact", 4);
+Post("retries")(StoryKnowledgeController.prototype, "retry", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "retry")!);
+Req()(StoryKnowledgeController.prototype, "retry", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "retry", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "retry", 2);
+Body()(StoryKnowledgeController.prototype, "retry", 3);
+Post("confirm")(StoryKnowledgeController.prototype, "confirm", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "confirm")!);
+Req()(StoryKnowledgeController.prototype, "confirm", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "confirm", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "confirm", 2);
+Body()(StoryKnowledgeController.prototype, "confirm", 3);
+Post("facts/:factId/lock")(StoryKnowledgeController.prototype, "setFactLock", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "setFactLock")!);
+Req()(StoryKnowledgeController.prototype, "setFactLock", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "setFactLock", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "setFactLock", 2);
+Param("factId")(StoryKnowledgeController.prototype, "setFactLock", 3);
+Body()(StoryKnowledgeController.prototype, "setFactLock", 4);
 Controller("auth")(AuthController);
 Inject(IDENTITY_SERVICE)(AuthController, undefined, 0);
 Inject(WECHAT_REDIRECT_URI)(AuthController, undefined, 1);
@@ -420,6 +549,7 @@ export interface ProjectImportApiServices {
   identity: IdentityService;
   sessionVerifier: SessionVerifier;
   projectImport: ProjectImportService;
+  storyKnowledge: StoryKnowledgeService;
   wechatRedirectUri: string;
   deviceTokens: DeviceTokenService;
   clientIpResolver: ClientIpResolver;
@@ -432,6 +562,7 @@ export class ProjectImportApiModule {
       providers: [
         { provide: SESSION_VERIFIER, useValue: services.sessionVerifier },
         { provide: PROJECT_IMPORT, useValue: services.projectImport },
+        { provide: STORY_KNOWLEDGE, useValue: services.storyKnowledge },
         { provide: IDENTITY_SERVICE, useValue: services.identity },
         { provide: WECHAT_REDIRECT_URI, useValue: services.wechatRedirectUri },
         { provide: DEVICE_TOKENS, useValue: services.deviceTokens },
@@ -442,10 +573,11 @@ export class ProjectImportApiModule {
 }
 
 Module({
-  controllers: [ProjectController, AuthController],
+  controllers: [ProjectController, StoryKnowledgeController, AuthController],
   providers: [
     SessionGuard,
     { provide: APP_FILTER, useClass: ProjectImportExceptionFilter },
+    { provide: APP_FILTER, useClass: StoryKnowledgeExceptionFilter },
     { provide: APP_FILTER, useClass: IdentityExceptionFilter },
     { provide: APP_FILTER, useClass: IdentityProviderExceptionFilter },
   ],

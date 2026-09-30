@@ -12,6 +12,8 @@ import { ProjectImportService } from "@novel-adaptation/project-import";
 import { HttpComplianceScanner } from "@novel-adaptation/project-import/http-compliance-scanner";
 import { MammothDocxTextExtractor } from "@novel-adaptation/project-import/mammoth-docx-extractor";
 import { PostgresProjectImportRepository } from "@novel-adaptation/project-import/postgres-repository";
+import { StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
+import { PostgresStoryKnowledgeRepository } from "@novel-adaptation/story-knowledge/postgres-repository";
 
 import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModule } from "./index.ts";
 
@@ -57,8 +59,9 @@ export function createProductionApi(config: ProductionApiConfig) {
     clock: () => new Date(),
     wechatRedirectUri: config.wechatRedirectUri,
   });
+  const projectRepository = new PostgresProjectImportRepository(pool);
   const projectImport = new ProjectImportService({
-    repository: new PostgresProjectImportRepository(pool),
+    repository: projectRepository,
     complianceScanner: new HttpComplianceScanner({
       endpoint: config.complianceEndpoint,
       apiKey: config.complianceApiKey,
@@ -67,11 +70,25 @@ export function createProductionApi(config: ProductionApiConfig) {
     idGenerator: (prefix) => `${prefix}_${randomUUID()}`,
     clock: () => new Date(),
   });
+  const storyKnowledge = new StoryKnowledgeService({
+    repository: new PostgresStoryKnowledgeRepository(pool),
+    sourceReader: {
+      async findSourceVersion(actor, projectId, chapterId, sourceVersionId) {
+        const chapter = await projectRepository.findChapter(actor, projectId, chapterId);
+        const version = chapter?.versions.find(({ id }) => id === sourceVersionId);
+        return version ? { id: version.id, fragmentIds: version.fragments.map(({ id }) => id) } : null;
+      },
+    },
+    projectAccessReader: projectRepository,
+    idGenerator: () => `skv_${randomUUID()}`,
+    clock: () => new Date(),
+  });
   return {
     module: ProjectImportApiModule.register({
       identity,
       sessionVerifier: sessions,
       projectImport,
+      storyKnowledge,
       wechatRedirectUri: config.wechatRedirectUri,
       deviceTokens: new HmacDeviceTokenService(config.deviceTokenSecret),
       clientIpResolver: new ForwardedClientIpResolver(config.trustedProxyHops),

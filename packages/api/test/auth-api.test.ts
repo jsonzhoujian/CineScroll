@@ -13,6 +13,7 @@ import {
 } from "@novel-adaptation/identity";
 import { IdentityProviderError } from "@novel-adaptation/identity/providers";
 import { InMemoryProjectImportRepository, ProjectImportService } from "@novel-adaptation/project-import";
+import type { StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 import {
   ForwardedClientIpResolver,
   HmacDeviceTokenService,
@@ -127,6 +128,7 @@ async function createAuthApi(options: { providerUnavailable?: boolean } = {}) {
     identity,
     sessionVerifier: sessions,
     projectImport: projects,
+    storyKnowledge: {} as StoryKnowledgeService,
     wechatRedirectUri: "https://app.example.cn/auth/wechat/callback",
     deviceTokens: new HmacDeviceTokenService("abcdef0123456789abcdef0123456789"),
     clientIpResolver: new ForwardedClientIpResolver(0),
