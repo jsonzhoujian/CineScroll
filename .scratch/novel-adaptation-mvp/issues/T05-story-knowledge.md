@@ -32,4 +32,5 @@ Turn a source version into reviewable story knowledge without silently resolving
 - [x] Confirm the stage as an owner or reviewer and publish a versioned story bible.
 - [x] Persist immutable story-knowledge versions, retry/confirmation idempotency records, active heads, and story bibles in PostgreSQL with transactional CAS and tenant RLS.
 - [x] Add authenticated API endpoints for reading versions, resolving, editing, reviewing, retrying, confirming, and locking story knowledge.
-- [ ] Add the background extraction adapter and review UI.
+- [x] Add a provider-neutral background extraction runner over the canonical AI contract; provider transport remains owned by T09.
+- [ ] Add the story-knowledge review UI.

@@ -340,7 +340,7 @@ export class StoryKnowledgeService {
     input: unknown,
     expectedActiveVersionId: string | null = null,
   ): Promise<StoryKnowledgeVersion> {
-    const extraction = parseExtraction(input);
+    const extraction = parseStoryKnowledgeExtraction(input);
     const source = await this.#sourceReader.findSourceVersion(
       actor,
       extraction.projectId,
@@ -946,7 +946,7 @@ const RESOLUTION_STATUSES = ["resolved", "pending_identity", "conflicting"] as c
 const EXTRACTION_STATUSES = ["succeeded", "partially_succeeded", "failed"] as const;
 const CONFLICT_CLASSIFICATIONS = ["setting_change", "character_misunderstanding", "author_contradiction", "other"] as const;
 
-function parseExtraction(input: unknown): StoryKnowledgeExtraction {
+export function parseStoryKnowledgeExtraction(input: unknown): StoryKnowledgeExtraction {
   const root = recordWithKeys(input, [
     "contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId", "status", "items",
   ]);
@@ -1139,7 +1139,7 @@ function parseRetryCommand(input: unknown): {
     return {
       expectedActiveVersionId: nonBlank(value.expectedActiveVersionId),
       retryOfJobId: nonBlank(value.retryOfJobId),
-      extraction: parseExtraction(value.extraction),
+      extraction: parseStoryKnowledgeExtraction(value.extraction),
     };
   } catch {
     throw new StoryKnowledgeError("INVALID_RETRY", "局部重试命令不符合运行时契约");

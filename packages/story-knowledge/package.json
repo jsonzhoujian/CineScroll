@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./extraction-adapter": "./src/extraction-adapter.ts",
     "./postgres-repository": "./src/postgres-repository.ts"
   },
   "scripts": {
