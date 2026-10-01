@@ -7,6 +7,7 @@
 - [`json/project.schema.json`](./json/project.schema.json)：完整 JSON 导出的 canonical project Schema。
 - [`json/ai/request.schema.json`](./json/ai/request.schema.json)：四阶段共用的 AI 请求信封。
 - `json/ai/{story-knowledge,script,settings,storyboard}.schema.json`：各阶段逐项成功/失败响应。
+- [`json/ai/episode-plan.schema.json`](./json/ai/episode-plan.schema.json)：剧本阶段开始前的拆集建议响应；与正式剧本元素响应分开校验。
 - `fixtures/valid/` 与 `fixtures/invalid/`：玄幻、都市、悬疑的合法/非法项目样本。
 - `fixtures/ai/`：四阶段合法响应和无出处分镜非法响应。
 
@@ -30,12 +31,15 @@ JSON Schema 校验字段、枚举、联合类型、必填项及基本状态条�
 uvx check-jsonschema --check-metaschema docs/contracts/json/project.schema.json docs/contracts/json/ai/*.schema.json
 uvx check-jsonschema --schemafile docs/contracts/json/project.schema.json docs/contracts/fixtures/valid/*-project.json
 uvx check-jsonschema --schemafile docs/contracts/json/ai/story-knowledge.schema.json docs/contracts/fixtures/ai/valid-story-knowledge.json
+uvx check-jsonschema --schemafile docs/contracts/json/ai/episode-plan.schema.json docs/contracts/fixtures/ai/valid-episode-plan.json
 uvx check-jsonschema --schemafile docs/contracts/json/ai/script.schema.json docs/contracts/fixtures/ai/valid-script.json
 uvx check-jsonschema --schemafile docs/contracts/json/ai/settings.schema.json docs/contracts/fixtures/ai/valid-settings.json
 uvx check-jsonschema --schemafile docs/contracts/json/ai/storyboard.schema.json docs/contracts/fixtures/ai/valid-storyboard.json
 ```
 
 `fixtures/invalid/` 和 `fixtures/ai/invalid-*` 必须校验失败。
+
+拆集建议是一个必须整体一致的原子方案：任一集的原文范围、核心事件或重大改编引用无效时，整份建议留在隔离区且不创建候选版本。条目级部分成功与局部重试从正式剧本元素生成开始适用。
 
 ## T03 必须继承的决定
 

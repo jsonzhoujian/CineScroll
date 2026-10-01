@@ -1,0 +1,37 @@
+{
+  "contractVersion": "0.1.0",
+  "jobId": "job_plan_1",
+  "stage": "script",
+  "resultType": "episodePlan",
+  "projectId": "project_1",
+  "chapterId": "chapter_1",
+  "sourceVersionId": "source_v1",
+  "upstreamConfirmedVersionIds": ["story_bible_v1"],
+  "status": "succeeded",
+  "recommendationRationale": "觉醒与离乡形成两个独立情绪峰值，建议拆为两集。",
+  "episodes": [
+    {
+      "id": "episode_1",
+      "ordinal": 1,
+      "title": "灵纹初醒",
+      "sourceFragmentIds": ["frag_1", "frag_2"],
+      "coreEventFactIds": ["fact_awaken"]
+    },
+    {
+      "id": "episode_2",
+      "ordinal": 2,
+      "title": "踏上旅途",
+      "sourceFragmentIds": ["frag_3"],
+      "coreEventFactIds": ["fact_departure"]
+    }
+  ],
+  "majorAdaptationProposals": [
+    {
+      "id": "proposal_merge",
+      "kind": "merge_characters",
+      "summary": "合并两名引路人",
+      "rationale": "减少短时长内的新人物负担",
+      "affectedFactIds": ["fact_departure"]
+    }
+  ]
+}

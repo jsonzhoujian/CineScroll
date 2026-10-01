@@ -36,6 +36,8 @@ export type EpisodePlanVersion = Readonly<{
   targetDurationSeconds: TargetDurationSeconds;
   aspectRatio: AspectRatio;
   narrativeMode: NarrativeMode;
+  recommendationRationale?: string;
+  generationJobId?: string;
   episodes: EpisodePlanItem[];
   majorAdaptationProposals: MajorAdaptationProposal[];
   status: "candidate" | "confirmed";
@@ -54,6 +56,8 @@ export type RecordEpisodePlanInput = Readonly<{
   targetDurationSeconds: TargetDurationSeconds;
   aspectRatio: AspectRatio;
   narrativeMode: NarrativeMode;
+  recommendationRationale?: string;
+  generationJobId?: string;
   episodes: EpisodePlanItem[];
   majorAdaptationProposals: Array<Omit<MajorAdaptationProposal, "decision">>;
 }>;
@@ -221,6 +225,24 @@ export class ScriptService {
     if (!storyBible) {
       throw new ScriptError("CONFIRMED_STORY_BIBLE_NOT_FOUND", "生成拆集方案前必须先确认故事知识");
     }
+    const generationOperation = input.generationJobId ? {
+      key: `generation:${input.generationJobId}`,
+      fingerprint: JSON.stringify({ ...input, expectedActiveVersionId: undefined }),
+    } : undefined;
+    if (generationOperation) {
+      const replayed = await this.#repository.findOperationResult(
+        actor,
+        input.projectId,
+        input.chapterId,
+        generationOperation.key,
+      );
+      if (replayed) {
+        if (replayed.fingerprint !== generationOperation.fingerprint) {
+          throw new ScriptError("INVALID_EPISODE_PLAN", "相同拆集任务返回了不同内容");
+        }
+        return replayed.version;
+      }
+    }
     const active = await this.#repository.findActiveEpisodePlan(actor, input.projectId, input.chapterId);
     if ((active?.id ?? null) !== input.expectedActiveVersionId) {
       throw new ScriptError("VERSION_CONFLICT", "拆集方案已被其他操作更新，请刷新后重试");
@@ -237,7 +259,7 @@ export class ScriptService {
       status: "candidate",
       createdBy: actor.userId,
       createdAt: this.#clock().toISOString(),
-    }, input.expectedActiveVersionId);
+    }, input.expectedActiveVersionId, generationOperation);
   }
 
   async decideMajorAdaptation(
@@ -343,6 +365,9 @@ function validateEpisodePlan(
   if (![60, 180, 300].includes(input.targetDurationSeconds)) {
     throw new ScriptError("INVALID_EPISODE_PLAN", "目标单集时长仅支持 1、3、5 分钟");
   }
+  if (input.recommendationRationale !== undefined && input.recommendationRationale.trim().length === 0) {
+    throw new ScriptError("INVALID_EPISODE_PLAN", "拆集建议理由不能为空");
+  }
   if (input.episodes.length === 0) throw new ScriptError("INVALID_EPISODE_PLAN", "拆集方案至少包含一集");
   const fragmentIds = new Set(storyBible.fragmentIds);
   const factIds = new Set(storyBible.factIds);
@@ -357,6 +382,9 @@ function validateEpisodePlan(
       throw new ScriptError("INVALID_EPISODE_PLAN", "每集必须关联已确认的核心事件");
     }
   });
+  if (new Set(input.episodes.map(({ id }) => id)).size !== input.episodes.length) {
+    throw new ScriptError("INVALID_EPISODE_PLAN", "每集必须使用唯一标识");
+  }
   const proposalIds = new Set<string>();
   for (const proposal of input.majorAdaptationProposals) {
     if (proposalIds.has(proposal.id) || proposal.summary.trim().length === 0 || proposal.rationale.trim().length === 0) {
