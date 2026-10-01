@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ApiClient } from "../src/lib/api.ts";
+import { ApiClient, ApiClientError } from "../src/lib/api.ts";
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl, isWechatLoginMessage, WECHAT_LOGIN_MESSAGE } from "../src/lib/wechat-flow.ts";
 
 test("微信回调消息只接受完整的登录会话", () => {
@@ -46,6 +46,38 @@ test("微信登录 API 契约从授权地址完成回调并接管 Session", asyn
     api.acceptSession(login.sessionToken);
     await api.createProject({ title: "项目", rightsDeclared: true, aspectRatio: "9:16", targetDurationSeconds: 180, narrativeMode: "narration" });
     assert.equal(requests.at(-1)?.authorization, "Bearer session-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("故事知识客户端携带会话与活动版本，并保留版本冲突错误码", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string | undefined; body: unknown; authorization: string | null }> = [];
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url: String(input), method: init?.method,
+      body: init?.body ? JSON.parse(String(init.body)) as unknown : null,
+      authorization: headers.get("authorization"),
+    });
+    return Response.json({ code: "VERSION_CONFLICT", message: "内容已更新" }, { status: 409 });
+  };
+  try {
+    const api = new ApiClient("https://api.example.cn");
+    api.acceptSession("session-1");
+    await assert.rejects(
+      () => api.reviewStoryFact("prj_1", "chp_1", "fact_1", {
+        expectedActiveVersionId: "skv_stale", outcome: "accepted", reason: "符合原文",
+      }),
+      (error: unknown) => error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT",
+    );
+    assert.deepEqual(requests, [{
+      url: "https://api.example.cn/projects/prj_1/chapters/chp_1/story-knowledge/facts/fact_1/review",
+      method: "POST",
+      body: { expectedActiveVersionId: "skv_stale", outcome: "accepted", reason: "符合原文" },
+      authorization: "Bearer session-1",
+    }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

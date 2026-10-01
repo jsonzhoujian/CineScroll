@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type SourceVersionDiff } from "../lib/api";
 import { buildDocumentRequest, type DocumentRequest, type ProjectDraft, validateProjectDraft } from "../lib/workflow";
 import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type WorkbenchMode, workbenchModes } from "../lib/workbench-mode";
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
+import type { ReviewFilter } from "../lib/story-knowledge-review";
+import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
 type MobileTab = "progress" | "review" | "decisions" | "notifications";
@@ -32,7 +34,7 @@ export function ImportWorkbench() {
   const [code, setCode] = useState("");
   const [challengeId, setChallengeId] = useState<string | null>(null);
   const [projectDraft, setProjectDraft] = useState<ProjectDraft>(initialProject);
-  const [project, setProject] = useState<{ id: string; title: string } | null>(null);
+  const [project, setProject] = useState<{ id: string; title: string; role: "owner" | "editor" | "reviewer" } | null>(null);
   const [inputMode, setInputMode] = useState<"paste" | "file">("paste");
   const [sourceText, setSourceText] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -45,6 +47,11 @@ export function ImportWorkbench() {
   const [diff, setDiff] = useState<SourceVersionDiff | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmedStoryKnowledgeChapterId, setConfirmedStoryKnowledgeChapterId] = useState<string | null>(null);
+  const [reviewCursor, setReviewCursor] = useState<{ filter: ReviewFilter; selectedId: string | null }>({ filter: "all", selectedId: null });
+  const syncStoryKnowledgeConfirmation = useCallback((chapterId: string, confirmed: boolean) => {
+    setConfirmedStoryKnowledgeChapterId((current) => confirmed ? chapterId : current === chapterId ? null : current);
+  }, []);
   const [mobileTab, setMobileTab] = useState<MobileTab>("progress");
   const expectedWechatState = useRef<string | null>(null);
   const wechatPopup = useRef<Window | null>(null);
@@ -116,7 +123,7 @@ export function ImportWorkbench() {
     const validation = validateProjectDraft(projectDraft);
     if (!validation.ok) throw new Error(validation.message);
     const created = await api.createProject(validation.value);
-    setProject(created); setStep("source");
+    setProject({ ...created, role: "owner" }); setStep("source");
   });
   const inspect = () => run(async () => {
     if (!project) throw new Error("请先创建项目");
@@ -205,7 +212,7 @@ export function ImportWorkbench() {
         </Panel>}
 
         {mode === "trace" && step === "version" && chapter && <VersionDesk chapter={chapter} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
-        {mode !== "trace" && <ModeWorkspace mode={mode} project={project} chapter={chapter} onReturnToTrace={() => setMode("trace")} />}
+        {mode !== "trace" && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
 
@@ -265,10 +272,10 @@ function MobileEmpty({ mark, title, note }: { mark: string; title: string; note:
   return <div className="mobile-pane mobile-empty"><span>{mark}</span><h3>{title}</h3><p>{note}</p></div>;
 }
 
-function ModeWorkspace({ mode, project, chapter, onReturnToTrace }: { mode: Exclude<WorkbenchMode, "trace">; project: { id: string; title: string } | null; chapter: Chapter | null; onReturnToTrace(): void }) {
+function ModeWorkspace({ mode, project, chapter, api, storyKnowledgeConfirmed, reviewCursor, onReviewCursorChange, onStoryKnowledgeConfirmationChange, onNotice, onReturnToTrace }: { mode: Exclude<WorkbenchMode, "trace">; project: { id: string; title: string; role: "owner" | "editor" | "reviewer" } | null; chapter: Chapter | null; api: ApiClient; storyKnowledgeConfirmed: boolean; reviewCursor: { filter: ReviewFilter; selectedId: string | null }; onReviewCursorChange(cursor: { filter: ReviewFilter; selectedId: string | null }): void; onStoryKnowledgeConfirmationChange(chapterId: string, confirmed: boolean): void; onNotice(message: string): void; onReturnToTrace(): void }) {
   const readiness: StageReadiness = {
     sourceImported: Boolean(chapter),
-    storyKnowledgeConfirmed: false,
+    storyKnowledgeConfirmed,
     scriptConfirmed: false,
     settingsConfirmed: false,
   };
@@ -279,6 +286,8 @@ function ModeWorkspace({ mode, project, chapter, onReturnToTrace }: { mode: Excl
     { label: "故事知识", requirement: "故事知识", ready: readiness.storyKnowledgeConfirmed },
     ...(!isReview ? [{ label: "剧本", requirement: "剧本", ready: readiness.scriptConfirmed }, { label: "设定", requirement: "设定", ready: readiness.settingsConfirmed }] : []),
   ];
+
+  if (isReview && project && chapter) return <StoryKnowledgeWorkbench api={api} project={project} chapter={chapter} canManageStage={project.role === "owner" || project.role === "reviewer"} cursor={reviewCursor} onCursorChange={onReviewCursorChange} onNotice={onNotice} onConfirmationChange={(confirmed) => onStoryKnowledgeConfirmationChange(chapter.id, confirmed)} />;
 
   return <div className={`mode-workspace ${mode}`}>
     <div className="mode-heading"><div><span className="eyebrow">{isReview ? "审核工作台" : "分镜工作台"}</span><h2>{isReview ? "逐项确认，保留每次判断" : "先看全局，再落到每个镜头"}</h2><p>{isReview ? "这里将承载修改建议、原文证据与接受或拒绝记录。" : "这里将承载镜头列表、镜头详情与资产引用。"}</p></div><span className="mode-index">{isReview ? "审" : "镜"}</span></div>

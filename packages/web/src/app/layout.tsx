@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import "./styles.css";
 import "./workbench-modes.css";
 import "./mobile.css";
+import "./story-knowledge.css";
 
 export const metadata: Metadata = {
   title: "映卷 · 小说动态漫改编工作台",

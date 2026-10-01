@@ -1,6 +1,6 @@
 # T05 — Story-knowledge extraction and confirmation
 
-status: in_progress
+status: done
 blocked_by: [T04]  
 unlocks: [T06]
 
@@ -33,4 +33,6 @@ Turn a source version into reviewable story knowledge without silently resolving
 - [x] Persist immutable story-knowledge versions, retry/confirmation idempotency records, active heads, and story bibles in PostgreSQL with transactional CAS and tenant RLS.
 - [x] Add authenticated API endpoints for reading versions, resolving, editing, reviewing, retrying, confirming, and locking story knowledge.
 - [x] Add a provider-neutral background extraction runner over the canonical AI contract; provider transport remains owned by T09.
-- [ ] Add the story-knowledge review UI.
+- [x] Add the story-knowledge review UI with fact filtering, evidence tracing, versioned review actions, confirmation, and mobile review constraints.
+
+> Retryable failures are visible in the review UI. Submitting a new model job remains part of T09's background-task orchestration; the T05 domain/API already validates and merges returned retry results.

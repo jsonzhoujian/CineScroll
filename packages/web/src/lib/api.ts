@@ -2,6 +2,18 @@ import type { DocumentRequest, ProjectDraft } from "./workflow";
 
 type ApiErrorBody = { code?: string; message?: string };
 
+export class ApiClientError extends Error {
+  readonly status: number;
+  readonly code: string | undefined;
+
+  constructor(status: number, code: string | undefined, message: string) {
+    super(message);
+    this.name = "ApiClientError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export type ChapterInspection = {
   index: number;
   title: string;
@@ -39,6 +51,38 @@ export type ImportedDocumentSummary = {
     status: "pending" | "imported";
     chapterId?: string;
   }>;
+};
+
+export type StoryFact = {
+  id: string;
+  factType: "character" | "relationship" | "event" | "location" | "prop" | "worldRule";
+  statement: string;
+  assertionKind: "explicit" | "inferred" | "user_confirmed";
+  resolutionStatus: "resolved" | "pending_identity" | "conflicting";
+  resolutionGroupId: string | null;
+  evidence: Array<{ sourceVersionId: string; fragmentId: string }>;
+  decision?: { outcome: "accepted" | "rejected"; conflictClassification?: "setting_change" | "character_misunderstanding" | "author_contradiction" | "other"; decidedBy: string; decidedAt: string; reason: string };
+  lastEdit?: { editedBy: string; editedAt: string; reason: string };
+  locked?: boolean;
+  lockedBy?: string;
+  lockedAt?: string;
+};
+
+export type StoryKnowledgeVersion = {
+  id: string;
+  parentVersionId: string | null;
+  projectId: string;
+  chapterId: string;
+  sourceVersionId: string;
+  extractionJobId: string;
+  createdAt: string;
+  createdBy: string;
+  extractionStatus: "succeeded" | "partially_succeeded" | "failed";
+  status: "candidate" | "needs_resolution" | "confirmed";
+  confirmedBy?: string;
+  confirmedAt?: string;
+  facts: StoryFact[];
+  failures: Array<{ scopeKey: string; originJobId: string; code: string; message: string; retryable: boolean }>;
 };
 
 type CredentialMode = "none" | "device" | "session";
@@ -126,6 +170,40 @@ export class ApiClient {
     }, "session");
   }
 
+  getStoryKnowledge(projectId: string, chapterId: string) {
+    return this.request<StoryKnowledgeVersion>(`/projects/${projectId}/chapters/${chapterId}/story-knowledge`, {
+      method: "GET",
+    }, "session");
+  }
+
+  editStoryFact(projectId: string, chapterId: string, factId: string, input: { expectedActiveVersionId: string; statement: string; reason: string }) {
+    return this.storyFactCommand(projectId, chapterId, factId, "edit", input);
+  }
+
+  reviewStoryFact(projectId: string, chapterId: string, factId: string, input: { expectedActiveVersionId: string; outcome: "accepted" | "rejected"; reason: string }) {
+    return this.storyFactCommand(projectId, chapterId, factId, "review", input);
+  }
+
+  resolveStoryFact(projectId: string, chapterId: string, factId: string, input: { expectedActiveVersionId: string; statement: string; reason: string; alternativeFactIds: string[]; conflictClassification?: "setting_change" | "character_misunderstanding" | "author_contradiction" | "other" }) {
+    return this.storyFactCommand(projectId, chapterId, factId, "resolve", input);
+  }
+
+  setStoryFactLock(projectId: string, chapterId: string, factId: string, input: { expectedActiveVersionId: string; action: "lock" | "unlock"; reason: string }) {
+    return this.storyFactCommand(projectId, chapterId, factId, "lock", input);
+  }
+
+  confirmStoryKnowledge(projectId: string, chapterId: string, input: { expectedActiveVersionId: string; reason: string }) {
+    return this.request<{ version: StoryKnowledgeVersion }>(`/projects/${projectId}/chapters/${chapterId}/story-knowledge/confirm`, {
+      method: "POST", body: JSON.stringify(input),
+    }, "session");
+  }
+
+  private storyFactCommand(projectId: string, chapterId: string, factId: string, action: "edit" | "review" | "resolve" | "lock", input: unknown) {
+    return this.request<StoryKnowledgeVersion>(`/projects/${projectId}/chapters/${chapterId}/story-knowledge/facts/${factId}/${action}`, {
+      method: "POST", body: JSON.stringify(input),
+    }, "session");
+  }
+
   private async request<T>(path: string, options: RequestInit, credentials: CredentialMode = "none"): Promise<T> {
     const headers = new Headers(options.headers);
     headers.set("content-type", "application/json");
@@ -138,7 +216,7 @@ export class ApiClient {
       throw new Error("无法连接服务，请检查 API 是否已启动");
     }
     const body = await response.json().catch(() => ({})) as ApiErrorBody & T;
-    if (!response.ok) throw new Error(body.message || `请求失败（${response.status}）`);
+    if (!response.ok) throw new ApiClientError(response.status, body.code, body.message || `请求失败（${response.status}）`);
     return body;
   }
 }
