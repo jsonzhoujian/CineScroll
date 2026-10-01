@@ -22,11 +22,14 @@ test("剧本运行器先读取授权确认上下文，保留模型局部失败�
     assert.equal(request.input.confirmedUpstreamContent.length, 2);
     return { contractVersion: "0.1.0", jobId: request.jobId, stage: "script", projectId: request.projectId,
       chapterId: request.chapterId, sourceVersionId: request.sourceVersionId,
+      scenes: [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭院·清晨", environment: "晨雾笼罩庭院", characters: ["少年"] }],
       upstreamConfirmedVersionIds: ["plan_1", "bible_1"], status: "partially_succeeded", items: [
         { scopeKey: "action:1", status: "succeeded", value: { id: "element_1", sceneId: "scene_1", elementType: "action", ordinal: 1,
           text: "少年握紧双拳。", provenance: [{ type: "source_fragment", sourceVersionId: "source_1", fragmentId: "frag_1", transformation: "actionized" }] } },
         { scopeKey: "dialogue:1", status: "failed", error: { code: "TIMEOUT", message: "生成超时", retryable: true } },
         { scopeKey: "action:2", status: "succeeded", value: null },
+        { scopeKey: "action:3", status: "succeeded", value: { id: "orphan", sceneId: "scene_missing", elementType: "action", ordinal: 1,
+          text: "少年起身。", provenance: [{ type: "source_fragment", sourceVersionId: "source_1", fragmentId: "frag_1", transformation: "actionized" }] } },
       ] };
   } } });
   const result = await runner.run({ userId: "owner", workspaceId: "studio" }, {
@@ -35,9 +38,11 @@ test("剧本运行器先读取授权确认上下文，保留模型局部失败�
   });
   assert.equal(result.generationStatus, "partially_succeeded");
   assert.equal(result.elements[0]?.id, "element_1");
+  assert.deepEqual(result.scenes, [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭院·清晨", environment: "晨雾笼罩庭院", characters: ["少年"] }]);
   assert.deepEqual(result.failures, [
     { scopeKey: "dialogue:1", code: "TIMEOUT", message: "生成超时", retryable: true },
     { scopeKey: "action:2", code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true },
+    { scopeKey: "action:3", code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true },
   ]);
 });
 

@@ -43,7 +43,8 @@ export class ScriptRunner {
     let response: unknown;
     try { response = await this.#options.model.generate(request); }
     catch { throw new ScriptModelError("PROVIDER_UNAVAILABLE", "剧本生成服务暂时不可用，请稍后重试"); }
-    if (!record(response) || !onlyKeys(response, ["contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId", "upstreamConfirmedVersionIds", "status", "items"])
+    if (!record(response) || !onlyKeys(response, ["contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId", "upstreamConfirmedVersionIds", "status", "items", "scenes"])
+      || !Array.isArray(response.scenes)
       || response.contractVersion !== request.contractVersion || response.jobId !== request.jobId || response.stage !== "script"
       || response.projectId !== request.projectId || response.chapterId !== request.chapterId || response.sourceVersionId !== request.sourceVersionId
       || !Array.isArray(response.upstreamConfirmedVersionIds) || response.upstreamConfirmedVersionIds.length !== 2
@@ -67,7 +68,7 @@ export class ScriptRunner {
     }
     return this.#options.service.recordGeneration(actor, { projectId: request.projectId, chapterId: request.chapterId,
       jobId: request.jobId, sourceVersionId: request.sourceVersionId, planVersionId: context.planVersionId,
-      expectedActiveVersionId: input.expectedActiveVersionId, items });
+      expectedActiveVersionId: input.expectedActiveVersionId, items, scenes: response.scenes });
   }
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

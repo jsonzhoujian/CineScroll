@@ -8,6 +8,9 @@ export type ScriptElement = Readonly<{
   id: string; sceneId: string; elementType: "environment" | "action" | "dialogue" | "narration" | "sound";
   ordinal: number; text: string; speaker?: string; provenance: ScriptProvenance[];
 }>;
+export type ScriptScene = Readonly<{
+  id: string; episodeId: string; ordinal: number; title: string; environment: string; characters: string[];
+}>;
 export type ScriptGenerationContext = Readonly<{
   planVersionId: string; sourceVersionId: string;
   fragments: Array<Readonly<{ id: string; text: string }>>; approvedAdditionIds: string[];
@@ -19,6 +22,7 @@ export type ScriptContentVersion = Readonly<{
   sourceVersionId: string; planVersionId: string; jobId: string; status: "candidate";
   generationStatus: "succeeded" | "partially_succeeded" | "failed";
   createdBy: string; createdAt: string; elements: ScriptElement[];
+  scenes: ScriptScene[];
   failures: Array<Readonly<{ scopeKey: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
@@ -63,6 +67,7 @@ export class ScriptContentService {
   async recordGeneration(actor: Actor, input: {
     expectedActiveVersionId: string | null; projectId: string; chapterId: string;
     sourceVersionId: string; planVersionId: string; jobId: string;
+    scenes: unknown[];
     items: Array<{ scopeKey: string; value?: unknown; error?: { code: string; message: string; retryable: boolean } }>;
   }): Promise<ScriptContentVersion> {
     const context = await this.dependencies.contextReader.findGenerationContext(actor, input.projectId, input.chapterId);
@@ -76,6 +81,22 @@ export class ScriptContentService {
       throw new ScriptContentError("INVALID_GENERATION", "剧本生成条目范围无效");
     }
     const elements: ScriptElement[] = [];
+    const scenes: ScriptScene[] = [];
+    if (!Array.isArray(input.scenes)) throw new ScriptContentError("INVALID_GENERATION", "缺少场次列表");
+    {
+      const episodeIds = new Set(context.confirmedPlan?.episodes.map(({ id }) => id));
+      for (const scene of input.scenes) {
+        if (!isRecord(scene) || !onlyKeys(scene, ["id", "episodeId", "ordinal", "title", "environment", "characters"])
+          || !nonblank(scene.id) || !nonblank(scene.episodeId) || !episodeIds.has(scene.episodeId)
+          || !nonblank(scene.title) || !nonblank(scene.environment) || !Number.isInteger(scene.ordinal) || Number(scene.ordinal) < 1
+          || !Array.isArray(scene.characters) || !scene.characters.every(nonblank)
+          || new Set(scene.characters).size !== scene.characters.length || scenes.some(({ id }) => id === scene.id)
+          || scenes.some((existing) => existing.episodeId === scene.episodeId && existing.ordinal === scene.ordinal)) {
+          throw new ScriptContentError("INVALID_GENERATION", "场次结构或集数归属无效");
+        }
+        scenes.push(structuredClone(scene) as ScriptScene);
+      }
+    }
     const failures: ScriptContentVersion["failures"] = [];
     const ids = new Set<string>();
     for (const item of input.items) {
@@ -88,7 +109,7 @@ export class ScriptContentService {
         continue;
       }
       const value = parseElement(item.value, context);
-      if (!value || ids.has(value.id)) {
+      if (!value || ids.has(value.id) || !scenes.some(({ id }) => id === value.sceneId)) {
         failures.push({ scopeKey: item.scopeKey, code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true });
       } else { ids.add(value.id); elements.push(value); }
     }
@@ -97,7 +118,7 @@ export class ScriptContentService {
       projectId: input.projectId, chapterId: input.chapterId, sourceVersionId: input.sourceVersionId,
       planVersionId: input.planVersionId, jobId: input.jobId, status: "candidate",
       generationStatus: failures.length === 0 ? "succeeded" : elements.length === 0 ? "failed" : "partially_succeeded",
-      createdBy: actor.userId, createdAt: this.dependencies.clock().toISOString(), elements, failures,
+      createdBy: actor.userId, createdAt: this.dependencies.clock().toISOString(), elements, failures, scenes,
     }, input.expectedActiveVersionId);
   }
 

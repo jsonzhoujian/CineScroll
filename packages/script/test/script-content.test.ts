@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ScriptContentService, InMemoryScriptContentRepository } from "../src/script-content.ts";
+import type { EpisodePlanVersion } from "../src/index.ts";
+
+const confirmedPlan: EpisodePlanVersion = {
+  id: "plan_confirmed", status: "confirmed", parentVersionId: null, projectId: "project_1", chapterId: "chapter_1", sourceVersionId: "source_1",
+  storyBibleVersionId: "bible_1", targetDurationSeconds: 60, aspectRatio: "9:16", narrativeMode: "narration",
+  createdBy: "owner", createdAt: "2026-10-01", confirmedBy: "owner", confirmedAt: "2026-10-01",
+  majorAdaptationProposals: [], episodes: [{ id: "episode_1", ordinal: 1, title: "庭院", sourceFragmentIds: ["frag_1"], coreEventFactIds: ["fact_1"] }],
+};
+const scenes = [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭院", environment: "晨光", characters: ["少年"] }];
 
 const actor = { userId: "owner", workspaceId: "studio" };
 
@@ -9,6 +18,7 @@ test("剧本候选保留有效内容与转换方式，错误出处形成局部�
     repository: new InMemoryScriptContentRepository(),
     contextReader: { async findGenerationContext() { return {
       planVersionId: "plan_confirmed", sourceVersionId: "source_1",
+      confirmedPlan,
       fragments: [{ id: "frag_1", text: "少年紧握双拳，压住心中的恐惧。" }], approvedAdditionIds: [],
     }; } },
     idGenerator: () => "script_1",
@@ -17,6 +27,7 @@ test("剧本候选保留有效内容与转换方式，错误出处形成局部�
   const result = await service.recordGeneration(actor, {
     expectedActiveVersionId: null, projectId: "project_1", chapterId: "chapter_1",
     sourceVersionId: "source_1", planVersionId: "plan_confirmed", jobId: "job_1",
+    scenes,
     items: [
       { scopeKey: "scene:1/action:1", value: { id: "element_1", sceneId: "scene_1", elementType: "action", ordinal: 1,
         text: "少年握紧双拳，手指微微发抖。", provenance: [{ type: "source_fragment", sourceVersionId: "source_1", fragmentId: "frag_1", transformation: "actionized" }] } },
@@ -41,6 +52,7 @@ test("未确认方案禁止生成，新增仅接受批准标识，并发写入�
     repository,
     contextReader: { async findGenerationContext() { return available ? {
       planVersionId: "plan_confirmed", sourceVersionId: "source_1",
+      confirmedPlan,
       fragments: [{ id: "frag_1", text: "少年起身。" }], approvedAdditionIds: ["addition_approved"],
     } : null; } },
     idGenerator: () => `script_${++nextId}`, clock: () => new Date("2026-10-01T10:00:00Z"),
@@ -48,11 +60,20 @@ test("未确认方案禁止生成，新增仅接受批准标识，并发写入�
   const input = {
     expectedActiveVersionId: null, projectId: "project_1", chapterId: "chapter_1",
     sourceVersionId: "source_1", planVersionId: "plan_confirmed", jobId: "job_1",
+    scenes,
     items: [{ scopeKey: "sound:1", value: { id: "element_1", sceneId: "scene_1", elementType: "sound", ordinal: 1,
       text: "远处响起钟声。", provenance: [{ type: "approved_addition", additionId: "addition_approved" }] } }],
   };
   await assert.rejects(() => service.recordGeneration(actor, input), { code: "CONTEXT_NOT_FOUND" });
   available = true;
+  for (const invalidScenes of [
+    [{ ...scenes[0]!, episodeId: "unknown_episode" }],
+    [scenes[0]!, { ...scenes[0]!, ordinal: 2 }],
+    [scenes[0]!, { ...scenes[0]!, id: "scene_2" }],
+  ]) {
+    await assert.rejects(() => service.recordGeneration(actor, { ...input, scenes: invalidScenes }), { code: "INVALID_GENERATION" });
+    assert.equal(await repository.findActive(actor, "project_1", "chapter_1"), null);
+  }
   const first = await service.recordGeneration(actor, input);
   assert.equal(first.generationStatus, "succeeded");
   await assert.rejects(() => service.recordGeneration(actor, input), { code: "VERSION_CONFLICT" });
