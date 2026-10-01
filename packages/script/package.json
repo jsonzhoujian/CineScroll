@@ -10,7 +10,8 @@
     "./script-quality": "./src/script-quality.ts",
     "./http-quality-model": "./src/http-quality-model.ts",
     "./model-settings": "./src/model-settings.ts",
-    "./provider-probe": "./src/provider-probe.ts"
+    "./provider-probe": "./src/provider-probe.ts",
+    "./deepseek-quality-model": "./src/deepseek-quality-model.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

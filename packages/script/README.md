@@ -18,6 +18,14 @@ Inject the probe into workspace settings only after configuring a trusted, verif
 
 Directory access is not a generation capability test, balance check or semantic assessment. The current `tested` setting denotes credential/directory readiness only; generated-task execution must remain disabled until a native inference adapter and capability test exist. Anthropic, Gemini and the remaining catalog entries have no native adapter yet. No production wiring or live credential call is included in this slice. Local fixtures validate protocol parsing/security, not real availability.
 
+### DeepSeek native quality assessment (Task 2, partial)
+
+`DeepSeekQualityModel` implements `ScriptQualityModelPort` using fixed `POST https://api.deepseek.com/chat/completions` with separate system/user messages, non-streaming JSON-object mode and the shared quality-review instructions. Protocol references: [Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/) and [JSON Output](https://api-docs.deepseek.com/guides/json_mode/). This is quality assessment, not a general story/script generation adapter.
+
+Construct only in an authorized server worker using its pinned workspace configuration. Explicit verified route metadata is required; unknown routes and unapproved overseas routes are rejected. The caller must provide a verified model ID; response model must match it exactly. Aliases whose response identifies a different concrete version fail closed; no silent model fallback is performed.
+
+The adapter rejects truncation, tool calls, empty/fenced/invalid JSON and wrong candidate versions. Transport is bounded (2 MB request, 1 MB response), cancels rejected streams, uses a 60-second default timeout (maximum 300 seconds), sanitizes errors and never automatically retries. Parsed assessments still require `ScriptQualityEvaluator`'s exhaustive reference and policy validation. No native model call, actual semantic-accuracy validation, key-resolution integration, production bootstrap or UI is included in fixture tests. Directory readiness alone must not enable manuscript processing.
+
 `HttpScriptQualityModel` is a server-side adapter for a **project-owned gateway protocol**. It is not a direct adapter to any named vendor API. A gateway must implement the contract below and invoke the selected semantic model; configuring an arbitrary vendor URL will not work.
 
 Construction requires an administrator-controlled HTTPS endpoint, API key and model identifier. Default timeout is 60 seconds, configurable up to 300 seconds. Endpoint query parameters, URL credentials and fragments are rejected; redirects are disabled. Do not expose endpoint configuration to project members or reuse it for arbitrary BYOK URLs. Production egress must restrict hosts to approved mainland-region providers/gateways consistent with the work's data-processing permissions. Never commit or log keys or full manuscripts.

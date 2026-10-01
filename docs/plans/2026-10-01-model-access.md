@@ -26,6 +26,10 @@ Status: partial. First protocol slice adds DeepSeek native directory/authenticat
 
 Verification: native probe 3 tests pass, covering authentication, malformed/duplicate directory entries, invalid keys, content type/UTF-8, size bounds and streaming cancellation/timeout. Script TypeScript check passes. Final full suite: 107 pass, 4 PostgreSQL integration tests skipped. Two-axis review found no blocking defect; transport coverage gaps were addressed. Shared bounded-JSON transport extraction is a future maintainability improvement.
 
+Next partial delivery: DeepSeek native JSON-mode quality assessment adapter with shared trusted prompt, explicit server route metadata, finish-reason/tool-call/version/model checks and bounded transport. Parsed output passes to the existing rule evaluator. No general adaptation generator, native adapters for other vendors, worker credential resolution, live inference or semantic accuracy claims in this delivery.
+
+Verification for native assessment: four adapter tests pass (request/prompt separation, malformed/truncated output, regional gate, limits, encoding, streaming timeout/cancellation), script TypeScript passes; full regression 111 pass and 4 PostgreSQL tests skipped. Both review axes found no blocker. Repeated bounded-response readers remain a documented maintainability opportunity for the next protocol implementation.
+
 Create separate protocol adapters: chat-completions compatible, Anthropic Messages, Gemini. Verify each provider's official docs and region/account-specific endpoints before enabling. Test with local HTTP fixtures: model list, authentication, availability, timeouts, malformed responses, structured text extraction and error sanitization. No credentials or paid calls in default tests. Unknown adapters fail closed.
 
 ## Task 3 — Persistence, API and job integration
