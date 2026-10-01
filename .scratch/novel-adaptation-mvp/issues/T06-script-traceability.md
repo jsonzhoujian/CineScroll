@@ -1,6 +1,6 @@
 # T06 — Script generation and source traceability
 
-status: blocked  
+status: in_progress
 blocked_by: [T05]  
 unlocks: [T07]
 
@@ -17,4 +17,3 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Every dialogue and action points to source fragments or an approved adaptation addition.
 - Trace and review modes switch without losing selected chapter, scene, source fragment, confirmation, or suggestion state.
 - Core-event coverage and prohibited core-fact mutation checks run against fixed fixtures.
-
