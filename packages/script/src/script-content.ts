@@ -1,4 +1,4 @@
-import type { Actor } from "./index.ts";
+import type { Actor, EpisodePlanVersion } from "./index.ts";
 
 export type Transformation = "retained" | "compressed" | "merged" | "visualized" | "actionized" | "narrated" | "sonified";
 export type ScriptProvenance = Readonly<{
@@ -11,6 +11,8 @@ export type ScriptElement = Readonly<{
 export type ScriptGenerationContext = Readonly<{
   planVersionId: string; sourceVersionId: string;
   fragments: Array<Readonly<{ id: string; text: string }>>; approvedAdditionIds: string[];
+  confirmedPlan?: EpisodePlanVersion;
+  confirmedStoryKnowledge?: { versionId: string; facts: Array<{ id: string; statement: string }> };
 }>;
 export type ScriptContentVersion = Readonly<{
   id: string; parentVersionId: string | null; projectId: string; chapterId: string;
@@ -61,7 +63,7 @@ export class ScriptContentService {
   async recordGeneration(actor: Actor, input: {
     expectedActiveVersionId: string | null; projectId: string; chapterId: string;
     sourceVersionId: string; planVersionId: string; jobId: string;
-    items: Array<{ scopeKey: string; value: unknown }>;
+    items: Array<{ scopeKey: string; value?: unknown; error?: { code: string; message: string; retryable: boolean } }>;
   }): Promise<ScriptContentVersion> {
     const context = await this.dependencies.contextReader.findGenerationContext(actor, input.projectId, input.chapterId);
     if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND", "项目不存在或拆集方案尚未确认");
@@ -77,6 +79,14 @@ export class ScriptContentService {
     const failures: ScriptContentVersion["failures"] = [];
     const ids = new Set<string>();
     for (const item of input.items) {
+      if (item.error) {
+        if (item.value !== undefined || !isRecord(item.error) || !onlyKeys(item.error, ["code", "message", "retryable"])
+          || !nonblank(item.error.code) || !nonblank(item.error.message) || typeof item.error.retryable !== "boolean") {
+          throw new ScriptContentError("INVALID_GENERATION", "剧本失败条目无效");
+        }
+        failures.push({ scopeKey: item.scopeKey, code: item.error.code, message: item.error.message, retryable: item.error.retryable });
+        continue;
+      }
       const value = parseElement(item.value, context);
       if (!value || ids.has(value.id)) {
         failures.push({ scopeKey: item.scopeKey, code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true });

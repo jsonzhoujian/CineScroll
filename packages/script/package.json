@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./episode-plan-runner": "./src/episode-plan-runner.ts",
-    "./script-content": "./src/script-content.ts"
+    "./script-content": "./src/script-content.ts",
+    "./script-runner": "./src/script-runner.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
