@@ -8,7 +8,8 @@
     "./script-content": "./src/script-content.ts",
     "./script-runner": "./src/script-runner.ts",
     "./script-quality": "./src/script-quality.ts",
-    "./http-quality-model": "./src/http-quality-model.ts"
+    "./http-quality-model": "./src/http-quality-model.ts",
+    "./model-settings": "./src/model-settings.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
