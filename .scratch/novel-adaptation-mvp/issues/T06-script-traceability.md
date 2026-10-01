@@ -47,3 +47,11 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Invalid, incomplete, duplicate or unknown references and assessor failures fail closed. Context and candidate snapshots are cloned to isolate assessor mutation.
 - This delivery is the rule engine and model port, NOT a production semantic model adapter or proof of AI accuracy. Duration remains an estimate, not measured video runtime. Model prompts/provider integration, genre-specific authorized semantic regressions, bootstrap wiring, report persistence/API/UI remain outstanding.
 - Verification: script package 19 passing tests; TypeScript passes; full regression 97 pass and 4 PostgreSQL tests skipped. Fixtures test rule behavior, including the 90% coverage and 10% duration boundaries.
+
+## Incremental delivery — semantic gateway adapter
+
+- Added `HttpScriptQualityModel` and a versioned project-owned gateway contract. Trusted assessment instructions are separate from untrusted manuscript/context data. Envelope and candidate identity are checked before the evaluator validates full verdicts.
+- Server-configured HTTPS only, no redirects, bounded request/response bodies, configurable timeout, sanitized errors and no automatic paid retries. No real secrets were read and no works sent externally.
+- This is a gateway client, NOT a vendor-native adapter or deployed gateway service. Gateway implementation, provider selection/credentials, production wiring and live semantic accuracy tests remain outstanding. Deployment must enforce approved regional egress and content-processing permissions; user-defined endpoints are not supported by this adapter.
+- Added transport tests for prompt/data separation, bad configuration, version mismatch, malformed/oversized responses and cancellation. The package README documents integration and limitations.
+- Rejected upstream response streams are explicitly cancelled; oversized requests fail before network access. Script package 23 tests pass and TypeScript passes; full regression 101 pass with 4 PostgreSQL tests skipped.

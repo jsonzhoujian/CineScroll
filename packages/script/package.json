@@ -7,7 +7,8 @@
     "./episode-plan-runner": "./src/episode-plan-runner.ts",
     "./script-content": "./src/script-content.ts",
     "./script-runner": "./src/script-runner.ts",
-    "./script-quality": "./src/script-quality.ts"
+    "./script-quality": "./src/script-quality.ts",
+    "./http-quality-model": "./src/http-quality-model.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
