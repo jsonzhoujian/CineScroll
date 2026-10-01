@@ -10,6 +10,14 @@ This initial repository stores a single active configuration per workspace, with
 
 ## Quality gateway client
 
+### Native directory probe (Task 2, partial)
+
+`NativeModelDirectoryProbe` currently implements **DeepSeek model-directory authentication only**, using fixed `GET https://api.deepseek.com/models` and Bearer authentication. The endpoint and list response follow the [official model-list reference](https://api-docs.deepseek.com/api/list-models/) and [API base URL documentation](https://api-docs.deepseek.com/guides/agent_integrations/openclaw). Model IDs are read from the response, not copied from a static catalog.
+
+Inject the probe into workspace settings only after configuring a trusted, verified processing route (`mainland` or `overseas`). No route is inferred from the provider's nationality. Unknown/unsupported providers fail closed before network access; workspace settings perform owner/overseas-approval checks before the probe receives a credential. Do not expose direct probe calls to members.
+
+Directory access is not a generation capability test, balance check or semantic assessment. The current `tested` setting denotes credential/directory readiness only; generated-task execution must remain disabled until a native inference adapter and capability test exist. Anthropic, Gemini and the remaining catalog entries have no native adapter yet. No production wiring or live credential call is included in this slice. Local fixtures validate protocol parsing/security, not real availability.
+
 `HttpScriptQualityModel` is a server-side adapter for a **project-owned gateway protocol**. It is not a direct adapter to any named vendor API. A gateway must implement the contract below and invoke the selected semantic model; configuring an arbitrary vendor URL will not work.
 
 Construction requires an administrator-controlled HTTPS endpoint, API key and model identifier. Default timeout is 60 seconds, configurable up to 300 seconds. Endpoint query parameters, URL credentials and fragments are rejected; redirects are disabled. Do not expose endpoint configuration to project members or reuse it for arbitrary BYOK URLs. Production egress must restrict hosts to approved mainland-region providers/gateways consistent with the work's data-processing permissions. Never commit or log keys or full manuscripts.

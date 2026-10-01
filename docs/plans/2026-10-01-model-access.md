@@ -22,6 +22,10 @@ Files: `packages/script/src/model-settings.ts`, `packages/script/test/model-sett
 
 ## Task 2 — Native provider adapters
 
+Status: partial. First protocol slice adds DeepSeek native directory/authentication probe with a fixed official endpoint, explicit route metadata, bounded response, cancellation and sanitized errors. Directory access is not inference validation; generation adapters, capability checks, all other providers and production wiring remain outstanding. No live credentials or paid model calls used.
+
+Verification: native probe 3 tests pass, covering authentication, malformed/duplicate directory entries, invalid keys, content type/UTF-8, size bounds and streaming cancellation/timeout. Script TypeScript check passes. Final full suite: 107 pass, 4 PostgreSQL integration tests skipped. Two-axis review found no blocking defect; transport coverage gaps were addressed. Shared bounded-JSON transport extraction is a future maintainability improvement.
+
 Create separate protocol adapters: chat-completions compatible, Anthropic Messages, Gemini. Verify each provider's official docs and region/account-specific endpoints before enabling. Test with local HTTP fixtures: model list, authentication, availability, timeouts, malformed responses, structured text extraction and error sanitization. No credentials or paid calls in default tests. Unknown adapters fail closed.
 
 ## Task 3 — Persistence, API and job integration
