@@ -13,6 +13,51 @@ const scenes = [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭
 
 const actor = { userId: "owner", workspaceId: "studio" };
 
+test("质量验收后负责人可确认、审核人可锁定，正式版本拒绝覆盖", async () => {
+  let sequence = 0;
+  let role: "owner" | "editor" | "reviewer" = "editor";
+  let quality = false;
+  const service = new ScriptContentService({
+    repository: new InMemoryScriptContentRepository(),
+    accessReader: { async findProjectAccess() { return { role }; } },
+    contextReader: { async findGenerationContext() { return {
+      planVersionId: "plan_confirmed", sourceVersionId: "source_1", confirmedPlan,
+      fragments: [{ id: "frag_1", text: "少年起身。" }], approvedAdditionIds: [],
+    }; } },
+    confirmationGate: { async validate() { return quality; } },
+    idGenerator: () => `v_${++sequence}`, clock: () => new Date("2026-10-01T10:00:00Z"),
+  });
+  const input = { expectedActiveVersionId: null, projectId: "project_1", chapterId: "chapter_1",
+    sourceVersionId: "source_1", planVersionId: "plan_confirmed", jobId: "job_1", scenes,
+    items: [{ scopeKey: "action:1", value: { id: "element_1", sceneId: "scene_1", elementType: "action", ordinal: 1,
+      text: "少年起身。", provenance: [{ type: "source_fragment", sourceVersionId: "source_1", fragmentId: "frag_1", transformation: "retained" }] } }],
+  };
+  const candidate = await service.recordGeneration(actor, input);
+  await assert.rejects(() => service.confirmContent(actor, "project_1", "chapter_1", candidate.id), { code: "FORBIDDEN" });
+  role = "owner";
+  await assert.rejects(() => service.lockContent(actor, "project_1", "chapter_1", candidate.id), { code: "INVALID_STATE" });
+  await assert.rejects(() => service.confirmContent(actor, "project_1", "chapter_1", candidate.id), { code: "INVALID_CONFIRMATION" });
+  quality = true;
+  const confirmed = await service.confirmContent(actor, "project_1", "chapter_1", candidate.id);
+  assert.equal(confirmed.status, "confirmed");
+  assert.equal(confirmed.confirmedBy, "owner");
+  assert.deepEqual(confirmed.elements, candidate.elements);
+  assert.deepEqual(await service.confirmContent(actor, "project_1", "chapter_1", candidate.id), confirmed);
+  await assert.rejects(() => service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: confirmed.id, elementId: "element_1", text: "覆盖", reason: "测试",
+  }), { code: "INVALID_STATE" });
+  role = "editor";
+  await assert.rejects(() => service.lockContent(actor, "project_1", "chapter_1", confirmed.id), { code: "FORBIDDEN" });
+  role = "reviewer";
+  const locked = await service.lockContent(actor, "project_1", "chapter_1", confirmed.id);
+  assert.equal(locked.status, "confirmed");
+  assert.equal(locked.elements[0]?.lockedBy, "owner");
+  assert.equal(locked.parentVersionId, confirmed.id);
+  assert.deepEqual(await service.lockContent(actor, "project_1", "chapter_1", confirmed.id), locked);
+  assert.deepEqual(await service.confirmContent(actor, "project_1", "chapter_1", candidate.id), locked);
+  await assert.rejects(() => service.recordGeneration(actor, { ...input, expectedActiveVersionId: locked.id }), { code: "INVALID_STATE" });
+});
+
 test("剧本候选保留有效内容与转换方式，错误出处形成局部失败", async () => {
   let sequence = 0;
   let role: "owner" | "editor" | "reviewer" = "owner";
@@ -135,6 +180,9 @@ test("剧本候选保留有效内容与转换方式，错误出处形成局部�
   assert.equal(competing.filter(({ status }) => status === "fulfilled").length, 1);
   const conflict = competing.find((item) => item.status === "rejected");
   assert.equal(conflict?.status === "rejected" ? conflict.reason.code : null, "VERSION_CONFLICT");
+  const active = competing.find((item) => item.status === "fulfilled");
+  assert.ok(active?.status === "fulfilled");
+  await assert.rejects(() => service.confirmContent(actor, "project_1", "chapter_1", active.value.id), { code: "INVALID_CONFIRMATION" });
 });
 
 test("未确认方案禁止生成，新增仅接受批准标识，并发写入保留当前版本", async () => {

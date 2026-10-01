@@ -8,6 +8,7 @@ export type ScriptElement = Readonly<{
   id: string; sceneId: string; elementType: "environment" | "action" | "dialogue" | "narration" | "sound";
   ordinal: number; text: string; speaker?: string; provenance: ScriptProvenance[];
   lastEdit?: Readonly<{ editedBy: string; editedAt: string; reason: string }>;
+  lockedBy?: string; lockedAt?: string;
 }>;
 export type ScriptScene = Readonly<{
   id: string; episodeId: string; ordinal: number; title: string; environment: string; characters: string[];
@@ -25,7 +26,8 @@ export type ScriptGenerationContext = Readonly<{
 }>;
 export type ScriptContentVersion = Readonly<{
   id: string; parentVersionId: string | null; projectId: string; chapterId: string;
-  sourceVersionId: string; planVersionId: string; jobId: string; status: "candidate";
+  sourceVersionId: string; planVersionId: string; jobId: string; status: "candidate" | "confirmed";
+  confirmedBy?: string; confirmedAt?: string; confirmationCandidateVersionId?: string;
   generationStatus: "succeeded" | "partially_succeeded" | "failed";
   createdBy: string; createdAt: string; elements: ScriptElement[];
   scenes: ScriptScene[];
@@ -41,7 +43,7 @@ export interface ScriptGenerationContextReader {
   findGenerationContext(actor: Actor, projectId: string, chapterId: string): Promise<ScriptGenerationContext | null>;
 }
 export class ScriptContentError extends Error {
-  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND" | "SUGGESTION_NOT_FOUND" | "SUGGESTION_CONFLICT";
+  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND" | "SUGGESTION_NOT_FOUND" | "SUGGESTION_CONFLICT" | "INVALID_CONFIRMATION" | "INVALID_STATE";
   constructor(code: ScriptContentError["code"], message: string) {
     super(message); this.name = "ScriptContentError"; this.code = code;
   }
@@ -69,8 +71,46 @@ export class ScriptContentService {
     repository: ScriptContentRepository; contextReader: ScriptGenerationContextReader;
     idGenerator: () => string; clock: () => Date;
     accessReader?: ProjectAccessReader;
+    // Must evaluate this exact immutable snapshot; absent evaluator fails closed.
+    confirmationGate?: { validate(version: ScriptContentVersion): Promise<boolean> };
   };
   constructor(dependencies: ScriptContentService["dependencies"]) { this.dependencies = dependencies; }
+
+  async confirmContent(actor: Actor, projectId: string, chapterId: string, expectedVersionId: string): Promise<ScriptContentVersion> {
+    const current = await this.readEditableVersion(actor, projectId, chapterId, null, true);
+    if (current.status === "confirmed" && (current.id === expectedVersionId || current.confirmationCandidateVersionId === expectedVersionId)) return current;
+    if (current.id !== expectedVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
+    if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "仅候选剧本可确认");
+    if (current.generationStatus !== "succeeded" || current.failures.length || !current.elements.length || !current.scenes.length
+      || current.suggestions?.some(({ status }) => status === "pending")
+      || await this.dependencies.confirmationGate?.validate(structuredClone(current)) !== true) {
+      throw new ScriptContentError("INVALID_CONFIRMATION", "剧本存在失败、未决建议或未通过质量验收");
+    }
+    const createdAt = this.dependencies.clock().toISOString();
+    return this.dependencies.repository.save(actor, {
+      ...current, id: this.dependencies.idGenerator(), parentVersionId: current.id, status: "confirmed",
+      createdBy: actor.userId, createdAt, confirmedBy: actor.userId, confirmedAt: createdAt,
+      confirmationCandidateVersionId: current.id,
+    }, current.id);
+  }
+
+  async lockContent(actor: Actor, projectId: string, chapterId: string, expectedVersionId: string, elementIds?: string[]): Promise<ScriptContentVersion> {
+    const current = await this.readEditableVersion(actor, projectId, chapterId, null, true);
+    if (current.status !== "confirmed") throw new ScriptContentError("INVALID_STATE", "仅已确认剧本可锁定");
+    const targets = elementIds ?? current.elements.map(({ id }) => id);
+    if (!Array.isArray(targets) || !targets.length || !targets.every(nonblank) || new Set(targets).size !== targets.length
+      || targets.some((id) => !current.elements.some((element) => element.id === id))) throw new ScriptContentError("INVALID_EDIT", "锁定条目无效");
+    if (targets.every((id) => current.elements.find((element) => element.id === id)?.lockedAt)
+      && (current.id === expectedVersionId || current.parentVersionId === expectedVersionId)) return current;
+    if (current.id !== expectedVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
+    const createdAt = this.dependencies.clock().toISOString();
+    return this.dependencies.repository.save(actor, {
+      ...current, id: this.dependencies.idGenerator(), parentVersionId: current.id,
+      createdBy: actor.userId, createdAt,
+      elements: current.elements.map((element) => targets.includes(element.id) && !element.lockedAt
+        ? { ...element, lockedBy: actor.userId, lockedAt: createdAt } : element),
+    }, current.id);
+  }
 
   private async readEditableVersion(actor: Actor, projectId: string, chapterId: string, expectedVersionId: string | null, review: boolean): Promise<ScriptContentVersion> {
     const context = await this.dependencies.contextReader.findGenerationContext(actor, projectId, chapterId);
@@ -93,6 +133,7 @@ export class ScriptContentService {
       throw new ScriptContentError("INVALID_EDIT", "修改内容和理由不能为空");
     }
     const current = await this.readEditableVersion(actor, projectId, chapterId, input.expectedActiveVersionId, false);
+    if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "正式剧本修改流程尚未开放");
     const element = current.elements.find(({ id }) => id === input.elementId);
     if (!element) throw new ScriptContentError("ELEMENT_NOT_FOUND", "剧本条目不存在");
     const createdAt = this.dependencies.clock().toISOString();
@@ -112,6 +153,7 @@ export class ScriptContentService {
       || !nonblank(input.expectedActiveVersionId) || !nonblank(input.suggestionId)
       || !["accepted", "rejected"].includes(input.decision)) throw new ScriptContentError("INVALID_EDIT", "建议裁决无效");
     const current = await this.readEditableVersion(actor, projectId, chapterId, null, true);
+    if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "正式剧本修改流程尚未开放");
     const suggestion = current.suggestions?.find(({ id }) => id === input.suggestionId);
     if (!suggestion) throw new ScriptContentError("SUGGESTION_NOT_FOUND", "修改建议不存在");
     if (suggestion.status === input.decision) return current;
@@ -142,6 +184,7 @@ export class ScriptContentService {
       throw new ScriptContentError("INVALID_EDIT", "修改内容和理由不能为空");
     }
     const current = await this.readEditableVersion(actor, projectId, chapterId, input.expectedActiveVersionId, true);
+    if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "正式剧本不可直接编辑");
     if (!current.elements.some(({ id }) => id === input.elementId)) throw new ScriptContentError("ELEMENT_NOT_FOUND", "剧本条目不存在");
     const editedAt = this.dependencies.clock().toISOString();
     return this.dependencies.repository.save(actor, {
@@ -161,6 +204,8 @@ export class ScriptContentService {
   }): Promise<ScriptContentVersion> {
     const context = await this.dependencies.contextReader.findGenerationContext(actor, input.projectId, input.chapterId);
     if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND", "项目不存在或拆集方案尚未确认");
+    const active = await this.dependencies.repository.findActive(actor, input.projectId, input.chapterId);
+    if (active && active.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "正式剧本不可被生成任务覆盖");
     if (context.planVersionId !== input.planVersionId || context.sourceVersionId !== input.sourceVersionId) {
       throw new ScriptContentError("INVALID_GENERATION", "剧本生成依据与已确认方案不一致");
     }

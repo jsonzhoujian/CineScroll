@@ -23,7 +23,7 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Domain service supports owner/reviewer text edits as new candidate versions, preserving source references, scenes and partial failures; stale-version writes are rejected.
 - Edit reason, actor and timestamp are stored in the version snapshot. This is not yet the append-only audit log with requestId required by SYSTEM_DESIGN.
 - Editors must use the planned suggestion workflow; direct editing is denied. This follows the agreed suggestion-first collaboration requirement; the product permission table still needs reconciliation before API/UI delivery.
-- Remaining: confirmation/locking, append-only audit and persistent/API/UI integration, as well as quality gates. T06 remains in progress.
+- Remaining: append-only audit and persistent/API/UI integration, concrete quality evaluation and formal-version revision workflow. T06 remains in progress.
 - Verification: script package 15 tests pass; full suite 93 pass and 4 PostgreSQL integration tests skipped; script TypeScript check passes.
 
 ## Incremental delivery — modification suggestions
@@ -32,3 +32,10 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Pending decisions require the current version; acceptance also requires unchanged target text. Identical decisions are idempotent and opposite decisions are rejected. Concurrent submissions use repository compare-and-swap.
 - Suggestions currently belong to candidate snapshots, not a separate persistent collaboration store. Generation creates a fresh candidate; cross-generation suggestion migration, formal confirmation, API/UI and append-only audit remain unimplemented.
 - Verification covers editor submission/decision denial, reviewer acceptance, owner rejection, stale target/version, duplicate decisions and concurrent submissions. The script package and TypeScript checks pass; full regression has 93 passing and 4 skipped PostgreSQL tests.
+
+## Incremental delivery — confirmation and locking
+
+- Owner/reviewer can confirm successful, nonempty candidates without failures or pending suggestions; confirmation requires an injected quality evaluator to explicitly pass the exact snapshot. No evaluator means confirmation is blocked. The production evaluator is not implemented yet.
+- Confirmation and locking create successor snapshots with actor/time metadata and compare-and-swap protection. Locking is element-level metadata (selected elements, or all by default), not a content status; the version remains confirmed. Confirmation retries retain their candidate identity across locking; immediate lock retries are idempotent. Locking requires a confirmed version.
+- Formal versions reject direct edits, suggestion mutations and generation overwrites. The planned explicit revision fork/impact workflow is not available yet, so formal-version changes fail closed.
+- Verification: script package 16 passing tests; TypeScript check passes. Full suite 94 pass and 4 PostgreSQL tests skipped. API/UI and persistent audit remain deferred.
