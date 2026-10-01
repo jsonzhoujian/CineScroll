@@ -39,3 +39,11 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Confirmation and locking create successor snapshots with actor/time metadata and compare-and-swap protection. Locking is element-level metadata (selected elements, or all by default), not a content status; the version remains confirmed. Confirmation retries retain their candidate identity across locking; immediate lock retries are idempotent. Locking requires a confirmed version.
 - Formal versions reject direct edits, suggestion mutations and generation overwrites. The planned explicit revision fork/impact workflow is not available yet, so formal-version changes fail closed.
 - Verification: script package 16 passing tests; TypeScript check passes. Full suite 94 pass and 4 PostgreSQL tests skipped. API/UI and persistent audit remain deferred.
+
+## Incremental delivery — quality evaluation rule engine
+
+- `ScriptQualityEvaluator` implements the confirmation-gate interface and exposes a report bound to the candidate version. It requires matching confirmed plan/story knowledge, valid evidence, planned episode membership, and content in every planned episode.
+- Semantic assessor output must exhaustively cover the planned core events, confirmed facts and episodes. The rule engine requires at least 90% covered events, consistent fact verdicts without uncertainty or unsupported core-fact additions, and each episode's estimated duration within 10% of target.
+- Invalid, incomplete, duplicate or unknown references and assessor failures fail closed. Context and candidate snapshots are cloned to isolate assessor mutation.
+- This delivery is the rule engine and model port, NOT a production semantic model adapter or proof of AI accuracy. Duration remains an estimate, not measured video runtime. Model prompts/provider integration, genre-specific authorized semantic regressions, bootstrap wiring, report persistence/API/UI remain outstanding.
+- Verification: script package 19 passing tests; TypeScript passes; full regression 97 pass and 4 PostgreSQL tests skipped. Fixtures test rule behavior, including the 90% coverage and 10% duration boundaries.
