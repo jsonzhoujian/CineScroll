@@ -1,4 +1,4 @@
-import type { Actor, EpisodePlanVersion } from "./index.ts";
+import type { Actor, EpisodePlanVersion, ProjectAccessReader } from "./index.ts";
 
 export type Transformation = "retained" | "compressed" | "merged" | "visualized" | "actionized" | "narrated" | "sonified";
 export type ScriptProvenance = Readonly<{
@@ -7,6 +7,7 @@ export type ScriptProvenance = Readonly<{
 export type ScriptElement = Readonly<{
   id: string; sceneId: string; elementType: "environment" | "action" | "dialogue" | "narration" | "sound";
   ordinal: number; text: string; speaker?: string; provenance: ScriptProvenance[];
+  lastEdit?: Readonly<{ editedBy: string; editedAt: string; reason: string }>;
 }>;
 export type ScriptScene = Readonly<{
   id: string; episodeId: string; ordinal: number; title: string; environment: string; characters: string[];
@@ -34,7 +35,7 @@ export interface ScriptGenerationContextReader {
   findGenerationContext(actor: Actor, projectId: string, chapterId: string): Promise<ScriptGenerationContext | null>;
 }
 export class ScriptContentError extends Error {
-  readonly code: "CONTEXT_NOT_FOUND" | "INVALID_GENERATION" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND";
+  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND";
   constructor(code: ScriptContentError["code"], message: string) {
     super(message); this.name = "ScriptContentError"; this.code = code;
   }
@@ -61,8 +62,37 @@ export class ScriptContentService {
   private readonly dependencies: {
     repository: ScriptContentRepository; contextReader: ScriptGenerationContextReader;
     idGenerator: () => string; clock: () => Date;
+    accessReader?: ProjectAccessReader;
   };
   constructor(dependencies: ScriptContentService["dependencies"]) { this.dependencies = dependencies; }
+
+  async editElement(actor: Actor, projectId: string, chapterId: string, input: {
+    expectedActiveVersionId: string; elementId: string; text: string; reason: string;
+  }): Promise<ScriptContentVersion> {
+    const context = await this.dependencies.contextReader.findGenerationContext(actor, projectId, chapterId);
+    if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND", "项目不存在或拆集方案尚未确认");
+    const access = await this.dependencies.accessReader?.findProjectAccess(actor, projectId);
+    if (!access || access.role === "editor") throw new ScriptContentError("FORBIDDEN", "仅负责人和审核人可直接修改候选剧本");
+    if (!isRecord(input) || !onlyKeys(input, ["expectedActiveVersionId", "elementId", "text", "reason"])
+      || !nonblank(input.expectedActiveVersionId) || !nonblank(input.elementId)
+      || !nonblank(input.text) || !nonblank(input.reason)) {
+      throw new ScriptContentError("INVALID_EDIT", "修改内容和理由不能为空");
+    }
+    const current = await this.dependencies.repository.findActive(actor, projectId, chapterId);
+    if (!current || current.sourceVersionId !== context.sourceVersionId || current.planVersionId !== context.planVersionId) {
+      throw new ScriptContentError("CONTEXT_NOT_FOUND", "剧本依据已变化，请查看对应历史版本");
+    }
+    if (current.id !== input.expectedActiveVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
+    if (!current.elements.some(({ id }) => id === input.elementId)) throw new ScriptContentError("ELEMENT_NOT_FOUND", "剧本条目不存在");
+    const editedAt = this.dependencies.clock().toISOString();
+    return this.dependencies.repository.save(actor, {
+      ...current, id: this.dependencies.idGenerator(), parentVersionId: current.id,
+      createdBy: actor.userId, createdAt: editedAt,
+      elements: current.elements.map((element) => element.id === input.elementId ? {
+        ...element, text: input.text.trim(), lastEdit: { editedBy: actor.userId, editedAt, reason: input.reason.trim() },
+      } : element),
+    }, current.id);
+  }
 
   async recordGeneration(actor: Actor, input: {
     expectedActiveVersionId: string | null; projectId: string; chapterId: string;

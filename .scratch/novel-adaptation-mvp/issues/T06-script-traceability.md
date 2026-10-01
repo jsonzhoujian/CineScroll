@@ -17,3 +17,11 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Every dialogue and action points to source fragments or an approved adaptation addition.
 - Trace and review modes switch without losing selected chapter, scene, source fragment, confirmation, or suggestion state.
 - Core-event coverage and prohibited core-fact mutation checks run against fixed fixtures.
+
+## Incremental delivery — candidate element editing
+
+- Domain service supports owner/reviewer text edits as new candidate versions, preserving source references, scenes and partial failures; stale-version writes are rejected.
+- Edit reason, actor and timestamp are stored in the version snapshot. This is not yet the append-only audit log with requestId required by SYSTEM_DESIGN.
+- Editors must use the planned suggestion workflow; direct editing is denied. This follows the agreed suggestion-first collaboration requirement; the product permission table still needs reconciliation before API/UI delivery.
+- Remaining: suggestions, confirmation/locking, append-only audit and persistent/API/UI integration, as well as quality gates. T06 remains in progress.
+- Verification: script package 15 tests pass; full suite 93 pass and 4 PostgreSQL integration tests skipped; script TypeScript check passes.

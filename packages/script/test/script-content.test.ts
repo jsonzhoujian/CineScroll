@@ -14,14 +14,17 @@ const scenes = [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭
 const actor = { userId: "owner", workspaceId: "studio" };
 
 test("剧本候选保留有效内容与转换方式，错误出处形成局部失败", async () => {
+  let sequence = 0;
+  let role: "owner" | "editor" | "reviewer" = "owner";
   const service = new ScriptContentService({
     repository: new InMemoryScriptContentRepository(),
+    accessReader: { async findProjectAccess() { return { role }; } },
     contextReader: { async findGenerationContext() { return {
       planVersionId: "plan_confirmed", sourceVersionId: "source_1",
       confirmedPlan,
       fragments: [{ id: "frag_1", text: "少年紧握双拳，压住心中的恐惧。" }], approvedAdditionIds: [],
     }; } },
-    idGenerator: () => "script_1",
+    idGenerator: () => `script_${++sequence}`,
     clock: () => new Date("2026-10-01T10:00:00Z"),
   });
   const result = await service.recordGeneration(actor, {
@@ -42,6 +45,39 @@ test("剧本候选保留有效内容与转换方式，错误出处形成局部�
   assert.deepEqual(await service.getElementEvidence(actor, "project_1", "chapter_1", "element_1"), [
     { id: "frag_1", text: "少年紧握双拳，压住心中的恐惧。", transformation: "actionized" },
   ]);
+  const edited = await service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: result.id, elementId: "element_1", text: "少年双拳紧攥，指节发白。", reason: "强化可见表演",
+  });
+  assert.notEqual(edited.id, result.id);
+  assert.equal(edited.parentVersionId, result.id);
+  assert.equal(result.elements[0]?.text, "少年握紧双拳，手指微微发抖。");
+  assert.deepEqual(edited.elements[0]?.provenance, result.elements[0]?.provenance);
+  assert.deepEqual(edited.scenes, result.scenes);
+  assert.deepEqual(edited.failures, result.failures);
+  assert.equal(edited.generationStatus, "partially_succeeded");
+  assert.equal(edited.elements[0]?.lastEdit?.editedBy, "owner");
+  assert.equal(edited.elements[0]?.lastEdit?.editedAt, "2026-10-01T10:00:00.000Z");
+  assert.equal(edited.elements[0]?.lastEdit?.reason, "强化可见表演");
+  assert.equal(edited.elements[0]?.text, "少年双拳紧攥，指节发白。");
+  role = "editor";
+  await assert.rejects(() => service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: edited.id, elementId: "element_1", text: "无权限修改", reason: "测试",
+  }), { code: "FORBIDDEN" });
+  role = "reviewer";
+  await assert.rejects(() => service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: edited.id, elementId: "element_1", text: " ", reason: "测试",
+  }), { code: "INVALID_EDIT" });
+  await assert.rejects(() => service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: edited.id, elementId: "missing", text: "测试", reason: "测试",
+  }), { code: "ELEMENT_NOT_FOUND" });
+  await assert.rejects(() => service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: result.id, elementId: "element_1", text: "迟到编辑", reason: "旧页面",
+  }), { code: "VERSION_CONFLICT" });
+  const reviewed = await service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: edited.id, elementId: "element_1", text: "少年攥紧双拳。", reason: "审核调整",
+  });
+  assert.equal(reviewed.parentVersionId, edited.id);
+  assert.equal(reviewed.elements[0]?.text, "少年攥紧双拳。");
 });
 
 test("未确认方案禁止生成，新增仅接受批准标识，并发写入保留当前版本", async () => {
@@ -76,6 +112,9 @@ test("未确认方案禁止生成，新增仅接受批准标识，并发写入�
   }
   const first = await service.recordGeneration(actor, input);
   assert.equal(first.generationStatus, "succeeded");
+  await assert.rejects(() => service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: first.id, elementId: "element_1", text: "改写钟声", reason: "缺少权限读取器",
+  }), { code: "FORBIDDEN" });
   await assert.rejects(() => service.recordGeneration(actor, input), { code: "VERSION_CONFLICT" });
   const invalid = await service.recordGeneration(actor, { ...input, expectedActiveVersionId: first.id,
     items: [{ scopeKey: "sound:1", value: { ...input.items[0]!.value,
