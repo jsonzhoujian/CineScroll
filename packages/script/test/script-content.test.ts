@@ -78,6 +78,63 @@ test("剧本候选保留有效内容与转换方式，错误出处形成局部�
   });
   assert.equal(reviewed.parentVersionId, edited.id);
   assert.equal(reviewed.elements[0]?.text, "少年攥紧双拳。");
+  role = "editor";
+  const proposed = await service.submitSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: reviewed.id, elementId: "element_1", text: "少年缓缓松开拳头。", reason: "调整动作节奏",
+  });
+  assert.equal(proposed.elements[0]?.text, "少年攥紧双拳。");
+  assert.equal(proposed.suggestions?.[0]?.status, "pending");
+  await assert.rejects(() => service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: proposed.id, suggestionId: proposed.suggestions![0]!.id, decision: "accepted",
+  }), { code: "FORBIDDEN" });
+  role = "reviewer";
+  const accepted = await service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: proposed.id, suggestionId: proposed.suggestions![0]!.id, decision: "accepted",
+  });
+  assert.equal(accepted.elements[0]?.text, "少年缓缓松开拳头。");
+  assert.deepEqual(accepted.elements[0]?.provenance, result.elements[0]?.provenance);
+  assert.equal(accepted.suggestions?.[0]?.status, "accepted");
+  assert.deepEqual(await service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: proposed.id, suggestionId: proposed.suggestions![0]!.id, decision: "accepted",
+  }), accepted);
+  assert.equal(proposed.suggestions?.[0]?.status, "pending");
+  const nextProposal = await service.submitSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: accepted.id, elementId: "element_1", text: "少年闭上双眼。", reason: "另一个建议",
+  });
+  role = "owner";
+  const changed = await service.editElement(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: nextProposal.id, elementId: "element_1", text: "少年抬头。", reason: "负责人修改",
+  });
+  await assert.rejects(() => service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: changed.id, suggestionId: nextProposal.suggestions![1]!.id, decision: "accepted",
+  }), { code: "SUGGESTION_CONFLICT" });
+  const rejected = await service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: changed.id, suggestionId: nextProposal.suggestions![1]!.id, decision: "rejected",
+  });
+  assert.equal(rejected.elements[0]?.text, "少年抬头。");
+  assert.equal(rejected.suggestions?.[1]?.status, "rejected");
+  assert.equal(rejected.suggestions?.[1]?.decidedBy, "owner");
+  assert.deepEqual(await service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: changed.id, suggestionId: nextProposal.suggestions![1]!.id, decision: "rejected",
+  }), rejected);
+  await assert.rejects(() => service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: rejected.id, suggestionId: nextProposal.suggestions![1]!.id, decision: "accepted",
+  }), { code: "SUGGESTION_CONFLICT" });
+  await assert.rejects(() => service.submitSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: rejected.id, elementId: "element_1", text: "建议", reason: " ",
+  }), { code: "INVALID_EDIT" });
+  await assert.rejects(() => service.decideSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: rejected.id, suggestionId: "missing", decision: "rejected",
+  }), { code: "SUGGESTION_NOT_FOUND" });
+  await assert.rejects(() => service.submitSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: accepted.id, elementId: "element_1", text: "迟到建议", reason: "旧页面",
+  }), { code: "VERSION_CONFLICT" });
+  const competing = await Promise.allSettled(["建议一", "建议二"].map((text) => service.submitSuggestion(actor, "project_1", "chapter_1", {
+    expectedActiveVersionId: rejected.id, elementId: "element_1", text, reason: "并发提交",
+  })));
+  assert.equal(competing.filter(({ status }) => status === "fulfilled").length, 1);
+  const conflict = competing.find((item) => item.status === "rejected");
+  assert.equal(conflict?.status === "rejected" ? conflict.reason.code : null, "VERSION_CONFLICT");
 });
 
 test("未确认方案禁止生成，新增仅接受批准标识，并发写入保留当前版本", async () => {

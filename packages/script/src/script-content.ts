@@ -12,6 +12,11 @@ export type ScriptElement = Readonly<{
 export type ScriptScene = Readonly<{
   id: string; episodeId: string; ordinal: number; title: string; environment: string; characters: string[];
 }>;
+export type ScriptSuggestion = Readonly<{
+  id: string; elementId: string; baseText: string; text: string; reason: string;
+  submittedBy: string; submittedAt: string; status: "pending" | "accepted" | "rejected";
+  decidedBy?: string; decidedAt?: string;
+}>;
 export type ScriptGenerationContext = Readonly<{
   planVersionId: string; sourceVersionId: string;
   fragments: Array<Readonly<{ id: string; text: string }>>; approvedAdditionIds: string[];
@@ -24,6 +29,7 @@ export type ScriptContentVersion = Readonly<{
   generationStatus: "succeeded" | "partially_succeeded" | "failed";
   createdBy: string; createdAt: string; elements: ScriptElement[];
   scenes: ScriptScene[];
+  suggestions?: ScriptSuggestion[];
   failures: Array<Readonly<{ scopeKey: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
@@ -35,7 +41,7 @@ export interface ScriptGenerationContextReader {
   findGenerationContext(actor: Actor, projectId: string, chapterId: string): Promise<ScriptGenerationContext | null>;
 }
 export class ScriptContentError extends Error {
-  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND";
+  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND" | "SUGGESTION_NOT_FOUND" | "SUGGESTION_CONFLICT";
   constructor(code: ScriptContentError["code"], message: string) {
     super(message); this.name = "ScriptContentError"; this.code = code;
   }
@@ -66,23 +72,76 @@ export class ScriptContentService {
   };
   constructor(dependencies: ScriptContentService["dependencies"]) { this.dependencies = dependencies; }
 
-  async editElement(actor: Actor, projectId: string, chapterId: string, input: {
-    expectedActiveVersionId: string; elementId: string; text: string; reason: string;
-  }): Promise<ScriptContentVersion> {
+  private async readEditableVersion(actor: Actor, projectId: string, chapterId: string, expectedVersionId: string | null, review: boolean): Promise<ScriptContentVersion> {
     const context = await this.dependencies.contextReader.findGenerationContext(actor, projectId, chapterId);
     if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND", "项目不存在或拆集方案尚未确认");
     const access = await this.dependencies.accessReader?.findProjectAccess(actor, projectId);
-    if (!access || access.role === "editor") throw new ScriptContentError("FORBIDDEN", "仅负责人和审核人可直接修改候选剧本");
+    if (!access || (review && access.role === "editor")) throw new ScriptContentError("FORBIDDEN", "无权执行此剧本操作");
+    const current = await this.dependencies.repository.findActive(actor, projectId, chapterId);
+    if (!current || current.sourceVersionId !== context.sourceVersionId || current.planVersionId !== context.planVersionId) {
+      throw new ScriptContentError("CONTEXT_NOT_FOUND", "剧本依据已变化");
+    }
+    if (expectedVersionId !== null && current.id !== expectedVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
+    return current;
+  }
+
+  async submitSuggestion(actor: Actor, projectId: string, chapterId: string, input: {
+    expectedActiveVersionId: string; elementId: string; text: string; reason: string;
+  }): Promise<ScriptContentVersion> {
+    if (!isRecord(input) || !onlyKeys(input, ["expectedActiveVersionId", "elementId", "text", "reason"])
+      || !nonblank(input.expectedActiveVersionId) || !nonblank(input.elementId) || !nonblank(input.text) || !nonblank(input.reason)) {
+      throw new ScriptContentError("INVALID_EDIT", "修改内容和理由不能为空");
+    }
+    const current = await this.readEditableVersion(actor, projectId, chapterId, input.expectedActiveVersionId, false);
+    const element = current.elements.find(({ id }) => id === input.elementId);
+    if (!element) throw new ScriptContentError("ELEMENT_NOT_FOUND", "剧本条目不存在");
+    const createdAt = this.dependencies.clock().toISOString();
+    return this.dependencies.repository.save(actor, {
+      ...current, id: this.dependencies.idGenerator(), parentVersionId: current.id, createdBy: actor.userId, createdAt,
+      suggestions: [...(current.suggestions ?? []), {
+        id: this.dependencies.idGenerator(), elementId: element.id, baseText: element.text,
+        text: input.text.trim(), reason: input.reason.trim(), submittedBy: actor.userId, submittedAt: createdAt, status: "pending",
+      }],
+    }, current.id);
+  }
+
+  async decideSuggestion(actor: Actor, projectId: string, chapterId: string, input: {
+    expectedActiveVersionId: string; suggestionId: string; decision: "accepted" | "rejected";
+  }): Promise<ScriptContentVersion> {
+    if (!isRecord(input) || !onlyKeys(input, ["expectedActiveVersionId", "suggestionId", "decision"])
+      || !nonblank(input.expectedActiveVersionId) || !nonblank(input.suggestionId)
+      || !["accepted", "rejected"].includes(input.decision)) throw new ScriptContentError("INVALID_EDIT", "建议裁决无效");
+    const current = await this.readEditableVersion(actor, projectId, chapterId, null, true);
+    const suggestion = current.suggestions?.find(({ id }) => id === input.suggestionId);
+    if (!suggestion) throw new ScriptContentError("SUGGESTION_NOT_FOUND", "修改建议不存在");
+    if (suggestion.status === input.decision) return current;
+    if (suggestion.status !== "pending") throw new ScriptContentError("SUGGESTION_CONFLICT", "修改建议已裁决");
+    if (current.id !== input.expectedActiveVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
+    const element = current.elements.find(({ id }) => id === suggestion.elementId);
+    if (input.decision === "accepted" && (!element || element.text !== suggestion.baseText)) {
+      throw new ScriptContentError("SUGGESTION_CONFLICT", "建议对应内容已修改，请重新提交");
+    }
+    const createdAt = this.dependencies.clock().toISOString();
+    return this.dependencies.repository.save(actor, {
+      ...current, id: this.dependencies.idGenerator(), parentVersionId: current.id, createdBy: actor.userId, createdAt,
+      elements: current.elements.map((item) => input.decision === "accepted" && item.id === suggestion.elementId ? {
+        ...item, text: suggestion.text, lastEdit: { editedBy: actor.userId, editedAt: createdAt, reason: suggestion.reason },
+      } : item),
+      suggestions: current.suggestions!.map((item) => item.id === suggestion.id ? {
+        ...item, status: input.decision, decidedBy: actor.userId, decidedAt: createdAt,
+      } : item),
+    }, current.id);
+  }
+
+  async editElement(actor: Actor, projectId: string, chapterId: string, input: {
+    expectedActiveVersionId: string; elementId: string; text: string; reason: string;
+  }): Promise<ScriptContentVersion> {
     if (!isRecord(input) || !onlyKeys(input, ["expectedActiveVersionId", "elementId", "text", "reason"])
       || !nonblank(input.expectedActiveVersionId) || !nonblank(input.elementId)
       || !nonblank(input.text) || !nonblank(input.reason)) {
       throw new ScriptContentError("INVALID_EDIT", "修改内容和理由不能为空");
     }
-    const current = await this.dependencies.repository.findActive(actor, projectId, chapterId);
-    if (!current || current.sourceVersionId !== context.sourceVersionId || current.planVersionId !== context.planVersionId) {
-      throw new ScriptContentError("CONTEXT_NOT_FOUND", "剧本依据已变化，请查看对应历史版本");
-    }
-    if (current.id !== input.expectedActiveVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
+    const current = await this.readEditableVersion(actor, projectId, chapterId, input.expectedActiveVersionId, true);
     if (!current.elements.some(({ id }) => id === input.elementId)) throw new ScriptContentError("ELEMENT_NOT_FOUND", "剧本条目不存在");
     const editedAt = this.dependencies.clock().toISOString();
     return this.dependencies.repository.save(actor, {
