@@ -11,7 +11,8 @@
     "./http-quality-model": "./src/http-quality-model.ts",
     "./model-settings": "./src/model-settings.ts",
     "./provider-probe": "./src/provider-probe.ts",
-    "./deepseek-quality-model": "./src/deepseek-quality-model.ts"
+    "./deepseek-quality-model": "./src/deepseek-quality-model.ts",
+    "./anthropic-quality-model": "./src/anthropic-quality-model.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

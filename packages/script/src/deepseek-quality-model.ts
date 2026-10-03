@@ -1,5 +1,6 @@
 import type { ScriptQualityModelPort } from "./script-quality.ts";
 import { QUALITY_REVIEW_INSTRUCTIONS, ScriptQualityProviderError } from "./http-quality-model.ts";
+import { readBoundedJson } from "./bounded-json.ts";
 
 /** Server-only native assessment adapter; callers must authorize the pinned workspace configuration first. */
 export class DeepSeekQualityModel implements ScriptQualityModelPort {
@@ -25,20 +26,7 @@ export class DeepSeekQualityModel implements ScriptQualityModelPort {
       if (new TextEncoder().encode(body).length > 2_000_000) throw new ScriptQualityProviderError();
       const response = await this.#fetch("https://api.deepseek.com/chat/completions", { method: "POST", redirect: "error",
         headers: { authorization: `Bearer ${this.#apiKey}`, "content-type": "application/json" }, body, signal: AbortSignal.timeout(this.#timeoutMs) });
-      if (!response.ok || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json" || !response.body) {
-        await response.body?.cancel().catch(() => {}); throw new ScriptQualityProviderError();
-      }
-      const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
-      try {
-        while (true) {
-          const { done, value } = await reader.read(); if (done) break;
-          total += value.length; if (total > 1_000_000) throw new ScriptQualityProviderError(); chunks.push(value);
-        }
-      } catch (error) { await reader.cancel().catch(() => {}); throw error; }
-      finally { reader.releaseLock(); }
-      const bytes = new Uint8Array(total); let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-      const completion: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      const completion = await readBoundedJson(response, 1_000_000);
       if (!record(completion) || completion.object !== "chat.completion" || completion.model !== this.#model
         || !Array.isArray(completion.choices) || completion.choices.length !== 1) throw new ScriptQualityProviderError();
       const choice = completion.choices[0];

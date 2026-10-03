@@ -30,6 +30,10 @@ Next partial delivery: DeepSeek native JSON-mode quality assessment adapter with
 
 Verification for native assessment: four adapter tests pass (request/prompt separation, malformed/truncated output, regional gate, limits, encoding, streaming timeout/cancellation), script TypeScript passes; full regression 111 pass and 4 PostgreSQL tests skipped. Both review axes found no blocker. Repeated bounded-response readers remain a documented maintainability opportunity for the next protocol implementation.
 
+Next partial delivery (2026-10-03): Anthropic directory pagination and native Messages quality assessment, using fixed official endpoints and API-version headers. Unknown processing routes fail closed; direct Anthropic requires explicit overseas metadata, with owner approval enforced before workspace probing and explicit overseas approval before assessment. Only complete text JSON with pinned model/script version is accepted. Shared bounded JSON reading now replaces repeated readers in directory, DeepSeek and gateway adapters.
+
+Verification: six Anthropic fixture tests and all 39 script tests pass, script typecheck passes; full regression 117 pass and 4 PostgreSQL integration tests skipped. Standards and Spec review found no blockers. No live credentials, paid requests, production task wiring or semantic accuracy validation. Gemini and remaining native protocols are still outstanding.
+
 Create separate protocol adapters: chat-completions compatible, Anthropic Messages, Gemini. Verify each provider's official docs and region/account-specific endpoints before enabling. Test with local HTTP fixtures: model list, authentication, availability, timeouts, malformed responses, structured text extraction and error sanitization. No credentials or paid calls in default tests. Unknown adapters fail closed.
 
 ## Task 3 — Persistence, API and job integration

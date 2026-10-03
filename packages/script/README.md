@@ -12,11 +12,19 @@ This initial repository stores a single active configuration per workspace, with
 
 ### Native directory probe (Task 2, partial)
 
-`NativeModelDirectoryProbe` currently implements **DeepSeek model-directory authentication only**, using fixed `GET https://api.deepseek.com/models` and Bearer authentication. The endpoint and list response follow the [official model-list reference](https://api-docs.deepseek.com/api/list-models/) and [API base URL documentation](https://api-docs.deepseek.com/guides/agent_integrations/openclaw). Model IDs are read from the response, not copied from a static catalog.
+`NativeModelDirectoryProbe` implements **DeepSeek and Anthropic model-directory authentication**, not inference validation. DeepSeek uses fixed `GET https://api.deepseek.com/models` and Bearer authentication. The endpoint and list response follow the [official model-list reference](https://api-docs.deepseek.com/api/list-models/) and [API base URL documentation](https://api-docs.deepseek.com/guides/agent_integrations/openclaw). Model IDs are read from responses, not copied from a static catalog.
 
 Inject the probe into workspace settings only after configuring a trusted, verified processing route (`mainland` or `overseas`). No route is inferred from the provider's nationality. Unknown/unsupported providers fail closed before network access; workspace settings perform owner/overseas-approval checks before the probe receives a credential. Do not expose direct probe calls to members.
 
-Directory access is not a generation capability test, balance check or semantic assessment. The current `tested` setting denotes credential/directory readiness only; generated-task execution must remain disabled until a native inference adapter and capability test exist. Anthropic, Gemini and the remaining catalog entries have no native adapter yet. No production wiring or live credential call is included in this slice. Local fixtures validate protocol parsing/security, not real availability.
+Directory access is not a generation capability test, balance check or semantic assessment. The current `tested` setting denotes credential/directory readiness only; generated-task execution must remain disabled until production credential resolution and capability validation exist. Gemini and the remaining catalog entries have no native adapter yet. No production wiring or live credential call is included in this slice. Local fixtures validate protocol parsing/security, not real availability.
+
+### Anthropic native protocol (Task 2, partial)
+
+The directory uses fixed `GET https://api.anthropic.com/v1/models`, `x-api-key` and `anthropic-version: 2023-06-01`, following the [official list-models reference](https://platform.claude.com/docs/en/api/models/list). Pagination uses `after_id`, at most ten pages of 100 models, with a single overall timeout. Duplicate models/cursors, malformed pages or truncation at the page limit fail closed; no partial directory is published.
+
+`AnthropicQualityModel` uses fixed `POST https://api.anthropic.com/v1/messages`, top-level trusted `system` instructions and a separate untrusted user payload, following the [Messages reference](https://platform.claude.com/docs/en/api/messages/create). Only `end_turn` with text-only content, strict JSON and matching requested model/script version is accepted; the existing evaluator validates the verdicts. Output has a 4096-token cap: truncation is rejected, not repaired or retried. Use a pinned model ID rather than a moving alias. This is assessment, not adaptation generation.
+
+Direct Anthropic access cannot be configured as mainland processing. Server route metadata must explicitly identify overseas processing; the workspace settings service must obtain owner approval before directory probing, and the assessment adapter requires explicit non-mainland approval. Unknown routes fail closed. This does not establish account eligibility, cross-border compliance or actual processing geography from the brand name. Shared bounded JSON reading caps response bytes, cancels rejected/error streams and rejects invalid UTF-8. Tests use fixtures only; no real Key, live availability, paid call or semantic accuracy was validated.
 
 ### DeepSeek native quality assessment (Task 2, partial)
 
