@@ -40,6 +40,8 @@ Next partial delivery (2026-10-03): Gemini Developer API directory and quality a
 
 Verification: six Gemini fixture tests pass; script typecheck passes; full regression 123 pass and four PostgreSQL integration tests skipped. Standards review: no blockers, non-blocking duplication suggestions for provider lists/resource validation. Spec review: no blockers. Strict response-version comparison is a documented compatibility limit for moving aliases. No real credentials, paid calls, production wiring or semantic accuracy claims. Other catalog entries and Tasks 3–5 remain unfinished.
 
+Task 2 additional partial delivery (2026-10-03): OpenAI native model directory and Responses quality assessment. Fixed official endpoints, header-only Key, explicit overseas authorization, JSON mode, non-streaming/non-background and store=false. Reject incomplete/error/refusal/tool output and stale model/script versions; reasoning metadata is never assessment text. Directory models are not evidence of inference capability. Six protocol fixtures and script typecheck pass; full regression 129 pass and four PostgreSQL integration tests skipped. No real Key or paid calls, production wiring or accuracy claims. Other provider adapters remain outstanding.
+
 ## Task 3 — Persistence, API and job integration
 
 Add PostgreSQL storage scoped by workspace, transaction CAS, append-only audits and key-rotation/deletion policies. API derives actor from session, checks workspace owner and advanced entitlement. Connection testing uses an explicit synthetic prompt, not manuscript data. Jobs snapshot configuration/model/credential version and processing route. Revocation blocks new jobs; existing snapshots cannot be retargeted silently. Do not expose key decryption as a member API.

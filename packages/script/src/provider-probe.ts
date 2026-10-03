@@ -1,5 +1,7 @@
 import { ModelSettingsError, type ModelConnectionProbe, type ModelConfiguration } from "./model-settings.ts";
 import { readBoundedJson } from "./bounded-json.ts";
+const supportedProviders = ["deepseek", "anthropic", "google", "openai"];
+const overseasOnlyProviders = ["anthropic", "google", "openai"];
 
 /** Native model-directory access only; generation capability is not inferred from listing. */
 export class NativeModelDirectoryProbe implements ModelConnectionProbe {
@@ -9,20 +11,21 @@ export class NativeModelDirectoryProbe implements ModelConnectionProbe {
   constructor(options: { routes: Readonly<Record<string, ModelConfiguration["processingRegion"]>>; fetch?: typeof globalThis.fetch; timeoutMs?: number }) {
     const timeoutMs = options.timeoutMs ?? 10_000;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000
-      || Object.entries(options.routes).some(([provider, route]) => !["deepseek", "anthropic", "google"].includes(provider) || !["mainland", "overseas", "unknown"].includes(route)
-        || (["anthropic", "google"].includes(provider) && route === "mainland"))) {
+      || Object.entries(options.routes).some(([provider, route]) => !supportedProviders.includes(provider) || !["mainland", "overseas", "unknown"].includes(route)
+        || (overseasOnlyProviders.includes(provider) && route === "mainland"))) {
       throw new ModelSettingsError("INVALID_CONFIGURATION");
     }
     this.#routes = Object.freeze({ ...options.routes }); this.#timeoutMs = timeoutMs; this.#fetch = options.fetch ?? globalThis.fetch;
   }
-  processingRegion(providerId: string): ModelConfiguration["processingRegion"] { return ["deepseek", "anthropic", "google"].includes(providerId) ? this.#routes[providerId] ?? "unknown" : "unknown"; }
+  processingRegion(providerId: string): ModelConfiguration["processingRegion"] { return supportedProviders.includes(providerId) ? this.#routes[providerId] ?? "unknown" : "unknown"; }
   async test(input: { providerId: string; apiKey: string }) {
-    if (!["deepseek", "anthropic", "google"].includes(input.providerId) || this.processingRegion(input.providerId) === "unknown"
+    if (!supportedProviders.includes(input.providerId) || this.processingRegion(input.providerId) === "unknown"
       || typeof input.apiKey !== "string" || !input.apiKey.trim() || input.apiKey.length > 8192 || /[\r\n]/.test(input.apiKey)) throw new ModelSettingsError("PROVIDER_UNAVAILABLE");
     try {
       if (input.providerId === "anthropic") return await this.#anthropic(input.apiKey);
       if (input.providerId === "google") return await this.#google(input.apiKey);
-      const response = await this.#fetch("https://api.deepseek.com/models", {
+      const endpoint = input.providerId === "openai" ? "https://api.openai.com/v1/models" : "https://api.deepseek.com/models";
+      const response = await this.#fetch(endpoint, {
         method: "GET", redirect: "error", signal: AbortSignal.timeout(this.#timeoutMs), headers: { authorization: `Bearer ${input.apiKey}` },
       });
       const result = await readBoundedJson(response, 512_000);
