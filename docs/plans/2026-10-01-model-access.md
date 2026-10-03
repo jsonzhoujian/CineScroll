@@ -36,6 +36,10 @@ Verification: six Anthropic fixture tests and all 39 script tests pass, script t
 
 Create separate protocol adapters: chat-completions compatible, Anthropic Messages, Gemini. Verify each provider's official docs and region/account-specific endpoints before enabling. Test with local HTTP fixtures: model list, authentication, availability, timeouts, malformed responses, structured text extraction and error sanitization. No credentials or paid calls in default tests. Unknown adapters fail closed.
 
+Next partial delivery (2026-10-03): Gemini Developer API directory and quality assessment, catalog provider `google`. Fixed HTTPS host and header-only Key; bounded `pageToken` pagination returns only `generateContent` metadata entries, without claiming live capability. Assessment separates system instructions from manuscript data, uses JSON mode, and rejects truncation, safety blocks, tools/thought/media, stale script versions and modelVersion mismatch. Direct route must be explicitly overseas with prior workspace-owner approval; Vertex AI/proxies are not included.
+
+Verification: six Gemini fixture tests pass; script typecheck passes; full regression 123 pass and four PostgreSQL integration tests skipped. Standards review: no blockers, non-blocking duplication suggestions for provider lists/resource validation. Spec review: no blockers. Strict response-version comparison is a documented compatibility limit for moving aliases. No real credentials, paid calls, production wiring or semantic accuracy claims. Other catalog entries and Tasks 3–5 remain unfinished.
+
 ## Task 3 — Persistence, API and job integration
 
 Add PostgreSQL storage scoped by workspace, transaction CAS, append-only audits and key-rotation/deletion policies. API derives actor from session, checks workspace owner and advanced entitlement. Connection testing uses an explicit synthetic prompt, not manuscript data. Jobs snapshot configuration/model/credential version and processing route. Revocation blocks new jobs; existing snapshots cannot be retargeted silently. Do not expose key decryption as a member API.
