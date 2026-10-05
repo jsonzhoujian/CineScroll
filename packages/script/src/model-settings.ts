@@ -16,6 +16,7 @@ export type ModelConfiguration = Readonly<{
   tested: boolean; availableModelIds: string[]; processingRegion: "mainland" | "overseas" | "unknown";
 }>;
 export type PublicModelConfiguration = Omit<ModelConfiguration, "ciphertext" | "nonce" | "tag"> & { keyMask: string };
+export type TaskModelSnapshot = Readonly<{ workspaceId: string; configurationVersionId: string; providerId: string; modelId: string; processingRegion: ModelConfiguration["processingRegion"] }>;
 export interface ModelSettingsRepository {
   find(workspaceId: string): Promise<ModelConfiguration | null>;
   save(config: ModelConfiguration, expectedVersionId: string | null): Promise<ModelConfiguration>;
@@ -54,10 +55,7 @@ export class WorkspaceModelSettings {
       const route = this.#options.probe.processingRegion(current.providerId);
       if (!["mainland", "overseas"].includes(route)) throw new ModelSettingsError("NOT_READY");
       if (route !== "mainland" && allowNonMainland !== true) throw new ModelSettingsError("FORBIDDEN");
-      const decipher = createDecipheriv("aes-256-gcm", this.#options.encryptionKey, Buffer.from(current.nonce, "base64"));
-      decipher.setAAD(Buffer.from(JSON.stringify([actor.workspaceId, current.id, current.providerId])));
-      decipher.setAuthTag(Buffer.from(current.tag, "base64"));
-      const apiKey = Buffer.concat([decipher.update(Buffer.from(current.ciphertext, "base64")), decipher.final()]).toString("utf8");
+      const apiKey = unseal(this.#options.encryptionKey, actor.workspaceId, current);
       const result = await this.#options.probe.test({ providerId: current.providerId, apiKey });
       if (result.processingRegion !== route) throw new ModelSettingsError("PROVIDER_UNAVAILABLE");
       if (!Array.isArray(result.modelIds) || !result.modelIds.length || result.modelIds.some((id) => typeof id !== "string" || !id.trim())
@@ -78,7 +76,24 @@ export class WorkspaceModelSettings {
     const current = await this.#options.repository.find(actor.workspaceId);
     if (!current || current.id !== expectedVersionId) throw new ModelSettingsError("VERSION_CONFLICT");
     if (!current.tested || !current.availableModelIds.includes(modelId)) throw new ModelSettingsError("NOT_READY");
-    return Object.freeze({ configurationVersionId: current.id, providerId: current.providerId, modelId, processingRegion: current.processingRegion });
+    return Object.freeze({ workspaceId: actor.workspaceId, configurationVersionId: current.id, providerId: current.providerId, modelId, processingRegion: current.processingRegion });
+  }
+  /** Trusted server/worker seam only; never register a member-facing credential endpoint. */
+  async executeForTask<T>(actor: Actor, snapshot: TaskModelSnapshot,
+    invoke: (input: { apiKey: string; providerId: string; modelId: string; processingRegion: "mainland" }) => Promise<T>): Promise<T> {
+    if (snapshot.workspaceId !== actor.workspaceId) throw new ModelSettingsError("FORBIDDEN");
+    await this.#authorize(actor, false);
+    const current = await this.#options.repository.find(actor.workspaceId);
+    if (!current || current.id !== snapshot.configurationVersionId) throw new ModelSettingsError("VERSION_CONFLICT");
+    if (!current.tested || current.providerId !== snapshot.providerId || !current.availableModelIds.includes(snapshot.modelId)
+      || current.processingRegion !== snapshot.processingRegion) throw new ModelSettingsError("NOT_READY");
+    // Connection-test consent does not authorize transferring manuscript content.
+    // Overseas tasks stay closed until durable, task-scoped owner consent is implemented.
+    if (current.processingRegion !== "mainland" || this.#options.probe?.processingRegion(current.providerId) !== "mainland") throw new ModelSettingsError("NOT_READY");
+    try {
+      const apiKey = unseal(this.#options.encryptionKey, actor.workspaceId, current);
+      return await invoke({ apiKey, providerId: current.providerId, modelId: snapshot.modelId, processingRegion: "mainland" });
+    } catch { throw new ModelSettingsError("PROVIDER_UNAVAILABLE"); }
   }
   async #authorize(actor: Actor, owner: boolean) {
     const access = await this.#options.access.read(actor);
@@ -124,4 +139,10 @@ function seal(key: Uint8Array, workspaceId: string, id: string, providerId: stri
 function publicConfig(config: ModelConfiguration): PublicModelConfiguration {
   const { ciphertext: _ciphertext, nonce: _nonce, tag: _tag, ...visible } = config;
   return { ...visible, keyMask: "••••••••" };
+}
+function unseal(key: Uint8Array, workspaceId: string, config: ModelConfiguration): string {
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(config.nonce, "base64"));
+  decipher.setAAD(Buffer.from(JSON.stringify([workspaceId, config.id, config.providerId])));
+  decipher.setAuthTag(Buffer.from(config.tag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(config.ciphertext, "base64")), decipher.final()]).toString("utf8");
 }

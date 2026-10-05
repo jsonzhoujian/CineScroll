@@ -2,6 +2,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WorkspaceModelSettings, InMemoryModelSettingsRepository, MODEL_PROVIDERS } from "../src/model-settings.ts";
 
+test("任务执行重新鉴权并使用固定凭据；更换Key后拒绝旧快照", async () => {
+  let id = 0, advanced = true, calls = 0;
+  const repository = new InMemoryModelSettingsRepository();
+  const service = new WorkspaceModelSettings({ repository, encryptionKey: new Uint8Array(32).fill(7),
+    access: { read: async () => ({ owner: true, advanced }) }, idGenerator: () => `task_${++id}`,
+    probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
+  const actor = { userId: "u", workspaceId: "w" };
+  const saved = await service.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-secret" });
+  const tested = await service.testConnection(actor, saved.id);
+  const snapshot = await service.selectForTask(actor, tested.id, "m");
+  assert.ok(!JSON.stringify(snapshot).includes("fixture-secret"));
+  const invoke = async (input: { apiKey: string; modelId: string }) => { calls++; assert.equal(input.apiKey, "fixture-secret"); assert.equal(input.modelId, "m"); return "fixture-output"; };
+  assert.equal(await service.executeForTask(actor, snapshot, invoke), "fixture-output");
+  const corrupted = new WorkspaceModelSettings({
+    repository: { find: async workspaceId => { const config = await repository.find(workspaceId); return config ? { ...config, tag: Buffer.alloc(16).toString("base64") } : null; }, save: repository.save.bind(repository) },
+    encryptionKey: new Uint8Array(32).fill(7), access: { read: async () => ({ owner: true, advanced: true }) },
+    idGenerator: () => "unused", probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) },
+  });
+  await assert.rejects(() => corrupted.executeForTask(actor, snapshot, invoke), { code: "PROVIDER_UNAVAILABLE" });
+  assert.equal(calls, 1);
+  advanced = false;
+  await assert.rejects(() => service.executeForTask(actor, snapshot, invoke), { code: "FORBIDDEN" });
+  advanced = true;
+  await assert.rejects(() => service.executeForTask({ ...actor, workspaceId: "other" }, snapshot, invoke), { code: "FORBIDDEN" });
+  await service.configure(actor, { expectedVersionId: tested.id, providerId: "deepseek", apiKey: "replacement" });
+  await assert.rejects(() => service.executeForTask(actor, snapshot, invoke), { code: "VERSION_CONFLICT" });
+  assert.equal(calls, 1);
+});
+
+test("执行拒绝篡改模型与区域漂移，厂商错误不泄露Key，境外测试授权不开放任务", async () => {
+  let id = 0, calls = 0;
+  let route: "mainland" | "overseas" | "unknown" = "mainland";
+  const service = new WorkspaceModelSettings({ repository: new InMemoryModelSettingsRepository(), encryptionKey: new Uint8Array(32).fill(8),
+    access: { read: async () => ({ owner: true, advanced: true }) }, idGenerator: () => `execution_${++id}`,
+    probe: { processingRegion: () => route, test: async () => ({ modelIds: ["m"], processingRegion: route }) } });
+  const actor = { userId: "u", workspaceId: "w" };
+  const saved = await service.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "private-fixture-key" });
+  const tested = await service.testConnection(actor, saved.id);
+  const snapshot = await service.selectForTask(actor, tested.id, "m");
+  const invoke = async () => { calls++; throw new Error("private-fixture-key"); };
+  await assert.rejects(() => service.executeForTask(actor, { ...snapshot, modelId: "unlisted" }, invoke), { code: "NOT_READY" });
+  route = "unknown";
+  await assert.rejects(() => service.executeForTask(actor, snapshot, invoke), { code: "NOT_READY" });
+  route = "mainland";
+  await assert.rejects(() => service.executeForTask(actor, snapshot, invoke), { code: "PROVIDER_UNAVAILABLE", message: "PROVIDER_UNAVAILABLE" });
+  route = "overseas";
+  const overseas = await service.testConnection(actor, tested.id, true);
+  const overseasSnapshot = await service.selectForTask(actor, overseas.id, "m");
+  await assert.rejects(() => service.executeForTask(actor, overseasSnapshot, invoke), { code: "NOT_READY" });
+  assert.equal(calls, 1);
+});
+
 test("工作室负责人管理加密共享 Key，成员只查看脱敏配置", async () => {
   let owner = true;
   const repository = new InMemoryModelSettingsRepository();
