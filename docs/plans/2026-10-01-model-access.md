@@ -48,7 +48,11 @@ Task 2 additional partial delivery (2026-10-03): OpenAI native model directory a
 
 Add PostgreSQL storage scoped by workspace, transaction CAS, append-only audits and key-rotation/deletion policies. API derives actor from session, checks workspace owner and advanced entitlement. Connection testing uses an explicit synthetic prompt, not manuscript data. Jobs snapshot configuration/model/credential version and processing route. Revocation blocks new jobs; existing snapshots cannot be retargeted silently. Do not expose key decryption as a member API.
 
+Task 3 HTTP slice (2026-10-05): opt-in `ModelSettingsApiModule` with authenticated masked read, owner configuration and owner connection-test endpoints. Session actor/workspace only; strict body fields and boolean overseas approval; reuse domain authorization/encryption/probe logic. API TypeScript and two HTTP fixtures pass. Production bootstrap deliberately remains disabled until authoritative membership/entitlements, PostgreSQL/encryption-key injection, regional checks, TLS/body/logging protection and sensitive-endpoint rate limits are integrated. See `docs/contracts/MODEL_SETTINGS_API.md`. No paid calls or UI delivered.
+
 ## Task 4 — Settings and model lists
+
+HTTP slice verification: full regression 133 pass and five database tests skipped; API typecheck passes. Owner/member, cross-workspace session, unknown actor/endpoint body fields, no-store responses, stale versions and pre-probe overseas consent are covered. GET uses an explicit `{configuration: value|null}` JSON envelope. Standards and Spec review found no blocking implementation issue; the reviewer sandbox could not listen on ports, so HTTP execution results come from the main agent's permitted local test run, not the reviewer.
 
 Owner-only settings UI: provider → masked key input → test connection → available model list → save. Members select tested models without seeing secrets. Catalog items lacking adapters show unavailable. Overseas/unknown processing requires explicit owner approval and regional-policy verification before activation; domestic database storage does not imply domestic inference. Show aggregator downstream routing separately.
 

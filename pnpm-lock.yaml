@@ -25,6 +25,9 @@ importers:
       '@novel-adaptation/project-import':
         specifier: workspace:*
         version: link:../project-import
+      '@novel-adaptation/script':
+        specifier: workspace:*
+        version: link:../script
       '@novel-adaptation/story-knowledge':
         specifier: workspace:*
         version: link:../story-knowledge

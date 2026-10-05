@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./production": "./src/production.ts"
+    "./production": "./src/production.ts",
+    "./model-settings": "./src/model-settings-api.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
@@ -13,6 +14,7 @@
   "dependencies": {
     "@novel-adaptation/identity": "workspace:*",
     "@novel-adaptation/project-import": "workspace:*",
+    "@novel-adaptation/script": "workspace:*",
     "@novel-adaptation/story-knowledge": "workspace:*",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
