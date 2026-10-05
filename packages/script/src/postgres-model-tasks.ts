@@ -1,9 +1,21 @@
 import type { ModelSettingsPool, ModelSettingsClient } from "./postgres-model-settings.ts";
-import { ModelTaskError, validateTaskPage, validateTaskStatus, validateTaskResult, type TaskPageRequest, type TaskResult, type ModelTask, type ModelTaskRepository, type TaskState, type TaskReason } from "./model-tasks.ts";
+import { ModelTaskError, validateTaskScan, validateTaskPage, validateTaskStatus, validateTaskResult, type TaskScanMode, type TaskPageRequest, type TaskResult, type ModelTask, type ModelTaskRepository, type TaskState, type TaskReason } from "./model-tasks.ts";
 
 export class PostgresModelTaskRepository implements ModelTaskRepository {
   readonly #pool: ModelSettingsPool;
   constructor(pool: ModelSettingsPool) { this.#pool = pool; }
+  scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) {
+    validateTaskScan(mode, page);
+    return this.#transaction(workspaceId, async client => {
+      const eligibility = mode === "run" ? "state='queued'" : "((state='running' and (lease_expires_at is null or lease_expires_at<=clock_timestamp())) or (state='paused' and reason='EXECUTION_UNCERTAIN'))";
+      const rows = (await client.query(`select payload,state,revision,reason,result_json,lease_expires_at from model_tasks
+        where workspace_id=$1 and payload->'input'->>'stage'='story_knowledge' and ${eligibility}
+          and ($2::text is null or id collate "C">$2::text collate "C") order by id collate "C" limit $3`,
+        [workspaceId,page.cursor,page.limit+1])).rows;
+      const tasks = rows.slice(0, page.limit).map(decode);
+      return { tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null };
+    });
+  }
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
     validateTaskPage(page);
     return this.#transaction(workspaceId, async client => {

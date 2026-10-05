@@ -55,6 +55,17 @@ async function exercise(repository: ModelTaskRepository) {
   const unicodePage = await repository.listStoryKnowledge(actor.workspaceId, "p", "unicode-list", { limit: 1, cursor: null });
   assert.equal(unicodePage.tasks[0]?.id, "\uE000");
   assert.equal((await repository.listStoryKnowledge(actor.workspaceId, "p", "unicode-list", { limit: 1, cursor: unicodePage.nextCursor })).tasks[0]?.id, "\u{10000}");
+  const scanWorkspace = randomUUID();
+  for (const [id, stage] of [["scan-a", "story_knowledge"], ["scan-b", "story_knowledge"], ["scan-script", "script"]] as const) {
+    await repository.insert({ ...original, workspaceId: scanWorkspace, id, input: { ...original.input, stage } });
+  }
+  const scan = await repository.scanStoryKnowledge(scanWorkspace, "run", { limit: 1, cursor: null });
+  assert.deepEqual(scan.tasks.map(task => task.id), ["scan-a"]); assert.equal(scan.nextCursor, "scan-a");
+  assert.deepEqual((await repository.scanStoryKnowledge(scanWorkspace, "run", { limit: 1, cursor: scan.nextCursor })).tasks.map(task => task.id), ["scan-b"]);
+  await repository.transition(scanWorkspace, "scan-a", 0, "running", null);
+  assert.deepEqual((await repository.scanStoryKnowledge(scanWorkspace, "run", { limit: 20, cursor: null })).tasks.map(task => task.id), ["scan-b"]);
+  assert.deepEqual((await repository.scanStoryKnowledge(scanWorkspace, "recover", { limit: 20, cursor: null })).tasks, []);
+  assert.deepEqual((await repository.scanStoryKnowledge("unrelated", "run", { limit: 20, cursor: null })).tasks, []);
   return original;
 }
 
@@ -64,17 +75,21 @@ test("过期执行只恢复结果或转待人工处理，不再次调用模型",
   let now = Date.parse("2026-10-05T00:00:00Z");
   const repository = new InMemoryModelTaskRepository(() => now);
   const original = await exercise(repository);
-  const fixture = { ...original, id: "crashed", parentTaskId: null, model: original.model, state: "queued" as const, revision: 0, reason: null, result: null };
+  const fixture = { ...original, input: { ...original.input, stage: "story_knowledge" as const, upstreamConfirmedVersionIds: [] }, id: "crashed", parentTaskId: null, model: original.model, state: "queued" as const, revision: 0, reason: null, result: null };
   await repository.insert(fixture);
   await repository.transition(original.workspaceId, fixture.id, 0, "running", null);
   await assert.rejects(() => repository.recover(original.workspaceId, fixture.id, 1, null), { code: "STATE_CONFLICT" });
+  assert.equal((await repository.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.length, 0);
   now += 600_001;
+  assert.deepEqual((await repository.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.map(task => task.id), ["crashed"]);
   const uncertain = await repository.recover(original.workspaceId, fixture.id, 1, null);
   assert.equal(uncertain.reason, "EXECUTION_UNCERTAIN"); assert.equal(uncertain.state, "paused");
+  assert.deepEqual((await repository.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.map(task => task.id), ["crashed"]);
   const result = { candidateVersionId: "saved-before-crash", extractionStatus: "partially_succeeded" as const };
   const recoveries = await Promise.allSettled([repository.recover(original.workspaceId, fixture.id, 2, result), repository.recover(original.workspaceId, fixture.id, 2, result)]);
   assert.equal(recoveries.filter(value => value.status === "fulfilled").length, 1);
   assert.deepEqual((await repository.find(original.workspaceId, fixture.id))?.result, result);
+  assert.equal((await repository.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.length, 0);
   await assert.rejects(() => repository.transition(original.workspaceId, fixture.id, 1, "succeeded", null, result), { code: "STATE_CONFLICT" });
 });
 
@@ -92,6 +107,7 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     }
     await admin.query(await readFile(new URL("../migrations/0005_model_task_recovery.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0006_chapter_task_list.sql", import.meta.url), "utf8"));
+    await admin.query(await readFile(new URL("../migrations/0007_story_task_scan.sql", import.meta.url), "utf8"));
     const original = await exercise(new PostgresModelTaskRepository(app));
     const { state, revision, reason, ...payload } = original;
     const constraintId = randomUUID();
@@ -104,12 +120,15 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     await assert.rejects(() => durable.recover(original.workspaceId, constraintId, 1, null), { code: "STATE_CONFLICT" });
     const crashedId = randomUUID();
     await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision,lease_expires_at) values($1,$2,$3::jsonb,'running',1,clock_timestamp()-interval '1 second')",
-      [original.workspaceId, crashedId, JSON.stringify({ ...payload, id: crashedId, parentTaskId: null })]);
+      [original.workspaceId, crashedId, JSON.stringify({ ...payload, id: crashedId, parentTaskId: null, input: { ...original.input, stage: "story_knowledge", upstreamConfirmedVersionIds: [] } })]);
+    assert.deepEqual((await durable.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.map(task => task.id), [crashedId]);
     assert.equal((await durable.recover(original.workspaceId, crashedId, 1, null)).reason, "EXECUTION_UNCERTAIN");
+    assert.deepEqual((await durable.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.map(task => task.id), [crashedId]);
     const result = { candidateVersionId: "persisted-candidate", extractionStatus: "partially_succeeded" as const };
     const repaired = await Promise.allSettled([durable.recover(original.workspaceId, crashedId, 2, result), durable.recover(original.workspaceId, crashedId, 2, result)]);
     assert.equal(repaired.filter(item => item.status === "fulfilled").length, 1);
     assert.deepEqual((await durable.find(original.workspaceId, crashedId))?.result, result);
+    assert.equal((await durable.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.length, 0);
     await assert.rejects(() => durable.transition(original.workspaceId, crashedId, 1, "succeeded", null, result), { code: "STATE_CONFLICT" });
     await assert.rejects(() => app.query("delete from model_tasks"));
     await assert.rejects(() => app.query("update model_tasks set payload='{}'::jsonb"));

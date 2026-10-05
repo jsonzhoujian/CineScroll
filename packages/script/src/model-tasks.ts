@@ -9,6 +9,7 @@ export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTR
 export type TaskResult = { candidateVersionId: string; extractionStatus: "succeeded" | "partially_succeeded" | "failed" };
 export type TaskPage = { tasks: ModelTask[]; nextCursor: string | null };
 export type TaskPageRequest = { limit: number; cursor: string | null };
+export type TaskScanMode = "run" | "recover";
 /** Controlled execution outcomes only; never include provider messages or raw responses. */
 export class TaskExecutionError extends Error {
   readonly code: "UPSTREAM_CHANGED" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS";
@@ -21,6 +22,8 @@ export class ModelTaskError extends Error {
   constructor(code: ModelTaskError["code"]) { super(code); this.code = code; }
 }
 export interface ModelTaskRepository {
+  /** Internal workspace-scoped discovery only; scanning is not a claim or authorization. */
+  scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   find(workspaceId: string, id: string): Promise<ModelTask | null>;
   insert(task: ModelTask): Promise<ModelTask>;
@@ -132,6 +135,16 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   readonly #tasks = new Map<string, ModelTask>();
   readonly #clock: () => number;
   constructor(clock: () => number = Date.now) { this.#clock = clock; }
+  async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
+    validateTaskScan(mode, page);
+    const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.input.stage === "story_knowledge"
+      && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0)
+      && (mode === "run" ? task.state === "queued" : task.state === "running" && (task.leaseExpiresAt === null || Date.parse(task.leaseExpiresAt) <= this.#clock())
+        || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN"))
+      .sort((a, b) => compareTaskIds(a.id, b.id)).slice(0, page.limit + 1);
+    const tasks = rows.slice(0, page.limit);
+    return structuredClone({ tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null });
+  }
   async listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
@@ -169,5 +182,9 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
 export function validateTaskPage(page: TaskPageRequest) {
   if (!Number.isInteger(page.limit) || page.limit < 1 || page.limit > 50 || !(page.cursor === null
     || typeof page.cursor === "string" && !!page.cursor.trim() && page.cursor.length <= 256 && !/[\r\n]/.test(page.cursor))) throw new ModelTaskError("INVALID_CONTEXT");
+}
+export function validateTaskScan(mode: TaskScanMode, page: TaskPageRequest) {
+  validateTaskPage(page);
+  if (!["run", "recover"].includes(mode)) throw new ModelTaskError("INVALID_CONTEXT");
 }
 function compareTaskIds(a: string, b: string) { return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8")); }

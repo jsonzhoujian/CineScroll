@@ -1,4 +1,6 @@
-# 任务崩溃恢复（内部手动对账）
+# 任务崩溃恢复（内部对账）
+
+后续新增有界恢复扫描与tick基础，见 STORY_TASK_DISPATCHER.md。尚未启动自动周期扫描或生产Worker，以下租约与不重发规则不变。
 
 queued → running 时记录 10 分钟固定租约 leaseExpiresAt。PostgreSQL 使用数据库时钟，内存夹具可注入时钟。没有续租/heartbeat、自动扫描、自动调度或公开 recovery HTTP 入口；长任务超时不等于模型请求被取消，也不能证明模型未收费。
 

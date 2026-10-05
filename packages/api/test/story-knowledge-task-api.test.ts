@@ -10,6 +10,7 @@ import { ModelTaskService, InMemoryModelTaskRepository } from "@novel-adaptation
 import { StoryKnowledgeTaskContext } from "../src/story-knowledge-task-context.ts";
 import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts";
 import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor.ts";
+import { StoryKnowledgeTaskDispatcher } from "../src/story-knowledge-task-dispatcher.ts";
 import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
 test("故事知识任务从授权原文生成输入，不接受客户端版本；旧Key暂停后显式重提交", async () => {
@@ -70,8 +71,10 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
         const source = chapter?.versions.find(version => version.id === sourceVersionId);
         return source ? { id: source.id, fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
       } }, idGenerator: () => `k${++version}`, clock: () => new Date("2026-10-05") });
+    let dispatchCalls = 0;
     const executor = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: knowledge,
       model: { async generate(input, credentials) {
+        dispatchCalls++;
         assert.equal(credentials.apiKey, "new-fixture");
         assert.deepEqual(input.input.sourceFragments, [{ id: "f", text: "雨落" }]);
         return { contractVersion: "0.1.0", jobId: input.jobId, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1",
@@ -80,7 +83,17 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
             { scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } },
           ] };
       } } });
-    assert.equal((await executor.run(owner, child.body.id)).state, "succeeded");
+    const dispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository, executor });
+    const ticks = await Promise.all([dispatcher.tick("w", "run"), dispatcher.tick("w", "run")]);
+    assert.equal(ticks.flatMap(tick => tick.items).filter(item => item.outcome === "completed").length, 1);
+    assert.equal(dispatchCalls, 1);
+    assert.equal((await tasks.get(owner, child.body.id)).state, "succeeded");
+    const deniedTask = { ...(await tasks.get(owner, child.body.id)), id: "zz-denied", parentTaskId: null, createdBy: "outsider", state: "queued" as const, revision: 0, reason: null, result: null, leaseExpiresAt: null };
+    await taskRepository.insert(deniedTask);
+    assert.deepEqual((await dispatcher.tick("w", "run")).items, [{ id: "zz-denied", outcome: "unavailable" }]);
+    assert.equal(dispatchCalls, 1);
+    assert.equal((await taskRepository.find("w", "zz-denied"))?.state, "queued");
+    assert.deepEqual((await dispatcher.tick("other", "run")).items, []);
     const candidate = await knowledge.getActive(owner, "p", "c");
     assert.deepEqual((await tasks.get(owner, child.body.id)).result, { candidateVersionId: candidate.id, extractionStatus: "partially_succeeded" });
     const read = await http.get(`/story-knowledge-tasks/${child.body.id}`).set("authorization", bearer).expect(200);
@@ -108,17 +121,34 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     let recoveryModelCalls = 0;
     const recovery = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: recoveryKnowledge,
       model: { async generate() { recoveryModelCalls++; throw new Error("must not resend"); } } });
+    const recoveryDispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository, executor: recovery });
+    assert.deepEqual((await recoveryDispatcher.tick("w", "recover")).items, []);
     await assert.rejects(() => recovery.recover(owner, crashed.id), { code: "STATE_CONFLICT" });
     now += 600_001;
-    const repaired = await recovery.recover(owner, crashed.id);
+    assert.equal((await recoveryDispatcher.tick("w", "recover")).items[0]?.outcome, "completed");
+    const repaired = await tasks.get(owner, crashed.id);
     assert.equal(repaired.state, "succeeded"); assert.equal(repaired.result?.candidateVersionId, savedCandidate.id);
     assert.equal(repaired.result?.extractionStatus, "failed");
     const unknown = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
     await taskRepository.transition("w", unknown.id, 0, "running", null);
     now += 600_001;
-    assert.equal((await recovery.recover(owner, unknown.id)).reason, "EXECUTION_UNCERTAIN");
+    assert.equal((await recoveryDispatcher.tick("w", "recover")).items[0]?.reason, "EXECUTION_UNCERTAIN");
+    assert.equal((await recoveryDispatcher.tick("w", "recover")).items[0]?.outcome, "raced");
     await http.post(`/story-knowledge-tasks/${unknown.id}/resubmit`).set("authorization", bearer).send({ configurationVersionId: next.id, modelId: "m" }).expect(409);
     await assert.rejects(() => recovery.recover({ userId: "outsider", workspaceId: "w" }, unknown.id), { code: "TASK_NOT_FOUND" });
+    assert.equal(recoveryModelCalls, 0);
+    const lateKnowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
+      sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
+      idGenerator: () => `late${++version}`, clock: () => new Date("2026-10-05") });
+    const lateCandidate = await lateKnowledge.recordExtraction(owner, {
+      contractVersion: "0.1.0", jobId: unknown.id, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed",
+      items: [{ scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } }],
+    });
+    const lateDispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository,
+      executor: new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: lateKnowledge,
+        model: { async generate() { recoveryModelCalls++; throw new Error("must not resend"); } } }) });
+    assert.equal((await lateDispatcher.tick("w", "recover")).items[0]?.state, "succeeded");
+    assert.equal((await tasks.get(owner, unknown.id)).result?.candidateVersionId, lateCandidate.id);
     assert.equal(recoveryModelCalls, 0);
     const competingKnowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
       sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
@@ -157,7 +187,11 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
           return { contractVersion: "0.1.0", jobId: mode === "wrong-envelope" ? "forged" : input.jobId,
             stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed", items: [] };
         } } });
-      const outcome = await invalid.run(owner, queued.id);
+      const isolatedDispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository, executor: invalid });
+      const report = await isolatedDispatcher.tick("w", "run");
+      assert.equal(report.items.find(item => item.id === queued.id)?.outcome, "completed");
+      assert.ok(!JSON.stringify(report).includes("new-fixture"));
+      const outcome = (await taskRepository.find(owner.workspaceId, queued.id))!;
       assert.equal(outcome.state, mode === "source-changed" ? "paused" : "failed");
       assert.equal(outcome.reason, mode === "source-changed" ? "UPSTREAM_CHANGED" : mode === "wrong-envelope" ? "INVALID_RESPONSE" : "PROVIDER_UNAVAILABLE");
       assert.equal(outcome.result, null);
