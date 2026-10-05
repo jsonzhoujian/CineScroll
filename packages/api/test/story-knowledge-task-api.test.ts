@@ -24,7 +24,9 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
   const saved = await settings.configure(owner, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" });
   const tested = await settings.testConnection(owner, saved.id);
-  const tasks = new ModelTaskService({ settings, repository: new InMemoryModelTaskRepository(), contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
+  let now = Date.now();
+  const taskRepository = new InMemoryModelTaskRepository(() => now);
+  const tasks = new ModelTaskService({ settings, repository: taskRepository, contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async userId => ({ userId, workspaceId: "w" }) });
   const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
@@ -80,6 +82,32 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     const blocked = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
     assert.equal((await executor.run(owner, blocked.id)).reason, "CANDIDATE_EXISTS");
     assert.equal((await knowledge.getActive(owner, "p", "c")).id, candidate.id);
+    const recoveryKnowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
+      sourceReader: { async findSourceVersion(actor, projectId, chapterId, sourceVersionId) {
+        if (!await projects.findProjectAccess(actor, projectId)) return null;
+        return { id: sourceVersionId, fragmentIds: ["f"] };
+      } }, idGenerator: () => `recovered${++version}`, clock: () => new Date("2026-10-05") });
+    const crashed = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+    await taskRepository.transition("w", crashed.id, 0, "running", null);
+    const savedCandidate = await recoveryKnowledge.recordExtraction(owner, {
+      contractVersion: "0.1.0", jobId: crashed.id, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed",
+      items: [{ scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } }],
+    });
+    let recoveryModelCalls = 0;
+    const recovery = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: recoveryKnowledge,
+      model: { async generate() { recoveryModelCalls++; throw new Error("must not resend"); } } });
+    await assert.rejects(() => recovery.recover(owner, crashed.id), { code: "STATE_CONFLICT" });
+    now += 600_001;
+    const repaired = await recovery.recover(owner, crashed.id);
+    assert.equal(repaired.state, "succeeded"); assert.equal(repaired.result?.candidateVersionId, savedCandidate.id);
+    assert.equal(repaired.result?.extractionStatus, "failed");
+    const unknown = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+    await taskRepository.transition("w", unknown.id, 0, "running", null);
+    now += 600_001;
+    assert.equal((await recovery.recover(owner, unknown.id)).reason, "EXECUTION_UNCERTAIN");
+    await http.post(`/story-knowledge-tasks/${unknown.id}/resubmit`).set("authorization", bearer).send({ configurationVersionId: next.id, modelId: "m" }).expect(409);
+    await assert.rejects(() => recovery.recover({ userId: "outsider", workspaceId: "w" }, unknown.id), { code: "TASK_NOT_FOUND" });
+    assert.equal(recoveryModelCalls, 0);
     const competingKnowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
       sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
       idGenerator: () => `race${++version}`, clock: () => new Date("2026-10-05") });

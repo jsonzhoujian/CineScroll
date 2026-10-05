@@ -90,6 +90,7 @@ export type StoryBible = Readonly<{
 }>;
 
 export interface StoryKnowledgeRepository {
+  findInitialExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<StoryKnowledgeVersion | null>;
   /** Durable adapters must hold the current chapter-source check through commit when requested. */
   saveCandidate(
     actor: Actor,
@@ -183,6 +184,12 @@ export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepositor
   readonly #retryResults = new Map<string, { fingerprint: string; versionId: string }>();
   readonly #confirmedVersionIds = new Map<string, string>();
   readonly #storyBibles = new Map<string, StoryBible>();
+  async findInitialExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string) {
+    const matches = [...this.#versions.entries()].filter(([entryKey, version]) => entryKey.startsWith(`${key(actor, projectId, chapterId)}:`)
+      && version.projectId === projectId && version.chapterId === chapterId && version.extractionJobId === jobId && version.parentVersionId === null);
+    if (matches.length > 1) throw new StoryKnowledgeError("VERSION_CONFLICT", "任务结果存在歧义");
+    return structuredClone(matches[0]?.[1] ?? null);
+  }
   readonly #confirmationResults = new Map<string, { fingerprint: string; versionId: string }>();
 
   async saveCandidate(
@@ -459,6 +466,11 @@ export class StoryKnowledgeService {
       throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
     }
     return version;
+  }
+
+  async getInitialExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<StoryKnowledgeVersion | null> {
+    const version = await this.#repository.findInitialExtraction(actor, projectId, chapterId, jobId);
+    return version ? this.getVersion(actor, projectId, chapterId, version.id) : null;
   }
 
   async resolveFact(

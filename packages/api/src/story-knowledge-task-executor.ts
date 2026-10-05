@@ -16,6 +16,14 @@ type Options = { tasks: ModelTaskService; projects: Pick<ProjectImportRepository
 export class StoryKnowledgeTaskExecutor {
   readonly #options: Options;
   constructor(options: Options) { this.#options = options; }
+  async recover(actor: Actor, id: string) {
+    return this.#options.tasks.recover(actor, id, async task => {
+      if (task.input.stage !== "story_knowledge") throw new ModelTaskError("TASK_NOT_FOUND");
+      const candidate = await this.#options.storyKnowledge.getInitialExtraction(actor, task.projectId, task.chapterId, task.id);
+      if (!candidate || candidate.sourceVersionId !== task.input.sourceVersionId) return null;
+      return { candidateVersionId: candidate.id, extractionStatus: candidate.extractionStatus };
+    });
+  }
   async run(actor: Actor, id: string) {
     const { tasks, projects, storyKnowledge, model } = this.#options;
     const task = await tasks.get(actor, id);

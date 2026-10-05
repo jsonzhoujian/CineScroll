@@ -48,6 +48,24 @@ async function exercise(repository: ModelTaskRepository) {
 
 test("旧Key任务暂停，新任务保留原输入；上游变化拒绝重新提交", async () => { await exercise(new InMemoryModelTaskRepository()); });
 
+test("过期执行只恢复结果或转待人工处理，不再次调用模型", async () => {
+  let now = Date.parse("2026-10-05T00:00:00Z");
+  const repository = new InMemoryModelTaskRepository(() => now);
+  const original = await exercise(repository);
+  const fixture = { ...original, id: "crashed", parentTaskId: null, model: original.model, state: "queued" as const, revision: 0, reason: null, result: null };
+  await repository.insert(fixture);
+  await repository.transition(original.workspaceId, fixture.id, 0, "running", null);
+  await assert.rejects(() => repository.recover(original.workspaceId, fixture.id, 1, null), { code: "STATE_CONFLICT" });
+  now += 600_001;
+  const uncertain = await repository.recover(original.workspaceId, fixture.id, 1, null);
+  assert.equal(uncertain.reason, "EXECUTION_UNCERTAIN"); assert.equal(uncertain.state, "paused");
+  const result = { candidateVersionId: "saved-before-crash", extractionStatus: "partially_succeeded" as const };
+  const recoveries = await Promise.allSettled([repository.recover(original.workspaceId, fixture.id, 2, result), repository.recover(original.workspaceId, fixture.id, 2, result)]);
+  assert.equal(recoveries.filter(value => value.status === "fulfilled").length, 1);
+  assert.deepEqual((await repository.find(original.workspaceId, fixture.id))?.result, result);
+  await assert.rejects(() => repository.transition(original.workspaceId, fixture.id, 1, "succeeded", null, result), { code: "STATE_CONFLICT" });
+});
+
 test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契约", { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const { Pool } = createRequire(new URL("../../project-import/package.json", import.meta.url))("pg");
   const admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -57,15 +75,29 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     if (!(await admin.query("select to_regclass('model_tasks') as name")).rows[0].name) {
       await admin.query(await readFile(new URL("../migrations/0003_model_tasks.sql", import.meta.url), "utf8"));
     }
-    await admin.query(await readFile(new URL("../migrations/0004_model_task_results.sql", import.meta.url), "utf8"));
+    if (!(await admin.query("select exists(select 1 from information_schema.columns where table_name='model_tasks' and column_name='result_json') as present")).rows[0].present) {
+      await admin.query(await readFile(new URL("../migrations/0004_model_task_results.sql", import.meta.url), "utf8"));
+    }
+    await admin.query(await readFile(new URL("../migrations/0005_model_task_recovery.sql", import.meta.url), "utf8"));
     const original = await exercise(new PostgresModelTaskRepository(app));
     const { state, revision, reason, ...payload } = original;
     const constraintId = randomUUID();
     await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision) values($1,$2,$3::jsonb,'queued',0)", [original.workspaceId, constraintId, JSON.stringify({ ...payload, id: constraintId, parentTaskId: null })]);
-    await admin.query("update model_tasks set state='running',revision=1 where workspace_id=$1 and id=$2", [original.workspaceId, constraintId]);
-    await assert.rejects(() => admin.query("update model_tasks set state='paused',reason=null,revision=2 where workspace_id=$1 and id=$2", [original.workspaceId, constraintId]), { code: "23514" });
-    await assert.rejects(() => admin.query("update model_tasks set state='succeeded',revision=2,result_json=$3::jsonb where workspace_id=$1 and id=$2",
+    await admin.query("update model_tasks set state='running',revision=1,lease_expires_at=clock_timestamp()+interval '10 minutes' where workspace_id=$1 and id=$2", [original.workspaceId, constraintId]);
+    await assert.rejects(() => admin.query("update model_tasks set state='paused',reason=null,revision=2,lease_expires_at=null where workspace_id=$1 and id=$2", [original.workspaceId, constraintId]), { code: "23514" });
+    await assert.rejects(() => admin.query("update model_tasks set state='succeeded',revision=2,lease_expires_at=null,result_json=$3::jsonb where workspace_id=$1 and id=$2",
       [original.workspaceId, constraintId, JSON.stringify({ candidateVersionId: "candidate", extractionStatus: null })]), { code: "23514" });
+    const durable = new PostgresModelTaskRepository(app);
+    await assert.rejects(() => durable.recover(original.workspaceId, constraintId, 1, null), { code: "STATE_CONFLICT" });
+    const crashedId = randomUUID();
+    await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision,lease_expires_at) values($1,$2,$3::jsonb,'running',1,clock_timestamp()-interval '1 second')",
+      [original.workspaceId, crashedId, JSON.stringify({ ...payload, id: crashedId, parentTaskId: null })]);
+    assert.equal((await durable.recover(original.workspaceId, crashedId, 1, null)).reason, "EXECUTION_UNCERTAIN");
+    const result = { candidateVersionId: "persisted-candidate", extractionStatus: "partially_succeeded" as const };
+    const repaired = await Promise.allSettled([durable.recover(original.workspaceId, crashedId, 2, result), durable.recover(original.workspaceId, crashedId, 2, result)]);
+    assert.equal(repaired.filter(item => item.status === "fulfilled").length, 1);
+    assert.deepEqual((await durable.find(original.workspaceId, crashedId))?.result, result);
+    await assert.rejects(() => durable.transition(original.workspaceId, crashedId, 1, "succeeded", null, result), { code: "STATE_CONFLICT" });
     await assert.rejects(() => app.query("delete from model_tasks"));
     await assert.rejects(() => app.query("update model_tasks set payload='{}'::jsonb"));
   } finally { await app.end(); await admin.end(); }

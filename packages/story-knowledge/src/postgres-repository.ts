@@ -19,6 +19,15 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
   constructor(pool: Pool) {
     this.pool = pool;
   }
+  async findInitialExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<StoryKnowledgeVersion | null> {
+    return this.inTransaction(actor, async client => {
+      const result = await client.query<VersionRow>(`select version_json from story_knowledge_versions
+        where workspace_id=$1 and project_id=$2 and chapter_id=$3 and extraction_job_id=$4 and parent_version_id is null limit 2`,
+        [actor.workspaceId, projectId, chapterId, jobId]);
+      if (result.rows.length > 1) throw new StoryKnowledgeError("VERSION_CONFLICT", "任务结果存在歧义");
+      return cloneOrNull(result.rows[0]?.version_json);
+    });
+  }
 
   async saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null, requireCurrentSource = false): Promise<StoryKnowledgeVersion> {
     return this.inTransaction(actor, async (client) => {

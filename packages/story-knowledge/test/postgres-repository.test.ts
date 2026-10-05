@@ -20,6 +20,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
     for (const path of [
       "../../project-import/migrations/0001_project_import.sql",
       "../migrations/0001_story_knowledge.sql",
+      "../migrations/0002_extraction_recovery.sql",
     ]) {
       await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -60,6 +61,8 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
     );
 
     await repository.saveCandidate(actor, candidate, null);
+    assert.deepEqual(await repository.findInitialExtraction(actor, "prj_story", "chp_story", "job_story"), candidate);
+    assert.equal(await repository.findInitialExtraction({ userId: "usr_other", workspaceId: actor.workspaceId }, "prj_story", "chp_story", "job_story"), null);
     const restarted = new PostgresStoryKnowledgeRepository(applicationPool);
     assert.deepEqual(await restarted.findActive(actor, "prj_story", "chp_story"), candidate);
 
@@ -72,6 +75,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       candidateVersionId: candidate.id, fingerprint: "confirm-fingerprint",
     };
     await repository.saveConfirmed(actor, confirmed, bible, candidate.id, confirmation);
+    assert.deepEqual(await restarted.findInitialExtraction(actor, "prj_story", "chp_story", "job_story"), candidate);
     assert.deepEqual(await restarted.findConfirmedStoryBible(actor, "prj_story", "chp_story"), bible);
     assert.deepEqual(
       await restarted.saveConfirmed(actor, version("skv_ignored", candidate.id, "confirmed"), bible, candidate.id, confirmation),
@@ -112,6 +116,8 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       )),
       /only confirmation may change/,
     );
+    await repository.saveCandidate(actor, version("skv_ambiguous_initial"), confirmed.id);
+    await assert.rejects(() => repository.findInitialExtraction(actor, "prj_story", "chp_story", "job_story"), { code: "VERSION_CONFLICT" });
   } finally {
     await applicationPool?.end();
     await adminPool.end();
@@ -125,6 +131,7 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
     for (const path of [
       "../../project-import/migrations/0001_project_import.sql",
       "../migrations/0001_story_knowledge.sql",
+      "../migrations/0002_extraction_recovery.sql",
     ]) await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await adminPool.query("truncate table projects cascade");
     await adminPool.query("drop role if exists novel_story_test");
