@@ -9,6 +9,7 @@ import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../
 import type { ReviewFilter } from "../lib/story-knowledge-review";
 import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
 import { ModelSettingsPanel } from "./model-settings-panel";
+import { TaskStatusPanel } from "./task-status-panel";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
 type MobileTab = "progress" | "review" | "decisions" | "notifications";
@@ -182,6 +183,7 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
+        {step !== "login" && <TaskStatusPanel api={api} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>

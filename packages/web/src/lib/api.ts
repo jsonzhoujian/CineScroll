@@ -91,8 +91,18 @@ type CredentialMode = "none" | "device" | "session";
 
 export type ModelConfiguration = { id: string; providerId: string; keyMask: string; tested: boolean; availableModelIds: string[]; processingRegion: "mainland" | "overseas" | "unknown" };
 export type ModelCapabilities = { advanced: boolean; canManage: boolean; providers: Array<{ id: string; name: string; kind: string; available: boolean; processingRegion: "mainland" | "overseas" | "unknown" }> };
+export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: string;
+  input: { stage: string; sourceVersionId: string }; state: string; reason: string | null;
+  result: { candidateVersionId: string; extractionStatus: string } | null };
 
 export class ApiClient {
+  getStoryKnowledgeTask(id: string) { return this.request<StoryKnowledgeTask>(`/story-knowledge-tasks/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }, "session"); }
+  resubmitStoryKnowledgeTask(id: string, input: { configurationVersionId: string; modelId: string }) {
+    return this.request<StoryKnowledgeTask>(`/story-knowledge-tasks/${encodeURIComponent(id)}/resubmit`, { method: "POST", body: JSON.stringify(input) }, "session");
+  }
+  getStoryKnowledgeVersion(projectId: string, chapterId: string, versionId: string) {
+    return this.request<StoryKnowledgeVersion>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge/versions/${encodeURIComponent(versionId)}`, { method: "GET", cache: "no-store" }, "session");
+  }
   modelCapabilities() { return this.request<ModelCapabilities>("/workspace/model-settings/capabilities", { method: "GET", cache: "no-store" }, "session"); }
   modelConfiguration() { return this.request<{ configuration: ModelConfiguration | null }>("/workspace/model-settings", { method: "GET", cache: "no-store" }, "session"); }
   saveModelKey(input: { expectedVersionId: string | null; providerId: string; apiKey: string }) { return this.request<ModelConfiguration>("/workspace/model-settings", { method: "POST", body: JSON.stringify(input) }, "session"); }
