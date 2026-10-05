@@ -9,6 +9,8 @@ import { WorkspaceModelSettings, InMemoryModelSettingsRepository } from "@novel-
 import { ModelTaskService, InMemoryModelTaskRepository } from "@novel-adaptation/script/model-tasks";
 import { StoryKnowledgeTaskContext } from "../src/story-knowledge-task-context.ts";
 import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts";
+import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor.ts";
+import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
 test("故事知识任务从授权原文生成输入，不接受客户端版本；旧Key暂停后显式重提交", async () => {
   const owner = { userId: "owner", workspaceId: "w" };
@@ -47,5 +49,50 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     assert.deepEqual(child.body.input, created.body.input); assert.equal(child.body.parentTaskId, created.body.id);
     await http.post(`/story-knowledge-tasks/${created.body.id}/resubmit`).set("authorization", bearer).send({ configurationVersionId: next.id, modelId: "m" }).expect(409);
     await http.get(`/story-knowledge-tasks/${created.body.id}`).set("authorization", `Bearer ${await sessions.issue("outsider", "w")}`).expect(404);
+    const knowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
+      sourceReader: { async findSourceVersion(actor, projectId, chapterId, sourceVersionId) {
+        if (!await projects.findProjectAccess(actor, projectId)) return null;
+        const chapter = await projects.findChapter(actor, projectId, chapterId);
+        const source = chapter?.versions.find(version => version.id === sourceVersionId);
+        return source ? { id: source.id, fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
+      } }, idGenerator: () => `k${++version}`, clock: () => new Date("2026-10-05") });
+    const executor = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: knowledge,
+      model: { async generate(input, credentials) {
+        assert.equal(credentials.apiKey, "new-fixture");
+        assert.deepEqual(input.input.sourceFragments, [{ id: "f", text: "雨落" }]);
+        return { contractVersion: "0.1.0", jobId: input.jobId, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1",
+          status: "partially_succeeded", items: [
+            { scopeKey: "weather", status: "succeeded", value: { id: "rain", factType: "worldRule", statement: "正在下雨", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "source1", fragmentId: "f" }] } },
+            { scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } },
+          ] };
+      } } });
+    assert.equal((await executor.run(owner, child.body.id)).state, "succeeded");
+    const candidate = await knowledge.getActive(owner, "p", "c");
+    assert.equal(candidate.extractionStatus, "partially_succeeded");
+    assert.equal(candidate.status, "candidate");
+    assert.deepEqual(candidate.facts.map(fact => fact.id), ["rain"]);
+    assert.deepEqual(candidate.failures.map(failure => failure.scopeKey), ["identity"]);
+    await assert.rejects(() => executor.run(owner, child.body.id), { code: "STATE_CONFLICT" });
+    const blocked = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+    assert.equal((await executor.run(owner, blocked.id)).state, "failed");
+    assert.equal((await knowledge.getActive(owner, "p", "c")).id, candidate.id);
+    for (const mode of ["wrong-envelope", "source-changed"] as const) {
+      const isolated = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
+        sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
+        idGenerator: () => `isolated${++version}`, clock: () => new Date("2026-10-05") });
+      const queued = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+      const invalid = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: isolated,
+        model: { async generate(input) {
+          if (mode === "source-changed") {
+            const project = (await projects.findProject(owner, "p"))!;
+            project.chapters[0]!.activeSourceVersionId = "source2";
+            await projects.saveProject(owner, project);
+          }
+          return { contractVersion: "0.1.0", jobId: mode === "wrong-envelope" ? "forged" : input.jobId,
+            stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed", items: [] };
+        } } });
+      assert.equal((await invalid.run(owner, queued.id)).state, "failed");
+      await assert.rejects(() => isolated.getActive(owner, "p", "c"), { code: "STAGE_RESULT_NOT_FOUND" });
+    }
   } finally { await app.close(); }
 });

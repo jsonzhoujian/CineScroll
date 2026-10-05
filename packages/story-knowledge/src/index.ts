@@ -90,10 +90,12 @@ export type StoryBible = Readonly<{
 }>;
 
 export interface StoryKnowledgeRepository {
+  /** Durable adapters must hold the current chapter-source check through commit when requested. */
   saveCandidate(
     actor: Actor,
     version: StoryKnowledgeVersion,
     expectedActiveVersionId?: string | null,
+    requireCurrentSource?: boolean,
   ): Promise<StoryKnowledgeVersion>;
   findActive(actor: Actor, projectId: string, chapterId: string): Promise<StoryKnowledgeVersion | null>;
   findVersion(
@@ -397,7 +399,7 @@ export class StoryKnowledgeService {
       status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
       facts,
       failures,
-    }, expectedActiveVersionId);
+    }, expectedActiveVersionId, true);
   }
 
   async getRetryableScopes(actor: Actor, projectId: string, chapterId: string): Promise<string[]> {

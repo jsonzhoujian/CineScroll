@@ -20,9 +20,19 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
     this.pool = pool;
   }
 
-  async saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null): Promise<StoryKnowledgeVersion> {
+  async saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null, requireCurrentSource = false): Promise<StoryKnowledgeVersion> {
     return this.inTransaction(actor, async (client) => {
       await setOperation(client, "candidate");
+      if (requireCurrentSource) {
+        // SHARE conflicts with all chapter updates, including non-key active-source changes.
+        // Keep this lock until candidate insertion and head CAS have committed.
+        const source = await client.query<{ active_source_version_id: string | null } & QueryResultRow>(
+          "select active_source_version_id from chapters where project_id=$1 and id=$2 for share",
+          [version.projectId, version.chapterId],
+        );
+        if (!source.rows[0]) throw new StoryKnowledgeError("SOURCE_VERSION_NOT_FOUND", "章节不存在或无权访问");
+        if (source.rows[0].active_source_version_id !== version.sourceVersionId) throw new StoryKnowledgeError("VERSION_CONFLICT", "原文已更新，请重新生成");
+      }
       await lockHead(client, actor, version.projectId, version.chapterId);
       if (expectedActiveVersionId !== undefined) await assertActive(client, actor, version.projectId, version.chapterId, expectedActiveVersionId);
       await insertVersion(client, actor, version);

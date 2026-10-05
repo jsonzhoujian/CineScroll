@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { setTimeout } from "node:timers/promises";
 
 import { Pool, type PoolClient } from "pg";
 
@@ -133,6 +134,36 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
     applicationUrl.password = "test-only-password";
     applicationPool = new Pool({ connectionString: applicationUrl.toString(), max: 4 });
     const repository = new PostgresStoryKnowledgeRepository(applicationPool);
+    // Hold a reimport uncommitted while a candidate write is started: the writer must
+    // wait, then compare the committed current source rather than its old snapshot.
+    const reimport = await adminPool.connect();
+    try {
+      await reimport.query("begin");
+      await reimport.query(`insert into source_versions
+        (id, project_id, chapter_id, ordinal, created_at, created_by, character_count, source_text)
+        values ('srcv_new','prj_story','chp_story',2,now(),$1,4,'新版原文')`, [actor.userId]);
+      await reimport.query("update chapters set active_source_version_id='srcv_new' where id='chp_story'");
+      const saving = repository.saveCandidate(actor, version("skv_stale"), null, true);
+      const rejected = assert.rejects(saving, { code: "VERSION_CONFLICT" });
+      let waiting = false;
+      for (let attempt = 0; attempt < 100 && !waiting; attempt += 1) {
+        const activity = await reimport.query(`select 1 from pg_stat_activity
+          where usename='novel_story_test' and wait_event_type='Lock'
+          and query like 'select active_source_version_id from chapters%'`);
+        waiting = activity.rowCount === 1;
+        if (!waiting) await setTimeout(10);
+      }
+      assert.equal(waiting, true, "候选写入必须等待未提交的原文变更");
+      await reimport.query("commit");
+      await rejected;
+      assert.equal(await repository.findActive(actor, "prj_story", "chp_story"), null);
+      const current = { ...version("skv_current"), sourceVersionId: "srcv_new" };
+      await repository.saveCandidate(actor, current, null, true);
+      assert.equal((await repository.findActive(actor, "prj_story", "chp_story"))?.id, "skv_current");
+      // Restore fixture head via a separate chapter for the remaining CAS cases.
+      await reimport.query("delete from story_knowledge_heads where project_id='prj_story' and chapter_id='chp_story'");
+      await reimport.query("update chapters set active_source_version_id='srcv_story' where id='chp_story'");
+    } finally { await reimport.query("rollback"); reimport.release(); }
     await assert.rejects(
       () => repository.saveCandidate(actor, { ...version("skv_dangling"), sourceVersionId: "srcv_missing" }, null),
       { code: "SOURCE_VERSION_NOT_FOUND" },
