@@ -71,6 +71,35 @@ async function exercise(repository: ModelTaskRepository) {
 
 test("旧Key任务暂停，新任务保留原输入；上游变化拒绝重新提交", async () => { await exercise(new InMemoryModelTaskRepository()); });
 
+test("故事知识许可缺失或受限禁止创建和执行，读取仍可用", async () => {
+  const actor = { userId: "u", workspaceId: "policy-workspace" };
+  let version = 0, job = 0, allowed = false, calls = 0;
+  const settings = new WorkspaceModelSettings({ repository: new InMemoryModelSettingsRepository(), encryptionKey: new Uint8Array(32).fill(7),
+    access: { read: async () => ({ owner: true, advanced: true }) }, idGenerator: () => `v${++version}`,
+    probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
+  const saved = await settings.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" });
+  const config = await settings.testConnection(actor, saved.id);
+  const options = { settings, repository: new InMemoryModelTaskRepository(), idGenerator: () => `policy${++job}`,
+    contextReader: { read: async () => ({ stage: "story_knowledge" as const, sourceVersionId: "s", upstreamConfirmedVersionIds: [], generationParameters: { targetDurationSeconds: 180 as const, aspectRatio: "9:16" as const, narrativeMode: "narration" as const } }) } };
+  const selection = { projectId: "p", chapterId: "c", configurationVersionId: config.id, modelId: "m" };
+  await assert.rejects(() => new ModelTaskService(options).submit(actor, selection), { code: "POLICY_RESTRICTED" });
+  const service = new ModelTaskService({ ...options, generationPolicy: { isAllowed: async () => allowed } });
+  await assert.rejects(() => service.submit(actor, selection), { code: "POLICY_RESTRICTED" });
+  allowed = true;
+  const task = await service.submit(actor, selection);
+  allowed = false;
+  assert.equal((await service.get(actor, task.id)).state, "queued");
+  const stopped = await service.run(actor, task.id, async () => { calls++; });
+  assert.equal(stopped.reason, "POLICY_RESTRICTED"); assert.equal(stopped.state, "paused"); assert.equal(calls, 0);
+  await assert.rejects(() => service.resubmit(actor, task.id, selection), { code: "POLICY_RESTRICTED" });
+  allowed = true;
+  const next = await service.resubmit(actor, task.id, selection);
+  // Invoke returns only after its trusted candidate commit. A later restriction must
+  // not erase this already-persisted outcome; the executor owns the pre-save checks.
+  const afterCall = await service.run(actor, next.id, async () => { calls++; allowed = false; return { candidateVersionId: "committed-before-restriction", extractionStatus: "succeeded" }; });
+  assert.equal(afterCall.state, "succeeded"); assert.equal(afterCall.result?.candidateVersionId, "committed-before-restriction");
+});
+
 test("过期执行只恢复结果或转待人工处理，不再次调用模型", async () => {
   let now = Date.parse("2026-10-05T00:00:00Z");
   const repository = new InMemoryModelTaskRepository(() => now);
@@ -105,9 +134,12 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     if (!(await admin.query("select exists(select 1 from information_schema.columns where table_name='model_tasks' and column_name='result_json') as present")).rows[0].present) {
       await admin.query(await readFile(new URL("../migrations/0004_model_task_results.sql", import.meta.url), "utf8"));
     }
-    await admin.query(await readFile(new URL("../migrations/0005_model_task_recovery.sql", import.meta.url), "utf8"));
+    if (!(await admin.query("select exists(select 1 from information_schema.columns where table_name='model_tasks' and column_name='lease_expires_at') as present")).rows[0].present) {
+      await admin.query(await readFile(new URL("../migrations/0005_model_task_recovery.sql", import.meta.url), "utf8"));
+    }
     await admin.query(await readFile(new URL("../migrations/0006_chapter_task_list.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0007_story_task_scan.sql", import.meta.url), "utf8"));
+    await admin.query(await readFile(new URL("../migrations/0008_generation_policy_reason.sql", import.meta.url), "utf8"));
     const original = await exercise(new PostgresModelTaskRepository(app));
     const { state, revision, reason, ...payload } = original;
     const constraintId = randomUUID();
@@ -118,6 +150,7 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
       [original.workspaceId, constraintId, JSON.stringify({ candidateVersionId: "candidate", extractionStatus: null })]), { code: "23514" });
     const durable = new PostgresModelTaskRepository(app);
     await assert.rejects(() => durable.recover(original.workspaceId, constraintId, 1, null), { code: "STATE_CONFLICT" });
+    assert.equal((await durable.transition(original.workspaceId, constraintId, 1, "paused", "POLICY_RESTRICTED")).reason, "POLICY_RESTRICTED");
     const crashedId = randomUUID();
     await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision,lease_expires_at) values($1,$2,$3::jsonb,'running',1,clock_timestamp()-interval '1 second')",
       [original.workspaceId, crashedId, JSON.stringify({ ...payload, id: crashedId, parentTaskId: null, input: { ...original.input, stage: "story_knowledge", upstreamConfirmedVersionIds: [] } })]);

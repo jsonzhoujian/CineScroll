@@ -27,7 +27,8 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
   const tested = await settings.testConnection(owner, saved.id);
   let now = Date.now();
   const taskRepository = new InMemoryModelTaskRepository(() => now);
-  const tasks = new ModelTaskService({ settings, repository: taskRepository, contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
+  let policyAllowed = true;
+  const tasks = new ModelTaskService({ settings, repository: taskRepository, generationPolicy: { isAllowed: async () => policyAllowed }, contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async userId => ({ userId, workspaceId: "w" }) });
   const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
@@ -35,6 +36,10 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     const http = request(app.getHttpServer()), bearer = `Bearer ${await sessions.issue("owner", "w")}`;
     const path = "/projects/p/chapters/c/story-knowledge-tasks";
     const selection = { configurationVersionId: tested.id, modelId: "m" };
+    policyAllowed = false;
+    const restricted = await http.post(path).set("authorization", bearer).send(selection).expect(403);
+    assert.equal(restricted.body.code, "POLICY_RESTRICTED");
+    policyAllowed = true;
     await http.post(path).send(selection).expect(401);
     await http.post(path).set("authorization", bearer).send({ ...selection, sourceVersionId: "forged" }).expect(400);
     await http.post(`/projects/${"p".repeat(257)}/chapters/c/story-knowledge-tasks`).set("authorization", bearer).send(selection).expect(400);
@@ -171,7 +176,7 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     assert.equal(outcomes.filter(outcome => outcome.state === "succeeded").length, 1);
     assert.equal(outcomes.find(outcome => outcome.state !== "succeeded")?.reason, "CANDIDATE_EXISTS");
     assert.equal(outcomes.find(outcome => outcome.state === "succeeded")?.result?.extractionStatus, "failed");
-    for (const mode of ["wrong-envelope", "provider-error", "source-changed"] as const) {
+    for (const mode of ["wrong-envelope", "provider-error", "policy-changed", "source-changed"] as const) {
       const isolated = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
         sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
         idGenerator: () => `isolated${++version}`, clock: () => new Date("2026-10-05") });
@@ -179,6 +184,7 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
       const invalid = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: isolated,
         model: { async generate(input) {
           if (mode === "provider-error") throw new Error("new-fixture: vendor private response");
+          if (mode === "policy-changed") policyAllowed = false;
           if (mode === "source-changed") {
             const project = (await projects.findProject(owner, "p"))!;
             project.chapters[0]!.activeSourceVersionId = "source2";
@@ -192,11 +198,12 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
       assert.equal(report.items.find(item => item.id === queued.id)?.outcome, "completed");
       assert.ok(!JSON.stringify(report).includes("new-fixture"));
       const outcome = (await taskRepository.find(owner.workspaceId, queued.id))!;
-      assert.equal(outcome.state, mode === "source-changed" ? "paused" : "failed");
-      assert.equal(outcome.reason, mode === "source-changed" ? "UPSTREAM_CHANGED" : mode === "wrong-envelope" ? "INVALID_RESPONSE" : "PROVIDER_UNAVAILABLE");
+      assert.equal(outcome.state, ["source-changed", "policy-changed"].includes(mode) ? "paused" : "failed");
+      assert.equal(outcome.reason, mode === "policy-changed" ? "POLICY_RESTRICTED" : mode === "source-changed" ? "UPSTREAM_CHANGED" : mode === "wrong-envelope" ? "INVALID_RESPONSE" : "PROVIDER_UNAVAILABLE");
       assert.equal(outcome.result, null);
       assert.ok(!JSON.stringify(outcome).includes("new-fixture"));
       await assert.rejects(() => isolated.getActive(owner, "p", "c"), { code: "STAGE_RESULT_NOT_FOUND" });
+      policyAllowed = true;
     }
   } finally { await app.close(); }
 });

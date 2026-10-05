@@ -177,6 +177,9 @@ export class StoryKnowledgeError extends Error {
 export class StoryKnowledgeSourceChangedError extends StoryKnowledgeError {
   constructor() { super("VERSION_CONFLICT", "原文已更新，请重新生成"); }
 }
+export class StoryKnowledgeGenerationRestrictedError extends StoryKnowledgeError {
+  constructor() { super("FORBIDDEN", "当前生成许可缺失或受限"); }
+}
 
 export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepository {
   readonly #activeVersionIds = new Map<string, string>();

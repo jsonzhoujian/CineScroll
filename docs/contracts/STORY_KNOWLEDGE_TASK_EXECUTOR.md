@@ -4,6 +4,8 @@
 
 后续内部单次调度/恢复扫描基础见 STORY_TASK_DISPATCHER.md，调用现有run/recover；没有常驻Worker或生产定时器。
 
+当前生成许可后续门禁见 GENERATION_POLICY.md：任务调用前、模型返回后和PostgreSQL候选写事务检查当前项目/固定原文许可。缺失默认拒绝；提交后限制不清空已保存结果关联。下文早期缺口说明属于历史切片，当前仍缺真实审核回写及管理审计/工单。
+
 任务服务用 CAS 抢占 queued 任务，检查输入及当前模型配置，解密凭据只传入可信 `CredentialedStoryKnowledgeModel`。执行器按固定原文版本读取片段，构造 canonical storyKnowledge 请求，复用 ExtractionRunner 校验响应结构、任务身份与原文证据。模型输出中的错误证据转为条目失败，合法条目保存为可审核候选，绝不自动确认。
 
 首片仅支持初次提取。已有活动知识结果时不调用模型；写入使用 expectedActiveVersionId=null 的 CAS，防止并行执行覆盖候选或已确认内容。任务级 CAS 拒绝同一任务再次执行。局部重试及已有内容的明确重生成另行实现。

@@ -55,7 +55,7 @@ class StoryKnowledgeTaskController {
 }
 class TaskFilter implements ExceptionFilter<ModelTaskError | ModelSettingsError> {
   catch(error: ModelTaskError | ModelSettingsError, host: ArgumentsHost) {
-    const status = error.code === "TASK_NOT_FOUND" ? 404 : error.code === "FORBIDDEN" ? 403 :
+    const status = error.code === "TASK_NOT_FOUND" ? 404 : ["FORBIDDEN", "POLICY_RESTRICTED"].includes(error.code) ? 403 :
       ["STATE_CONFLICT", "UPSTREAM_CHANGED", "VERSION_CONFLICT"].includes(error.code) ? 409 :
       ["INVALID_CONTEXT", "INVALID_CONFIGURATION"].includes(error.code) ? 400 : 503;
     host.switchToHttp().getResponse().status(status).json({ code: error.code, message: error.code });

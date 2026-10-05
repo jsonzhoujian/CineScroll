@@ -2,7 +2,7 @@ import type { Actor } from "@novel-adaptation/identity";
 import type { ProjectImportRepository } from "@novel-adaptation/project-import";
 import type { ModelTaskContextReader, TaskInput } from "@novel-adaptation/script/model-tasks";
 
-/** Reads only authoritative imported versions; import-time scanning is not a current compliance verdict. */
+/** Authority/source reader only; ModelTaskService separately enforces current generationPolicy. */
 export class StoryKnowledgeTaskContext implements ModelTaskContextReader {
   private readonly projects: Pick<ProjectImportRepository, "findProjectAccess" | "findProject" | "findChapter">;
   constructor(projects: Pick<ProjectImportRepository, "findProjectAccess" | "findProject" | "findChapter">) { this.projects = projects; }

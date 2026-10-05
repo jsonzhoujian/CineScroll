@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./extraction-adapter": "./src/extraction-adapter.ts",
-    "./postgres-repository": "./src/postgres-repository.ts"
+    "./postgres-repository": "./src/postgres-repository.ts",
+    "./generation-policy": "./src/generation-policy.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

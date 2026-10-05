@@ -1,7 +1,7 @@
 import type { Actor } from "@novel-adaptation/identity";
 import type { ProjectImportRepository } from "@novel-adaptation/project-import";
 import { ModelTaskError, TaskExecutionError, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
-import { StoryKnowledgeError, StoryKnowledgeSourceChangedError, type StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
+import { StoryKnowledgeError, StoryKnowledgeSourceChangedError, StoryKnowledgeGenerationRestrictedError, type StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 import { StoryKnowledgeExtractionRunner, StoryKnowledgeModelError, type StoryKnowledgeGenerationRequest } from "@novel-adaptation/story-knowledge/extraction-adapter";
 
 type Credentials = { apiKey: string; providerId: string; modelId: string; processingRegion: "mainland" };
@@ -37,6 +37,7 @@ export class StoryKnowledgeTaskExecutor {
           if (!(error instanceof StoryKnowledgeError && error.code === "STAGE_RESULT_NOT_FOUND")) throw error;
         }
         const readSource = async () => {
+          await tasks.assertGenerationAllowed(actor, task.projectId, task.chapterId, task.input);
           if (!await projects.findProjectAccess(actor, task.projectId)) throw new ModelTaskError("TASK_NOT_FOUND");
           const chapter = await projects.findChapter(actor, task.projectId, task.chapterId);
           if (chapter?.activeSourceVersionId !== task.input.sourceVersionId) throw new TaskExecutionError("UPSTREAM_CHANGED");
@@ -63,6 +64,7 @@ export class StoryKnowledgeTaskExecutor {
       } catch (error) {
         if (error instanceof StoryKnowledgeModelError && error.code === "INVALID_RESPONSE") throw new TaskExecutionError("INVALID_RESPONSE");
         if (error instanceof StoryKnowledgeSourceChangedError) throw new TaskExecutionError("UPSTREAM_CHANGED");
+        if (error instanceof StoryKnowledgeGenerationRestrictedError || error instanceof ModelTaskError && error.code === "POLICY_RESTRICTED") throw new TaskExecutionError("POLICY_RESTRICTED");
         if (error instanceof StoryKnowledgeError && error.code === "VERSION_CONFLICT") throw new TaskExecutionError("CANDIDATE_EXISTS");
         throw error;
       }

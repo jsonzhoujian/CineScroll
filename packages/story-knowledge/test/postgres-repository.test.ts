@@ -8,6 +8,7 @@ import { Pool, type PoolClient } from "pg";
 import type { StoryBible, StoryKnowledgeVersion } from "../src/index.ts";
 import { StoryKnowledgeSourceChangedError } from "../src/index.ts";
 import { PostgresStoryKnowledgeRepository } from "../src/postgres-repository.ts";
+import { PostgresGenerationPolicyReader } from "../src/generation-policy.ts";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integrationTest = databaseUrl ? test : test.skip;
@@ -21,6 +22,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       "../../project-import/migrations/0001_project_import.sql",
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
+      "../migrations/0003_generation_policy.sql",
     ]) {
       await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -28,6 +30,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
     await adminPool.query("drop role if exists novel_story_test");
     await adminPool.query("create role novel_story_test login password 'test-only-password' in role novel_app");
     await seedProject(adminPool);
+    await seedPolicy(adminPool);
     await adminPool.query(
       "insert into project_members (project_id, workspace_id, user_id, role) values ('prj_story',$1,'usr_story_reviewer','reviewer')",
       [actor.workspaceId],
@@ -38,6 +41,25 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
     applicationUrl.password = "test-only-password";
     applicationPool = new Pool({ connectionString: applicationUrl.toString(), max: 4 });
     const repository = new PostgresStoryKnowledgeRepository(applicationPool);
+    const policies = new PostgresGenerationPolicyReader(applicationPool);
+    assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), true);
+    assert.equal(await new PostgresGenerationPolicyReader(applicationPool).isAllowed(actor, "prj_story", "chp_story", "srcv_story"), true);
+    assert.equal(await policies.isAllowed({ ...actor, workspaceId: "other" }, "prj_story", "chp_story", "srcv_story"), false);
+    assert.equal(await policies.isAllowed({ ...actor, userId: "outsider" }, "prj_story", "chp_story", "srcv_story"), false);
+    assert.equal(await policies.isAllowed(actor, "prj_story", "chp_guard", "srcv_guard"), false);
+    for (const state of ["pending", "blocked"]) {
+      await adminPool.query("update source_generation_policy set state=$1 where source_version_id='srcv_story'", [state]);
+      assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), false);
+    }
+    await adminPool.query("update source_generation_policy set state='allowed' where source_version_id='srcv_story'");
+    for (const state of ["complaint_suspended", "content_blocked"]) {
+      await adminPool.query("update project_generation_policy set state=$1 where project_id='prj_story'", [state]);
+      assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), false);
+    }
+    await adminPool.query("update project_generation_policy set state='allowed' where project_id='prj_story'");
+    for (const sql of ["update project_generation_policy set state='allowed'", "delete from project_generation_policy", "update source_generation_policy set state='allowed'", "insert into project_generation_policy(workspace_id,project_id,state) values('w','p','allowed')"]) {
+      await assert.rejects(() => withStoryContext(applicationPool!, actor, "candidate", client => client.query(sql)), { code: "42501" });
+    }
     const candidate = version("skv_candidate");
 
     const guardCandidate = { ...version("skv_guard"), chapterId: "chp_guard", sourceVersionId: "srcv_guard" };
@@ -132,16 +154,36 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
       "../../project-import/migrations/0001_project_import.sql",
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
+      "../migrations/0003_generation_policy.sql",
     ]) await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await adminPool.query("truncate table projects cascade");
     await adminPool.query("drop role if exists novel_story_test");
     await adminPool.query("create role novel_story_test login password 'test-only-password' in role novel_app");
     await seedProject(adminPool);
+    await seedPolicy(adminPool);
     const applicationUrl = new URL(databaseUrl!);
     applicationUrl.username = "novel_story_test";
     applicationUrl.password = "test-only-password";
     applicationPool = new Pool({ connectionString: applicationUrl.toString(), max: 4 });
     const repository = new PostgresStoryKnowledgeRepository(applicationPool);
+    const restriction = await adminPool.connect();
+    try {
+      await restriction.query("begin");
+      await restriction.query("update project_generation_policy set state='complaint_suspended' where project_id='prj_story'");
+      const rejected = assert.rejects(repository.saveCandidate(actor, version("skv_restricted"), null, true), { code: "FORBIDDEN" });
+      let waiting = false;
+      for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+        await restriction.query("select pg_stat_clear_snapshot()");
+        const activity = await restriction.query("select 1 from pg_stat_activity where usename='novel_story_test' and wait_event_type='Lock' and query like '%generation_allowed_locked%'");
+        waiting = activity.rowCount === 1;
+        if (!waiting) await setTimeout(10);
+      }
+      await restriction.query("commit");
+      await rejected;
+      assert.equal(waiting, true, "候选必须等待未提交的投诉限制");
+      assert.equal(await repository.findActive(actor, "prj_story", "chp_story"), null);
+      await restriction.query("update project_generation_policy set state='allowed' where project_id='prj_story'");
+    } finally { await restriction.query("rollback"); restriction.release(); }
     // Hold a reimport uncommitted while a candidate write is started: the writer must
     // wait, then compare the committed current source rather than its old snapshot.
     const reimport = await adminPool.connect();
@@ -168,6 +210,8 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
       assert.equal(waiting, true, "候选写入必须等待未提交的原文变更");
       assert.equal(await repository.findActive(actor, "prj_story", "chp_story"), null);
       const current = { ...version("skv_current"), sourceVersionId: "srcv_new" };
+      await assert.rejects(() => repository.saveCandidate(actor, current, null, true), { code: "FORBIDDEN" });
+      await reimport.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,'prj_story','chp_story','srcv_new','allowed')", [actor.workspaceId]);
       await repository.saveCandidate(actor, current, null, true);
       assert.equal((await repository.findActive(actor, "prj_story", "chp_story"))?.id, "skv_current");
       // Restore fixture head via a separate chapter for the remaining CAS cases.
@@ -207,6 +251,11 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
     await adminPool.end();
   }
 });
+
+async function seedPolicy(pool: Pool) {
+  await pool.query("insert into project_generation_policy(workspace_id,project_id,state) values($1,'prj_story','allowed')", [actor.workspaceId]);
+  await pool.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,'prj_story','chp_story','srcv_story','allowed')", [actor.workspaceId]);
+}
 
 async function seedProject(pool: Pool): Promise<void> {
   await pool.query(

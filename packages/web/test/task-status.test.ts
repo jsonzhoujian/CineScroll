@@ -9,4 +9,7 @@ test("任务展示区分部分成功、全条目失败与待人工，未知执�
   assert.equal(taskPresentation({ state: "paused", reason: "EXECUTION_UNCERTAIN", result: null }).label, "待人工处理");
   assert.equal(taskPresentation({ state: "paused", reason: "VERSION_CONFLICT", result: null }).canResubmit, true);
   assert.equal(taskPresentation({ state: "paused", reason: "UPSTREAM_CHANGED", result: null }).canResubmit, false);
+  const restricted = taskPresentation({ state: "paused", reason: "POLICY_RESTRICTED", result: null });
+  assert.equal(restricted.canResubmit, false);
+  assert.match(restricted.note, /合规或版权许可/);
 });

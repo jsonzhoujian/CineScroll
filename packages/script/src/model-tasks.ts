@@ -5,20 +5,20 @@ import { ModelSettingsError, type TaskModelSnapshot, type WorkspaceModelSettings
 export type TaskInput = { stage: "story_knowledge" | "script"; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
-export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN";
+export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
 export type TaskResult = { candidateVersionId: string; extractionStatus: "succeeded" | "partially_succeeded" | "failed" };
 export type TaskPage = { tasks: ModelTask[]; nextCursor: string | null };
 export type TaskPageRequest = { limit: number; cursor: string | null };
 export type TaskScanMode = "run" | "recover";
 /** Controlled execution outcomes only; never include provider messages or raw responses. */
 export class TaskExecutionError extends Error {
-  readonly code: "UPSTREAM_CHANGED" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS";
+  readonly code: "UPSTREAM_CHANGED" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "POLICY_RESTRICTED";
   constructor(code: TaskExecutionError["code"]) { super(code); this.code = code; }
 }
 export type ModelTask = { id: string; workspaceId: string; createdBy: string; projectId: string; chapterId: string;
   parentTaskId: string | null; input: TaskInput; model: TaskModelSnapshot; state: TaskState; revision: number; reason: TaskReason | null; result: TaskResult | null; leaseExpiresAt: string | null };
 export class ModelTaskError extends Error {
-  readonly code: "TASK_NOT_FOUND" | "STATE_CONFLICT" | "UPSTREAM_CHANGED" | "INVALID_CONTEXT" | "STORAGE_UNAVAILABLE";
+  readonly code: "TASK_NOT_FOUND" | "STATE_CONFLICT" | "UPSTREAM_CHANGED" | "INVALID_CONTEXT" | "STORAGE_UNAVAILABLE" | "POLICY_RESTRICTED";
   constructor(code: ModelTaskError["code"]) { super(code); this.code = code; }
 }
 export interface ModelTaskRepository {
@@ -32,7 +32,7 @@ export interface ModelTaskRepository {
 }
 export function validateTaskStatus(state: TaskState, reason: TaskReason | null): void {
   if (!(reason === null && ["queued", "running", "succeeded"].includes(state)
-    || state === "paused" && reason !== null && ["VERSION_CONFLICT", "FORBIDDEN", "NOT_READY", "UPSTREAM_CHANGED", "EXECUTION_UNCERTAIN"].includes(reason)
+    || state === "paused" && reason !== null && ["VERSION_CONFLICT", "FORBIDDEN", "NOT_READY", "UPSTREAM_CHANGED", "EXECUTION_UNCERTAIN", "POLICY_RESTRICTED"].includes(reason)
     || state === "failed" && reason !== null && ["PROVIDER_UNAVAILABLE", "INVALID_RESPONSE", "CANDIDATE_EXISTS"].includes(reason))) throw new ModelTaskError("STATE_CONFLICT");
 }
 export function validateTaskResult(state: TaskState, result: TaskResult | null): void {
@@ -45,10 +45,18 @@ export interface ModelTaskContextReader {
   /** Must verify project membership, stage prerequisites and confirmed upstream versions. */
   read(actor: Actor, projectId: string, chapterId: string): Promise<TaskInput | null>;
 }
-type ModelTaskOptions = { settings: WorkspaceModelSettings; repository: ModelTaskRepository; contextReader: ModelTaskContextReader; idGenerator(): string };
+export interface ModelTaskGenerationPolicy { isAllowed(actor: Actor, projectId: string, chapterId: string, sourceVersionId: string): Promise<boolean> }
+type ModelTaskOptions = { settings: WorkspaceModelSettings; repository: ModelTaskRepository; contextReader: ModelTaskContextReader; generationPolicy?: ModelTaskGenerationPolicy; idGenerator(): string };
 export class ModelTaskService {
   readonly #options: ModelTaskOptions;
   constructor(options: ModelTaskOptions) { this.#options = options; }
+  async assertGenerationAllowed(actor: Actor, projectId: string, chapterId: string, input: TaskInput) {
+    if (input.stage !== "story_knowledge") return;
+    let allowed = false;
+    try { allowed = await this.#options.generationPolicy?.isAllowed(actor, projectId, chapterId, input.sourceVersionId) === true; }
+    catch { throw new ModelTaskError("STORAGE_UNAVAILABLE"); }
+    if (!allowed) throw new ModelTaskError("POLICY_RESTRICTED");
+  }
   async listStoryKnowledge(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest = { limit: 20, cursor: null }) {
     validateTaskPage(page);
     await this.#context(actor, projectId, chapterId);
@@ -75,6 +83,7 @@ export class ModelTaskService {
   }
   async submit(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string }) {
     const context = await this.#context(actor, input.projectId, input.chapterId);
+    await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
     const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
     return this.#options.repository.insert({ id: this.#options.idGenerator(), workspaceId: actor.workspaceId, createdBy: actor.userId,
       projectId: input.projectId, chapterId: input.chapterId, parentTaskId: null, input: context, model, state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
@@ -84,6 +93,7 @@ export class ModelTaskService {
     const current = await this.#context(actor, old.projectId, old.chapterId);
     if (!sameInput(old.input, current)) throw new ModelTaskError("UPSTREAM_CHANGED");
     if (old.state !== "paused" || old.reason === "EXECUTION_UNCERTAIN") throw new ModelTaskError("STATE_CONFLICT");
+    await this.assertGenerationAllowed(actor, old.projectId, old.chapterId, current);
     const model = await this.#options.settings.selectForTask(actor, selection.configurationVersionId, selection.modelId);
     return this.#options.repository.insert({ ...old, id: this.#options.idGenerator(), createdBy: actor.userId,
       parentTaskId: old.id, model, state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
@@ -105,6 +115,7 @@ export class ModelTaskService {
     let executionError: TaskExecutionError | null = null;
     try {
       const context = await this.#context(actor, task.projectId, task.chapterId);
+      await this.assertGenerationAllowed(actor, task.projectId, task.chapterId, task.input);
       if (!sameInput(task.input, context)) { state = "paused"; reason = "UPSTREAM_CHANGED"; }
       else result = await this.#options.settings.executeForTask(actor, task.model, async credentials => {
         try { return await invoke({ ...credentials, jobId: task.id, input: structuredClone(task.input) }) ?? null; }
@@ -115,7 +126,9 @@ export class ModelTaskService {
       result = null;
       if (executionError) {
         reason = (executionError as TaskExecutionError).code;
-        state = reason === "UPSTREAM_CHANGED" ? "paused" : "failed";
+        state = ["UPSTREAM_CHANGED", "POLICY_RESTRICTED"].includes(reason) ? "paused" : "failed";
+      } else if (error instanceof ModelTaskError && error.code === "POLICY_RESTRICTED") {
+        state = "paused"; reason = "POLICY_RESTRICTED";
       } else if (error instanceof ModelSettingsError && ["VERSION_CONFLICT", "FORBIDDEN", "NOT_READY"].includes(error.code)) {
         state = "paused"; reason = error.code as TaskReason;
       } else { state = "failed"; reason = "PROVIDER_UNAVAILABLE"; }

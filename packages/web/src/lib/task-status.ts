@@ -6,6 +6,7 @@ export function taskPresentation(task: Pick<StoryKnowledgeTask, "state" | "reaso
   if (task.state === "failed") { label = "任务失败"; note = task.reason === "INVALID_RESPONSE" ? "模型响应未通过校验。" : task.reason === "CANDIDATE_EXISTS" ? "已有候选，请先审核现有结果。" : "服务调用失败；不会自动重复调用。"; }
   if (task.state === "paused") { label = "已暂停"; note = "请选择当前已测试的模型后，明确重新提交。";
     if (task.reason === "UPSTREAM_CHANGED") note = "原文或参数已变化，请重新发起生成，不能沿用旧任务。";
+    if (task.reason === "POLICY_RESTRICTED") note = "当前合规或版权许可缺失/受限，请联系负责人核对；不会自动重试。";
     if (task.reason === "EXECUTION_UNCERTAIN") { label = "待人工处理"; note = "无法确认调用结果，请联系负责人对账。禁止重试以避免重复收费。"; }
   }
   if (task.state === "succeeded") {
