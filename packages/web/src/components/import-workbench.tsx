@@ -183,7 +183,7 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
-        {step !== "login" && <TaskStatusPanel api={api} />}
+        {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>

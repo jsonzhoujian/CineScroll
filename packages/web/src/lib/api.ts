@@ -96,6 +96,10 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 
 export class ApiClient {
+  listStoryKnowledgeTasks(projectId: string, chapterId: string, cursor: string | null = null) {
+    const query = new URLSearchParams({ limit: "20" }); if (cursor !== null) query.set("cursor", cursor);
+    return this.request<{ tasks: StoryKnowledgeTask[]; nextCursor: string | null }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge-tasks?${query}`, { method: "GET", cache: "no-store" }, "session");
+  }
   getStoryKnowledgeTask(id: string) { return this.request<StoryKnowledgeTask>(`/story-knowledge-tasks/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }, "session"); }
   resubmitStoryKnowledgeTask(id: string, input: { configurationVersionId: string; modelId: string }) {
     return this.request<StoryKnowledgeTask>(`/story-knowledge-tasks/${encodeURIComponent(id)}/resubmit`, { method: "POST", body: JSON.stringify(input) }, "session");

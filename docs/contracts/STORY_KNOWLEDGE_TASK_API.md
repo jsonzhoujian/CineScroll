@@ -3,6 +3,7 @@
 `StoryKnowledgeTaskApiModule` 使用会话认证，需注入使用 `StoryKnowledgeTaskContext` 的任务服务。尚未挂载生产；没有自动 Worker、真实 AI、计费或任务列表 UI。
 
 - POST `/projects/:projectId/chapters/:chapterId/story-knowledge-tasks`：创建 queued 任务，201。
+- GET 同路径：仅本章节故事知识任务分页列表，200；详见 CHAPTER_TASK_LIST.md。
 - GET `/story-knowledge-tasks/:id`：读取已授权故事知识任务，200。
 - POST `/story-knowledge-tasks/:id/resubmit`：暂停任务创建唯一后继，201；重复或输入变化为409。
 

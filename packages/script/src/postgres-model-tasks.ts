@@ -1,9 +1,20 @@
 import type { ModelSettingsPool, ModelSettingsClient } from "./postgres-model-settings.ts";
-import { ModelTaskError, validateTaskStatus, validateTaskResult, type TaskResult, type ModelTask, type ModelTaskRepository, type TaskState, type TaskReason } from "./model-tasks.ts";
+import { ModelTaskError, validateTaskPage, validateTaskStatus, validateTaskResult, type TaskPageRequest, type TaskResult, type ModelTask, type ModelTaskRepository, type TaskState, type TaskReason } from "./model-tasks.ts";
 
 export class PostgresModelTaskRepository implements ModelTaskRepository {
   readonly #pool: ModelSettingsPool;
   constructor(pool: ModelSettingsPool) { this.#pool = pool; }
+  listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
+    validateTaskPage(page);
+    return this.#transaction(workspaceId, async client => {
+      const rows = (await client.query(`select payload,state,revision,reason,result_json,lease_expires_at from model_tasks
+        where workspace_id=$1 and payload->>'projectId'=$2 and payload->>'chapterId'=$3
+          and payload->'input'->>'stage'='story_knowledge' and ($4::text is null or id collate "C">$4::text collate "C")
+        order by id collate "C" limit $5`, [workspaceId,projectId,chapterId,page.cursor,page.limit+1])).rows;
+      const tasks = rows.slice(0, page.limit).map(decode);
+      return { tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null };
+    });
+  }
   find(workspaceId: string, id: string) {
     return this.#transaction(workspaceId, async client => {
       const row = (await client.query("select payload,state,revision,reason,result_json,lease_expires_at from model_tasks where workspace_id=$1 and id=$2", [workspaceId,id])).rows[0];

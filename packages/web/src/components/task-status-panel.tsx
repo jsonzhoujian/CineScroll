@@ -2,8 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryKnowledgeTask, type StoryKnowledgeVersion } from "../lib/api";
 import { taskPresentation } from "../lib/task-status";
+import { ChapterTaskList, type TaskChapterContext } from "./chapter-task-list";
 
-export function TaskStatusPanel({ api }: { api: ApiClient }) {
+export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiClient; context?: TaskChapterContext; activeProjectId?: string }) {
+  const [listContext, setListContext] = useState<TaskChapterContext | null>(null);
   const [input, setInput] = useState(""), [id, setId] = useState("");
   const [task, setTask] = useState<StoryKnowledgeTask | null>(null);
   const [candidate, setCandidate] = useState<StoryKnowledgeVersion | null>(null);
@@ -11,8 +13,22 @@ export function TaskStatusPanel({ api }: { api: ApiClient }) {
   const [notice, setNotice] = useState("输入任务编号，读取后台状态。"), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const epoch = useRef(0);
   useEffect(() => {
-    const saved = new URL(window.location.href).searchParams.get("task") ?? "";
+    const url = new URL(window.location.href);
+    const project = url.searchParams.get("taskProject") ?? "", chapter = url.searchParams.get("taskChapter") ?? "";
+    let saved = url.searchParams.get("task") ?? "";
+    if (context) {
+      setListContext(context);
+      if (project !== context.projectId || chapter !== context.chapterId) { saved = ""; url.searchParams.delete("task"); }
+      url.searchParams.set("taskProject", context.projectId); url.searchParams.set("taskChapter", context.chapterId);
+      window.history.replaceState(null, "", url);
+    } else if (activeProjectId) {
+      saved = "";
+      for (const parameter of ["task", "taskProject", "taskChapter"]) url.searchParams.delete(parameter);
+      window.history.replaceState(null, "", url);
+    } else if (validId(project) && validId(chapter)) setListContext({ projectId: project, chapterId: chapter });
     if (validId(saved)) { setInput(saved); setId(saved); }
+    // ImportWorkbench remounts this panel when the selected project/chapter changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   function selectTask(next: string) {
     if (!validId(next)) { setNotice("任务编号须为1～256个字符，不能包含换行。"); return; }
@@ -70,6 +86,7 @@ export function TaskStatusPanel({ api }: { api: ApiClient }) {
   const presentation = task ? taskPresentation(task) : null;
   return <section className="task-panel" aria-label="故事知识任务">
     <header><div><span className="eyebrow">后台任务 · 单任务查看</span><h2>故事知识任务</h2></div><span className="task-stamp">待审之卷</span></header>
+    {listContext && <ChapterTaskList key={`${listContext.projectId}:${listContext.chapterId}`} api={api} context={listContext} onSelect={selectTask} />}
     <form onSubmit={event => { event.preventDefault(); selectTask(input.trim()); }}>
       <label>任务编号<input value={input} maxLength={256} onChange={event => setInput(event.target.value)} placeholder="输入已有任务编号" /></label>
       <button className="button secondary" type="submit">读取任务</button>

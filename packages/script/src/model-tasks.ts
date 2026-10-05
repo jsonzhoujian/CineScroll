@@ -1,4 +1,5 @@
 import type { Actor, AspectRatio, NarrativeMode, TargetDurationSeconds } from "./index.ts";
+import { Buffer } from "node:buffer";
 import { ModelSettingsError, type TaskModelSnapshot, type WorkspaceModelSettings } from "./model-settings.ts";
 
 export type TaskInput = { stage: "story_knowledge" | "script"; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
@@ -6,6 +7,8 @@ export type TaskInput = { stage: "story_knowledge" | "script"; sourceVersionId: 
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN";
 export type TaskResult = { candidateVersionId: string; extractionStatus: "succeeded" | "partially_succeeded" | "failed" };
+export type TaskPage = { tasks: ModelTask[]; nextCursor: string | null };
+export type TaskPageRequest = { limit: number; cursor: string | null };
 /** Controlled execution outcomes only; never include provider messages or raw responses. */
 export class TaskExecutionError extends Error {
   readonly code: "UPSTREAM_CHANGED" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS";
@@ -18,6 +21,7 @@ export class ModelTaskError extends Error {
   constructor(code: ModelTaskError["code"]) { super(code); this.code = code; }
 }
 export interface ModelTaskRepository {
+  listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   find(workspaceId: string, id: string): Promise<ModelTask | null>;
   insert(task: ModelTask): Promise<ModelTask>;
   transition(workspaceId: string, id: string, expectedRevision: number, state: TaskState, reason: TaskReason | null, result?: TaskResult | null): Promise<ModelTask>;
@@ -42,6 +46,11 @@ type ModelTaskOptions = { settings: WorkspaceModelSettings; repository: ModelTas
 export class ModelTaskService {
   readonly #options: ModelTaskOptions;
   constructor(options: ModelTaskOptions) { this.#options = options; }
+  async listStoryKnowledge(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest = { limit: 20, cursor: null }) {
+    validateTaskPage(page);
+    await this.#context(actor, projectId, chapterId);
+    return this.#options.repository.listStoryKnowledge(actor.workspaceId, projectId, chapterId, page);
+  }
   async #context(actor: Actor, projectId: string, chapterId: string) {
     const input = await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
@@ -123,6 +132,14 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   readonly #tasks = new Map<string, ModelTask>();
   readonly #clock: () => number;
   constructor(clock: () => number = Date.now) { this.#clock = clock; }
+  async listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
+    validateTaskPage(page);
+    const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
+      && task.chapterId === chapterId && task.input.stage === "story_knowledge" && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0))
+      .sort((a, b) => compareTaskIds(a.id, b.id)).slice(0, page.limit + 1);
+    const tasks = rows.slice(0, page.limit);
+    return structuredClone({ tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null });
+  }
   #key(workspaceId: string, id: string) { return JSON.stringify([workspaceId, id]); }
   async find(workspaceId: string, id: string) { return structuredClone(this.#tasks.get(this.#key(workspaceId, id)) ?? null); }
   async insert(task: ModelTask) {
@@ -149,3 +166,8 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
     this.#tasks.set(this.#key(workspaceId, id), updated); return structuredClone(updated);
   }
 }
+export function validateTaskPage(page: TaskPageRequest) {
+  if (!Number.isInteger(page.limit) || page.limit < 1 || page.limit > 50 || !(page.cursor === null
+    || typeof page.cursor === "string" && !!page.cursor.trim() && page.cursor.length <= 256 && !/[\r\n]/.test(page.cursor))) throw new ModelTaskError("INVALID_CONTEXT");
+}
+function compareTaskIds(a: string, b: string) { return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8")); }

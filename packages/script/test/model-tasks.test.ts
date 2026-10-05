@@ -43,6 +43,18 @@ async function exercise(repository: ModelTaskRepository) {
   context = { ...context, sourceVersionId: "source2" };
   await assert.rejects(() => service.resubmit(actor, original.id, { configurationVersionId: newTested.id, modelId: "m" }), { code: "UPSTREAM_CHANGED" });
   await assert.rejects(() => service.get({ ...actor, workspaceId: "other" }, original.id), { code: "TASK_NOT_FOUND" });
+  for (const [id, chapterId] of [["page-a", "list-chapter"], ["page-b", "list-chapter"], ["page-other", "other-chapter"]]) {
+    await repository.insert({ ...original, id: id!, chapterId: chapterId!, input: { ...original.input, stage: "story_knowledge", upstreamConfirmedVersionIds: [] } });
+  }
+  const firstPage = await repository.listStoryKnowledge(actor.workspaceId, "p", "list-chapter", { limit: 1, cursor: null });
+  assert.deepEqual(firstPage.tasks.map(task => task.id), ["page-a"]); assert.equal(firstPage.nextCursor, "page-a");
+  const secondPage = await repository.listStoryKnowledge(actor.workspaceId, "p", "list-chapter", { limit: 1, cursor: firstPage.nextCursor });
+  assert.deepEqual(secondPage.tasks.map(task => task.id), ["page-b"]); assert.equal(secondPage.nextCursor, null);
+  assert.equal((await repository.listStoryKnowledge("other", "p", "list-chapter", { limit: 20, cursor: null })).tasks.length, 0);
+  for (const id of ["\u{10000}", "\uE000"]) await repository.insert({ ...original, id, chapterId: "unicode-list", input: { ...original.input, stage: "story_knowledge", upstreamConfirmedVersionIds: [] } });
+  const unicodePage = await repository.listStoryKnowledge(actor.workspaceId, "p", "unicode-list", { limit: 1, cursor: null });
+  assert.equal(unicodePage.tasks[0]?.id, "\uE000");
+  assert.equal((await repository.listStoryKnowledge(actor.workspaceId, "p", "unicode-list", { limit: 1, cursor: unicodePage.nextCursor })).tasks[0]?.id, "\u{10000}");
   return original;
 }
 
@@ -79,6 +91,7 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
       await admin.query(await readFile(new URL("../migrations/0004_model_task_results.sql", import.meta.url), "utf8"));
     }
     await admin.query(await readFile(new URL("../migrations/0005_model_task_recovery.sql", import.meta.url), "utf8"));
+    await admin.query(await readFile(new URL("../migrations/0006_chapter_task_list.sql", import.meta.url), "utf8"));
     const original = await exercise(new PostgresModelTaskRepository(app));
     const { state, revision, reason, ...payload } = original;
     const constraintId = randomUUID();

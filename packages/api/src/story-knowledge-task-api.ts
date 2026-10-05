@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Catch, Controller, Get, Header, Inject, Module, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Catch, Controller, Get, Header, Inject, Module, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { ArgumentsHost, DynamicModule, ExceptionFilter } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import type { Actor, SessionVerifier } from "@novel-adaptation/identity";
@@ -26,6 +26,14 @@ async function safely<T>(action: () => Promise<T>): Promise<T> {
 class StoryKnowledgeTaskController {
   private readonly tasks: ModelTaskService;
   constructor(tasks: ModelTaskService) { this.tasks = tasks; }
+  async list(request: SessionRequest, projectId: string, chapterId: string, query: Record<string, unknown>) {
+    if (Object.keys(query).some(key => !["limit", "cursor"].includes(key))) throw new BadRequestException("分页参数无效");
+    const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
+    if (limit < 1 || limit > 50 || !Number.isInteger(limit)) throw new BadRequestException("分页参数无效");
+    const cursor = query.cursor === undefined ? null : identifier(query.cursor);
+    const project = identifier(projectId), chapter = identifier(chapterId);
+    return safely(() => this.tasks.listStoryKnowledge(request.actor, project, chapter, { limit, cursor }));
+  }
   async submit(request: SessionRequest, projectId: string, chapterId: string, body: unknown) {
     const chosen = selection(body);
     const input = { projectId: identifier(projectId), chapterId: identifier(chapterId), ...chosen };
@@ -57,15 +65,16 @@ Catch(ModelTaskError, ModelSettingsError)(TaskFilter);
 Controller()(StoryKnowledgeTaskController);
 UseGuards(SessionGuard)(StoryKnowledgeTaskController);
 Inject(TASKS)(StoryKnowledgeTaskController, undefined, 0);
-for (const [method, decorator] of [["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")]] as const) {
+for (const [method, decorator] of [["list", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(StoryKnowledgeTaskController.prototype, method)!;
   decorator(StoryKnowledgeTaskController.prototype, method, descriptor);
   Header("Cache-Control", "no-store")(StoryKnowledgeTaskController.prototype, method, descriptor);
   Req()(StoryKnowledgeTaskController.prototype, method, 0);
-  if (method === "submit") {
+  if (method === "submit" || method === "list") {
     Param("projectId")(StoryKnowledgeTaskController.prototype, method, 1);
     Param("chapterId")(StoryKnowledgeTaskController.prototype, method, 2);
-    Body()(StoryKnowledgeTaskController.prototype, method, 3);
+    if (method === "submit") Body()(StoryKnowledgeTaskController.prototype, method, 3);
+    else Query()(StoryKnowledgeTaskController.prototype, method, 3);
   } else {
     Param("id")(StoryKnowledgeTaskController.prototype, method, 1);
     if (method === "resubmit") Body()(StoryKnowledgeTaskController.prototype, method, 2);

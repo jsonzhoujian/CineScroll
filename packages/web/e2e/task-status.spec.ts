@@ -5,7 +5,7 @@ async function login(page: Page) {
   await page.getByLabel("验证码").fill("123456");
   await page.getByRole("button", { name: "验证并进入" }).click();
 }
-async function setup(page: Page, reason: string | null = null) {
+async function setup(page: Page, reason: string | null = null, chapterContext = false) {
   let posts = 0;
   await page.route(`${origin}/**`, async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
@@ -17,6 +17,10 @@ async function setup(page: Page, reason: string | null = null) {
     else if (path === "/auth/phone/verify") body = { sessionToken: "session", actor: { userId: "u", workspaceId: "w" } };
     else {
       expect(request.headers().authorization).toBe("Bearer session");
+      if (path === "/projects/p/chapters/c/story-knowledge-tasks") {
+        await route.fulfill({ headers, contentType: "application/json", body: JSON.stringify({ tasks: [{ id: "task", projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: "succeeded", reason: null, result: { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } }], nextCursor: null }) });
+        return;
+      }
       if (path.endsWith("/resubmit")) { posts++; expect(request.postDataJSON()).toEqual({ configurationVersionId: "config", modelId: "model" }); }
       if (path.includes("/story-knowledge-tasks/")) body = { id: path.endsWith("/resubmit") ? "new-task" : path.split("/").at(-1), projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: path.endsWith("/resubmit") || !reason ? "succeeded" : "paused", reason: path.endsWith("/resubmit") ? null : reason, result: reason && !path.endsWith("/resubmit") ? null : { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } };
       else if (path === "/workspace/model-settings") body = { configuration: { id: "config", tested: true, providerId: "deepseek", processingRegion: "mainland", availableModelIds: ["model"] } };
@@ -25,7 +29,7 @@ async function setup(page: Page, reason: string | null = null) {
     }
     await route.fulfill({ headers, contentType: "application/json", body: JSON.stringify(body) });
   });
-  await page.goto("/?task=task"); await login(page);
+  await page.goto(chapterContext ? "/?taskProject=p&taskChapter=c" : "/?task=task"); await login(page);
   return () => posts;
 }
 test("部分成功跳转准确候选，刷新后重新登录恢复任务", async ({ page }) => {
@@ -37,6 +41,39 @@ test("部分成功跳转准确候选，刷新后重新登录恢复任务", async
   await page.screenshot({ path: "/private/tmp/task-status-panel.png" });
   await page.reload(); await login(page);
   await expect(panel.getByText("部分成功", { exact: true })).toBeVisible();
+});
+test("恢复章节上下文后通过列表选择任务，刷新后列表仍可找回", async ({ page }) => {
+  await setup(page, null, true);
+  const list = page.getByRole("region", { name: "章节任务列表" });
+  await list.getByRole("button", { name: "查看任务 task" }).click();
+  await expect(page.getByRole("region", { name: "故事知识任务" }).getByRole("article").getByText("部分成功", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "/private/tmp/chapter-task-list.png" });
+  await page.reload(); await login(page);
+  await expect(list.getByRole("button", { name: "查看任务 task" })).toBeVisible();
+});
+test("恢复旧章节后进入新项目但未选章时清除旧列表与任务", async ({ page }) => {
+  await setup(page, null, true);
+  await expect(page.getByRole("region", { name: "章节任务列表" }).getByRole("button", { name: "查看任务 task" })).toBeVisible();
+  await page.route(`${origin}/projects`, route => route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify({ id: "new-project", title: "新作品" }) }));
+  await page.getByLabel("项目名称").fill("新作品");
+  await page.getByRole("checkbox", { name: /拥有该作品或合法改编权/ }).check();
+  await page.getByRole("button", { name: /创建项目/ }).click();
+  await expect(page.getByRole("region", { name: "章节任务列表" })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/taskProject=p/);
+});
+test("章节列表按游标加载下一页且不重复已有任务", async ({ page }) => {
+  await setup(page, null, true);
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge-tasks?*`, async route => {
+    const cursor = new URL(route.request().url()).searchParams.get("cursor");
+    const row = (id: string) => ({ id, projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: "queued", reason: null, result: null });
+    await route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify({ tasks: cursor ? [row("task"), row("task-b")] : [row("task")], nextCursor: cursor ? null : "task" }) });
+  });
+  const list = page.getByRole("region", { name: "章节任务列表" });
+  await list.getByRole("button", { name: "刷新列表" }).click();
+  await list.getByRole("button", { name: "加载更多任务" }).click();
+  await expect(list.getByRole("button", { name: "查看任务 task", exact: true })).toHaveCount(1);
+  await expect(list.getByRole("button", { name: "查看任务 task-b", exact: true })).toBeVisible();
+  await expect(list.getByRole("button", { name: "加载更多任务" })).toHaveCount(0);
 });
 test("未知执行禁止重提，普通暂停由用户明确选择模型重提", async ({ page }) => {
   const posts = await setup(page, "EXECUTION_UNCERTAIN");

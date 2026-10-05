@@ -43,12 +43,24 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     assert.equal(created.body.input.stage, "story_knowledge"); assert.equal(created.body.input.sourceVersionId, "source1");
     assert.deepEqual(created.body.input.upstreamConfirmedVersionIds, []); assert.equal(created.body.state, "queued");
     assert.equal(created.headers["cache-control"], "no-store"); assert.ok(!JSON.stringify(created.body).includes("fixture-key"));
+    await http.get(path).expect(401);
+    await http.get(path).set("authorization", `Bearer ${await sessions.issue("outsider", "w")}`).expect(404);
+    await http.get(`${path}?limit=51`).set("authorization", bearer).expect(400);
+    await http.get(`${path}?workspaceId=forged`).set("authorization", bearer).expect(400);
+    const listing = await http.get(`${path}?limit=1`).set("authorization", bearer).expect(200);
+    assert.deepEqual(listing.body.tasks.map((task: { id: string }) => task.id), [created.body.id]);
+    assert.equal(listing.headers["cache-control"], "no-store");
+    assert.ok(!JSON.stringify(listing.body).includes("fixture-key"));
     await http.get(`/story-knowledge-tasks/${created.body.id}`).set("authorization", bearer).expect(200);
     const changed = await settings.configure(owner, { expectedVersionId: tested.id, providerId: "deepseek", apiKey: "new-fixture" });
     const next = await settings.testConnection(owner, changed.id);
     assert.equal((await tasks.run(owner, created.body.id, async () => { throw new Error("must not execute"); })).state, "paused");
     const child = await http.post(`/story-knowledge-tasks/${created.body.id}/resubmit`).set("authorization", bearer).send({ configurationVersionId: next.id, modelId: "m" }).expect(201);
     assert.deepEqual(child.body.input, created.body.input); assert.equal(child.body.parentTaskId, created.body.id);
+    const paged = await http.get(`${path}?limit=1`).set("authorization", bearer).expect(200);
+    assert.equal(paged.body.nextCursor, created.body.id);
+    const more = await http.get(`${path}?limit=1&cursor=${paged.body.nextCursor}`).set("authorization", bearer).expect(200);
+    assert.deepEqual(more.body.tasks.map((task: { id: string }) => task.id), [child.body.id]); assert.equal(more.body.nextCursor, null);
     await http.post(`/story-knowledge-tasks/${created.body.id}/resubmit`).set("authorization", bearer).send({ configurationVersionId: next.id, modelId: "m" }).expect(409);
     await http.get(`/story-knowledge-tasks/${created.body.id}`).set("authorization", `Bearer ${await sessions.issue("outsider", "w")}`).expect(404);
     const knowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
