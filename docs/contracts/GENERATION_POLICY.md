@@ -1,5 +1,7 @@
 # 当前合规与投诉生成门禁
 
+后续事务内许可变更审计已补，见 GENERATION_POLICY_AUDIT.md；下文早期未审计说明为历史切片，管理员UI/工单及真实审核服务仍未接入。
+
 故事知识生成必须同时具备当前项目许可与固定原文版本许可；导入时通过扫描不自动等于当前许可。
 
 `project_generation_policy` 保存allowed/complaint_suspended/content_blocked；`source_generation_policy` 按项目、章节、原文版本保存allowed/pending/blocked。任一记录缺失、非allowed或读取故障均禁止生成。迁移不回填历史作品为allowed，也不让新导入默认放行。

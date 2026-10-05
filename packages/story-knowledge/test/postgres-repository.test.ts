@@ -23,14 +23,20 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
       "../migrations/0003_generation_policy.sql",
+      "../migrations/0004_generation_policy_audit.sql",
     ]) {
       await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
-    await adminPool.query("truncate table projects cascade");
+    await resetFixture(adminPool);
     await adminPool.query("drop role if exists novel_story_test");
     await adminPool.query("create role novel_story_test login password 'test-only-password' in role novel_app");
+    const auditStart = (await adminPool.query("select coalesce(max(id),0) as id from generation_policy_audit")).rows[0].id;
     await seedProject(adminPool);
     await seedPolicy(adminPool);
+    const audit = await adminPool.query("select target,operation,old_state,new_state,session_actor,effective_actor from generation_policy_audit where project_id='prj_story' and id>$1 order by id", [auditStart]);
+    assert.deepEqual(audit.rows.map(row => [row.target,row.operation,row.old_state,row.new_state]), [["project","INSERT",null,"allowed"],["source","INSERT",null,"allowed"]]);
+    const dbActor = (await adminPool.query("select session_user,current_user")).rows[0];
+    assert.equal(audit.rows[0].session_actor, dbActor.session_user); assert.equal(audit.rows[0].effective_actor, dbActor.current_user);
     await adminPool.query(
       "insert into project_members (project_id, workspace_id, user_id, role) values ('prj_story',$1,'usr_story_reviewer','reviewer')",
       [actor.workspaceId],
@@ -57,6 +63,65 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), false);
     }
     await adminPool.query("update project_generation_policy set state='allowed' where project_id='prj_story'");
+    const changes = await adminPool.query("select target,operation,old_state,new_state,occurred_at,transaction_id from generation_policy_audit where id>$1 order by id", [auditStart]);
+    assert.deepEqual(changes.rows.map(row => [row.target,row.operation,row.old_state,row.new_state]), [
+      ["project","INSERT",null,"allowed"], ["source","INSERT",null,"allowed"],
+      ["source","UPDATE","allowed","pending"], ["source","UPDATE","pending","blocked"], ["source","UPDATE","blocked","allowed"],
+      ["project","UPDATE","allowed","complaint_suspended"], ["project","UPDATE","complaint_suspended","content_blocked"], ["project","UPDATE","content_blocked","allowed"],
+    ]);
+    assert.ok(changes.rows.every(row => row.occurred_at instanceof Date && BigInt(row.transaction_id) > 0n));
+    await adminPool.query("update project_generation_policy set state='allowed' where project_id='prj_story'");
+    assert.equal((await adminPool.query("select count(*) from generation_policy_audit where id>$1", [auditStart])).rows[0].count, "8");
+    await adminPool.query("alter table generation_policy_audit add constraint audit_failure_fixture check (new_state is distinct from 'content_blocked') not valid");
+    try {
+      await assert.rejects(() => adminPool.query("update project_generation_policy set state='content_blocked' where project_id='prj_story'"), { code: "23514" });
+      assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), true);
+      assert.equal((await adminPool.query("select count(*) from generation_policy_audit where id>$1", [auditStart])).rows[0].count, "8");
+    } finally { await adminPool.query("alter table generation_policy_audit drop constraint audit_failure_fixture"); }
+    await adminPool.query("delete from source_generation_policy where source_version_id='srcv_story'");
+    const removed = (await adminPool.query("select operation,old_state,new_state from generation_policy_audit where id>$1 order by id desc limit 1", [auditStart])).rows[0];
+    assert.deepEqual(removed, { operation: "DELETE", old_state: "allowed", new_state: null });
+    assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), false);
+    await adminPool.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,'prj_story','chp_story','srcv_story','allowed')", [actor.workspaceId]);
+    for (const sql of ["update generation_policy_audit set new_state='allowed'", "delete from generation_policy_audit", "truncate generation_policy_audit", "truncate project_generation_policy", "truncate source_generation_policy"]) {
+      await assert.rejects(() => adminPool.query(sql), { code: "42501" });
+    }
+    for (const sql of ["insert into generation_policy_audit(workspace_id,project_id,target,operation,new_state,session_actor,effective_actor) values('w','p','project','INSERT','allowed','fake','fake')", "update generation_policy_audit set new_state='allowed'", "delete from generation_policy_audit", "truncate generation_policy_audit"]) {
+      await assert.rejects(() => withStoryContext(applicationPool!, actor, "candidate", client => client.query(sql)), { code: "42501" });
+    }
+    const visible = await withStoryContext(applicationPool, actor, "candidate", client => client.query("select id from generation_policy_audit where id>$1", [auditStart]));
+    assert.equal(visible.rowCount, 10);
+    const hidden = await withStoryContext(applicationPool, { ...actor, workspaceId: "other" }, "candidate", client => client.query("select id from generation_policy_audit"));
+    assert.equal(hidden.rowCount, 0);
+    // Trusted maintenance role only in this disposable database. Its audit write
+    // privileges are explicit; the application never receives this role.
+    await adminPool.query("create role novel_policy_audit_test nologin bypassrls");
+    try {
+      await adminPool.query("grant select,update on project_generation_policy to novel_policy_audit_test");
+      await adminPool.query("grant insert on generation_policy_audit to novel_policy_audit_test");
+      await adminPool.query("grant usage on sequence generation_policy_audit_id_seq to novel_policy_audit_test");
+      const maintenance = await adminPool.connect();
+      try {
+        await maintenance.query("begin");
+        await maintenance.query("set local role novel_policy_audit_test");
+        await maintenance.query("update project_generation_policy set state='complaint_suspended' where project_id='prj_story'");
+        await maintenance.query("commit");
+      } finally { await maintenance.query("rollback"); maintenance.release(); }
+      const identity = (await adminPool.query("select session_actor,effective_actor from generation_policy_audit order by id desc limit 1")).rows[0];
+      assert.equal(identity.session_actor, dbActor.session_user); assert.equal(identity.effective_actor, "novel_policy_audit_test");
+      await adminPool.query("revoke insert on generation_policy_audit from novel_policy_audit_test");
+      const noAudit = await adminPool.connect();
+      try {
+        await noAudit.query("begin"); await noAudit.query("set local role novel_policy_audit_test");
+        await assert.rejects(() => noAudit.query("update project_generation_policy set state='allowed' where project_id='prj_story'"), { code: "42501" });
+      } finally { await noAudit.query("rollback"); noAudit.release(); }
+      assert.equal(await policies.isAllowed(actor, "prj_story", "chp_story", "srcv_story"), false);
+      await adminPool.query("update project_generation_policy set state='allowed' where project_id='prj_story'");
+    } finally {
+      await adminPool.query("revoke all on project_generation_policy,generation_policy_audit from novel_policy_audit_test");
+      await adminPool.query("revoke all on sequence generation_policy_audit_id_seq from novel_policy_audit_test");
+      await adminPool.query("drop role novel_policy_audit_test");
+    }
     for (const sql of ["update project_generation_policy set state='allowed'", "delete from project_generation_policy", "update source_generation_policy set state='allowed'", "insert into project_generation_policy(workspace_id,project_id,state) values('w','p','allowed')"]) {
       await assert.rejects(() => withStoryContext(applicationPool!, actor, "candidate", client => client.query(sql)), { code: "42501" });
     }
@@ -155,8 +220,9 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
       "../migrations/0003_generation_policy.sql",
+      "../migrations/0004_generation_policy_audit.sql",
     ]) await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
-    await adminPool.query("truncate table projects cascade");
+    await resetFixture(adminPool);
     await adminPool.query("drop role if exists novel_story_test");
     await adminPool.query("create role novel_story_test login password 'test-only-password' in role novel_app");
     await seedProject(adminPool);
@@ -255,6 +321,25 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
 async function seedPolicy(pool: Pool) {
   await pool.query("insert into project_generation_policy(workspace_id,project_id,state) values($1,'prj_story','allowed')", [actor.workspaceId]);
   await pool.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,'prj_story','chp_story','srcv_story','allowed')", [actor.workspaceId]);
+}
+
+/** Disposable test DB only. Existing immutable source triggers require TRUNCATE
+ * for fixture reset; remove policies through audited DELETE first, then narrowly
+ * disable only the policy TRUNCATE guards inside a rollback-safe admin transaction. */
+async function resetFixture(pool: Pool) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("delete from source_generation_policy");
+    await client.query("delete from project_generation_policy");
+    await client.query("alter table project_generation_policy disable trigger generation_policy_no_truncate");
+    await client.query("alter table source_generation_policy disable trigger generation_policy_no_truncate");
+    await client.query("truncate table projects cascade");
+    await client.query("alter table project_generation_policy enable trigger generation_policy_no_truncate");
+    await client.query("alter table source_generation_policy enable trigger generation_policy_no_truncate");
+    await client.query("commit");
+  } catch (error) { await client.query("rollback"); throw error; }
+  finally { client.release(); }
 }
 
 async function seedProject(pool: Pool): Promise<void> {
