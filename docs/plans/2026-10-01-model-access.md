@@ -52,6 +52,10 @@ Task 3 HTTP slice (2026-10-05): opt-in `ModelSettingsApiModule` with authenticat
 
 ## Task 4 — Settings and model lists
 
+Task 3 authority slice (2026-10-05, approved): add independent workspace owner/editor/reviewer records and manually administered advanced subscription intervals, with read-only application grants and forced RLS. Missing/inactive membership or missing/disabled/future/expired subscription denies BYOK; never infer workspace owner from project roles. Adapter is available for domain injection, not mounted in production. See `docs/contracts/WORKSPACE_MODEL_ACCESS.md`. No payment integration or administrative UI.
+
+Authority verification: two tests pass in an isolated temporary PostgreSQL cluster, including disabled/ordinary subscriptions, reviewer reads, expiry, revoked membership and denied application writes/deletes. Script typecheck passes; default full regression 134 pass and six opt-in database tests skipped. Standards and Spec review: no blocking findings. Production assembly, sensitive-endpoint limits and administrator-change auditing remain prerequisites.
+
 HTTP slice verification: full regression 133 pass and five database tests skipped; API typecheck passes. Owner/member, cross-workspace session, unknown actor/endpoint body fields, no-store responses, stale versions and pre-probe overseas consent are covered. GET uses an explicit `{configuration: value|null}` JSON envelope. Standards and Spec review found no blocking implementation issue; the reviewer sandbox could not listen on ports, so HTTP execution results come from the main agent's permitted local test run, not the reviewer.
 
 Owner-only settings UI: provider → masked key input → test connection → available model list → save. Members select tested models without seeing secrets. Catalog items lacking adapters show unavailable. Overseas/unknown processing requires explicit owner approval and regional-policy verification before activation; domestic database storage does not imply domestic inference. Show aggregator downstream routing separately.
