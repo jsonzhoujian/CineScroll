@@ -10,6 +10,14 @@ This initial repository stores a single active configuration per workspace, with
 
 ## Quality gateway client
 
+### PostgreSQL workspace credential foundation (Task 3, partial)
+
+`PostgresModelSettingsRepository` accepts a server-owned pg-compatible pool, preserving the existing asynchronous repository interface. Apply `migrations/0001_model_settings.sql` after provisioning the existing `novel_app` server role. Transactions set a local workspace context and 5-second statement timeout. Initial head creation and row locking serialize first saves and replacements; a stale expected version or reused ID is rejected. Versions, active head and secret-free audit metadata commit together. Storage errors are sanitized as `STORAGE_UNAVAILABLE`.
+
+The store is internal: `WorkspaceModelSettings` still performs workspace-owner and advanced-plan authorization before writes, and returns masked reads to members. RLS scopes rows to a server-established workspace, not a browser-supplied authorization token; the database role must never be exposed to clients. Production pools must not be superusers or BYPASSRLS. Ciphertext remains AES-GCM data produced by the service; the adapter does not accept plaintext Key fields. History/audit have append-only triggers and no application update/delete grants. The current schema is one active configuration per workspace, not multiple provider slots.
+
+The optional PostgreSQL test uses `TEST_DATABASE_URL` for a **dedicated disposable test database** with a migration/role-capable admin. It provisions `novel_app` when missing, reuses the project's installed pg driver, runs application operations under that role, and retains randomly scoped fixture rows (no destructive database cleanup). Without the URL the integration test is skipped. This delivery ran all three new tests against an isolated temporary PostgreSQL cluster: restart read, CAS, duplicate rollback, audit, RLS and immutable deletion checks passed. No existing business database was modified. API/worker wiring, authoritative workspace membership/entitlements, KMS key IDs/rotation, revocation and authorized retention/deletion maintenance remain pending; do not activate production BYOK yet.
+
 ### Native directory probe (Task 2, partial)
 
 `NativeModelDirectoryProbe` implements **DeepSeek, Anthropic and Gemini model-directory authentication**, not inference validation. DeepSeek uses fixed `GET https://api.deepseek.com/models` and Bearer authentication. The endpoint and list response follow the [official model-list reference](https://api-docs.deepseek.com/api/list-models/) and [API base URL documentation](https://api-docs.deepseek.com/guides/agent_integrations/openclaw). Model IDs are read from responses, not copied from a static catalog.

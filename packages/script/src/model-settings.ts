@@ -25,7 +25,7 @@ export interface ModelConnectionProbe {
   test(input: { providerId: string; apiKey: string }): Promise<{ modelIds: string[]; processingRegion: ModelConfiguration["processingRegion"] }>;
 }
 export class ModelSettingsError extends Error {
-  readonly code: "FORBIDDEN" | "INVALID_CONFIGURATION" | "VERSION_CONFLICT" | "NOT_READY" | "PROVIDER_UNAVAILABLE";
+  readonly code: "FORBIDDEN" | "INVALID_CONFIGURATION" | "VERSION_CONFLICT" | "NOT_READY" | "PROVIDER_UNAVAILABLE" | "STORAGE_UNAVAILABLE";
   constructor(code: ModelSettingsError["code"]) { super(code); this.name = "ModelSettingsError"; this.code = code; }
 }
 export class InMemoryModelSettingsRepository implements ModelSettingsRepository {

@@ -14,7 +14,8 @@
     "./deepseek-quality-model": "./src/deepseek-quality-model.ts",
     "./anthropic-quality-model": "./src/anthropic-quality-model.ts",
     "./gemini-quality-model": "./src/gemini-quality-model.ts",
-    "./openai-quality-model": "./src/openai-quality-model.ts"
+    "./openai-quality-model": "./src/openai-quality-model.ts",
+    "./postgres-model-settings": "./src/postgres-model-settings.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

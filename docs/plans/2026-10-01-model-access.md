@@ -44,6 +44,8 @@ Task 2 additional partial delivery (2026-10-03): OpenAI native model directory a
 
 ## Task 3 — Persistence, API and job integration
 
+2026-10-05 partial foundation: add PostgreSQL repository and migration for encrypted configuration versions, CAS active head and append-only secret-free audit. Keep owner/advanced checks in existing domain service; RLS is workspace isolation for an internal server role, not replacement membership authorization. Structural pool injection avoids a second runtime driver. All three new tests passed in an isolated temporary PostgreSQL cluster (application operations under novel_app), including restart read, CAS, duplicate rollback, audit, RLS and immutable deletion. Script TypeScript passes; default full regression 131 pass and five opt-in database tests skipped. Review found a test-role prerequisite and nullable identity constraints; both corrected before temporary database verification. No production database migration, API bootstrap, worker key resolution, key-ID rotation, revocation/deletion policy or multi-provider slots delivered.
+
 Add PostgreSQL storage scoped by workspace, transaction CAS, append-only audits and key-rotation/deletion policies. API derives actor from session, checks workspace owner and advanced entitlement. Connection testing uses an explicit synthetic prompt, not manuscript data. Jobs snapshot configuration/model/credential version and processing route. Revocation blocks new jobs; existing snapshots cannot be retargeted silently. Do not expose key decryption as a member API.
 
 ## Task 4 — Settings and model lists
