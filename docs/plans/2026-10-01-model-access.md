@@ -52,6 +52,10 @@ Task 3 HTTP slice (2026-10-05): opt-in `ModelSettingsApiModule` with authenticat
 
 ## Task 4 — Settings and model lists
 
+Task 3 production-composition slice (2026-10-05, approved): optional modelSettings defaults off; explicit enable validates independent 32-byte key, separate verified-TLS connection and known provider routes. Composes repository, membership/entitlement reader, native probe and PostgreSQL quotas. Nest initialization rejects unsafe login/effective role or missing database prerequisites. No production deployment, business migration, external credentials or live probe. Two production factory/Nest tests pass, API typecheck passes; default regression 139 pass and seven opt-in database tests skipped. Real successful TLS database initialization and full HTTP/database flow remain to be verified in deployment staging; no readiness claim from configuration tests alone.
+
+Two-axis review corrected reachable administrative-role/critical-table ownership checks and missing versions/audit/per-operation grant checks; stale API contract wording was synchronized. Dangerous-role database fixtures remain a staging verification requirement. Standards re-review found no remaining code blocker.
+
 Task 3 rate-limit slice (2026-10-05, approved): shared workspace PostgreSQL atomic windows (configure 10/60s, test 5/60s), separate counters, fail-closed storage and missing injection, HTTP 429 with retry seconds. Production bootstrap remains disabled. Real isolated database tests 2/2 pass, HTTP tests 4/4 pass, API typecheck passes; default full regression 137 pass and seven database tests skipped. Standards review has no blocker. No live model calls; trusted function ownership and stale workspace-counter cleanup are rollout prerequisites.
 
 Spec review identified a clean-database test-role prerequisite; the harness now initializes `novel_app` independently. Application UPDATE/DELETE denial and invalid function-operation coverage were added. No remaining blocking Spec finding.

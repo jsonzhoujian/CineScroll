@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { Module, type DynamicModule } from "@nestjs/common";
+import { WorkspaceModelSettings, type ModelConfiguration } from "@novel-adaptation/script/model-settings";
+import { PostgresModelSettingsRepository } from "@novel-adaptation/script/postgres-model-settings";
+import { PostgresWorkspaceModelAccess } from "@novel-adaptation/script/workspace-model-access";
+import { NativeModelDirectoryProbe } from "@novel-adaptation/script/provider-probe";
+import { ModelSettingsApiModule } from "./model-settings-api.ts";
+import { PostgresModelRateLimiter } from "./model-rate-limit.ts";
 
 import { HmacSessionManager, IdentityService } from "@novel-adaptation/identity";
 import {
@@ -18,6 +25,7 @@ import { PostgresStoryKnowledgeRepository } from "@novel-adaptation/story-knowle
 import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModule } from "./index.ts";
 
 export interface ProductionApiConfig {
+  modelSettings?: ProductionModelSettingsConfig;
   databaseUrl: string;
   databaseTlsCa: string;
   sessionSecret: string;
@@ -32,8 +40,35 @@ export interface ProductionApiConfig {
   complianceApiKey: string;
 }
 
+export type ProductionModelSettingsConfig = { enabled: false } | {
+  enabled: true;
+  encryptionKeyBase64: string;
+  databaseUrl: string;
+  databaseTlsCa: string;
+  routes: Readonly<Record<string, ModelConfiguration["processingRegion"]>>;
+};
+class ProductionApiModule {}
+Module({})(ProductionApiModule);
+
+function validateModelConfig(config: ProductionApiConfig): Uint8Array | null {
+  const value = config.modelSettings;
+  if (value === undefined || value.enabled === false) return null;
+  try {
+    if (value.enabled !== true || !value.databaseTlsCa.trim()) throw new Error();
+    assertDatabaseUrl(value.databaseUrl);
+    const key = Buffer.from(value.encryptionKeyBase64, "base64");
+    if (key.length !== 32 || key.toString("base64") !== value.encryptionKeyBase64
+      || key.equals(Buffer.from(config.sessionSecret)) || key.equals(Buffer.from(config.deviceTokenSecret))) throw new Error();
+    if (!value.routes || Array.isArray(value.routes) || typeof value.routes !== "object" || !Object.keys(value.routes).length) throw new Error();
+    if (Object.values(value.routes).some(route => route !== "mainland" && route !== "overseas")) throw new Error();
+    new NativeModelDirectoryProbe({ routes: value.routes });
+    return key;
+  } catch { throw new Error("INVALID_MODEL_SETTINGS_CONFIG"); }
+}
+
 export function createProductionApi(config: ProductionApiConfig) {
   assertProductionConfig(config);
+  const modelKey = validateModelConfig(config);
   const pool = new Pool({
     connectionString: config.databaseUrl,
     max: 20,
@@ -83,8 +118,7 @@ export function createProductionApi(config: ProductionApiConfig) {
     idGenerator: () => `skv_${randomUUID()}`,
     clock: () => new Date(),
   });
-  return {
-    module: ProjectImportApiModule.register({
+  const projectModule = ProjectImportApiModule.register({
       identity,
       sessionVerifier: sessions,
       projectImport,
@@ -92,8 +126,49 @@ export function createProductionApi(config: ProductionApiConfig) {
       wechatRedirectUri: config.wechatRedirectUri,
       deviceTokens: new HmacDeviceTokenService(config.deviceTokenSecret),
       clientIpResolver: new ForwardedClientIpResolver(config.trustedProxyHops),
-    }),
-    close: () => pool.end(),
+    });
+  let modelPool: Pool | undefined;
+  let apiModule: DynamicModule = projectModule;
+  if (modelKey && config.modelSettings?.enabled === true) {
+    const value = config.modelSettings;
+    modelPool = new Pool({ connectionString: value.databaseUrl, max: 10,
+      ssl: { ca: value.databaseTlsCa, rejectUnauthorized: true }, options: "-c role=novel_app", connectionTimeoutMillis: 5000 });
+    const settings = new WorkspaceModelSettings({
+      repository: new PostgresModelSettingsRepository(modelPool), access: new PostgresWorkspaceModelAccess(modelPool),
+      encryptionKey: modelKey, idGenerator: () => `mc_${randomUUID()}`,
+      probe: new NativeModelDirectoryProbe({ routes: value.routes }),
+    });
+    const restrictedPool = modelPool;
+    apiModule = { module: ProductionApiModule, imports: [projectModule, ModelSettingsApiModule.register({
+      sessionVerifier: sessions, settings, rateLimiter: new PostgresModelRateLimiter(modelPool),
+    })], providers: [{ provide: "MODEL_DATABASE_STARTUP_CHECK", useValue: {
+      async onModuleInit() {
+        try {
+          const result = await restrictedPool.query(`select current_user='novel_app' as restricted,
+            not r.rolsuper and not r.rolcreaterole and not r.rolcreatedb and not r.rolbypassrls
+            and not exists(select 1 from pg_roles inherited where inherited.rolname not in (session_user,'novel_app')
+              and pg_has_role(session_user,inherited.oid,'MEMBER')) as safe_login
+            from pg_roles r where r.rolname=session_user`);
+          if (!result.rows[0]?.restricted || !result.rows[0]?.safe_login) throw new Error();
+          const tables = await restrictedPool.query(`select bool_and(
+            not exists(select 1 from unnest(string_to_array(privileges,',')) required(privilege)
+              where not has_table_privilege(current_user,name,privilege))
+            and not pg_has_role(session_user,c.relowner,'MEMBER')) as ready
+            from (values ('public.model_settings_heads','SELECT,INSERT,UPDATE'),
+              ('public.model_settings_versions','SELECT,INSERT'),('public.model_settings_audit','SELECT,INSERT'),
+              ('public.workspace_model_members','SELECT'),('public.workspace_model_entitlements','SELECT')) prerequisites(name,privileges)
+            join pg_class c on c.oid=to_regclass(name)
+            having count(*)=5`);
+          if (!tables.rows[0]?.ready) throw new Error();
+          const privilege = await restrictedPool.query("select has_function_privilege(current_user,'public.consume_model_rate(text,text)','EXECUTE') as allowed");
+          if (!privilege.rows[0]?.allowed) throw new Error();
+        } catch { throw new Error("MODEL_DATABASE_NOT_READY"); }
+      },
+    } }] };
+  }
+  return {
+    module: apiModule,
+    close: async () => { await Promise.all([pool.end(), modelPool?.end()]); },
   };
 }
 
@@ -102,14 +177,18 @@ function assertProductionConfig(config: ProductionApiConfig): void {
   for (const [name, value] of strings) {
     if (!value.trim()) throw new Error(`${name} is required`);
   }
-  const databaseUrl = new URL(config.databaseUrl);
+  assertDatabaseUrl(config.databaseUrl);
+  new ForwardedClientIpResolver(config.trustedProxyHops);
+}
+
+function assertDatabaseUrl(value: string): void {
+  const databaseUrl = new URL(value);
   if (databaseUrl.protocol !== "postgres:" && databaseUrl.protocol !== "postgresql:") {
     throw new Error("databaseUrl must use PostgreSQL");
   }
-  for (const parameter of ["sslmode", "sslcert", "sslkey", "sslrootcert"]) {
+  for (const parameter of ["ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "options"]) {
     if (databaseUrl.searchParams.has(parameter)) {
       throw new Error(`databaseUrl must not override managed TLS option ${parameter}`);
     }
   }
-  new ForwardedClientIpResolver(config.trustedProxyHops);
 }
