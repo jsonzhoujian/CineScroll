@@ -15,7 +15,7 @@ export function ChapterTaskList({ api, context, onSelect }: { api: ApiClient; co
       if (stamp !== epoch.current) return;
       if (!Array.isArray(page.tasks) || page.tasks.some(task => task.projectId !== context.projectId || task.chapterId !== context.chapterId || task.input.stage !== "story_knowledge")) throw new Error("wrong context");
       setRows(previous => cursor === null ? page.tasks : [...previous, ...page.tasks.filter(task => !previous.some(row => row.id === task.id))]);
-      setNextCursor(page.nextCursor); setNotice(page.tasks.length || cursor !== null ? "按任务编号排序，不代表创建时间。" : "本章节暂无任务；本版不提供首次生成入口。");
+      setNextCursor(page.nextCursor); setNotice(page.tasks.length || cursor !== null ? "按任务编号排序，不代表创建时间。" : "本章节暂无任务。");
     } catch (error) {
       if (stamp === epoch.current) setNotice(error instanceof ApiClientError && error.status === 401 ? "登录已失效，请重新登录。" : error instanceof ApiClientError && error.status === 404 ? "章节不存在、无权访问，或任务服务尚未启用。" : "列表读取失败，请刷新后重试。");
     } finally { if (stamp === epoch.current) setBusy(false); }

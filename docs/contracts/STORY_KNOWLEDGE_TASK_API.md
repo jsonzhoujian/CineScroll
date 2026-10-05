@@ -1,6 +1,6 @@
 # 故事知识任务入口（可选模块）
 
-`StoryKnowledgeTaskApiModule` 使用会话认证，需注入使用 `StoryKnowledgeTaskContext` 的任务服务。尚未挂载生产；没有自动 Worker、真实 AI、计费或任务列表 UI。
+`StoryKnowledgeTaskApiModule` 使用会话认证，需注入使用 `StoryKnowledgeTaskContext` 的任务服务。尚未挂载生产；没有自动 Worker、真实 AI或计费。列表与首次创建UI分别见 CHAPTER_TASK_LIST.md、INITIAL_STORY_TASK_ENTRY.md。
 
 - POST `/projects/:projectId/chapters/:chapterId/story-knowledge-tasks`：创建 queued 任务，201。
 - GET 同路径：仅本章节故事知识任务分页列表，200；详见 CHAPTER_TASK_LIST.md。

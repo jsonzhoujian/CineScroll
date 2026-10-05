@@ -3,9 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryKnowledgeTask, type StoryKnowledgeVersion } from "../lib/api";
 import { taskPresentation } from "../lib/task-status";
 import { ChapterTaskList, type TaskChapterContext } from "./chapter-task-list";
+import { InitialStoryTask } from "./initial-story-task";
 
 export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiClient; context?: TaskChapterContext; activeProjectId?: string }) {
   const [listContext, setListContext] = useState<TaskChapterContext | null>(null);
+  const [listRevision, setListRevision] = useState(0);
   const [input, setInput] = useState(""), [id, setId] = useState("");
   const [task, setTask] = useState<StoryKnowledgeTask | null>(null);
   const [candidate, setCandidate] = useState<StoryKnowledgeVersion | null>(null);
@@ -86,7 +88,8 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
   const presentation = task ? taskPresentation(task) : null;
   return <section className="task-panel" aria-label="故事知识任务">
     <header><div><span className="eyebrow">后台任务 · 单任务查看</span><h2>故事知识任务</h2></div><span className="task-stamp">待审之卷</span></header>
-    {listContext && <ChapterTaskList key={`${listContext.projectId}:${listContext.chapterId}`} api={api} context={listContext} onSelect={selectTask} />}
+    {context && <InitialStoryTask api={api} context={context} onCreated={next => { selectTask(next); setListRevision(value => value + 1); }} />}
+    {listContext && <ChapterTaskList key={`${listContext.projectId}:${listContext.chapterId}:${listRevision}`} api={api} context={listContext} onSelect={selectTask} />}
     <form onSubmit={event => { event.preventDefault(); selectTask(input.trim()); }}>
       <label>任务编号<input value={input} maxLength={256} onChange={event => setInput(event.target.value)} placeholder="输入已有任务编号" /></label>
       <button className="button secondary" type="submit">读取任务</button>

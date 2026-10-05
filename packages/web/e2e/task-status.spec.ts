@@ -44,6 +44,7 @@ test("部分成功跳转准确候选，刷新后重新登录恢复任务", async
 });
 test("恢复章节上下文后通过列表选择任务，刷新后列表仍可找回", async ({ page }) => {
   await setup(page, null, true);
+  await expect(page.getByRole("region", { name: "创建故事知识任务" })).toHaveCount(0);
   const list = page.getByRole("region", { name: "章节任务列表" });
   await list.getByRole("button", { name: "查看任务 task" }).click();
   await expect(page.getByRole("region", { name: "故事知识任务" }).getByRole("article").getByText("部分成功", { exact: true })).toBeVisible();

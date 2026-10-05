@@ -28,12 +28,73 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await expect(directory.getByText("第1章 青芽微澜")).toBeVisible();
   await expect(directory.getByText("待后续处理 · 3 字")).toBeVisible();
 
+  let submitted = false;
+  let attempts = 0;
+  let release!: () => void;
+  const pendingSubmit = new Promise<void>(resolve => { release = resolve; });
+  let releaseLate!: () => void;
+  const lateSubmit = new Promise<void>(resolve => { releaseLate = resolve; });
+  let tested = true, processingRegion = "mainland";
+  const task = { id: "first-task", projectId: "project-1", chapterId: "chapter-2", input: { stage: "story_knowledge", sourceVersionId: "version-1" }, state: "queued", reason: null, result: null };
+  await page.route(`${apiOrigin}/workspace/model-settings`, route => route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify({ configuration: { id: "config", tested, processingRegion, availableModelIds: ["model"] } }) }));
+  await page.route(`${apiOrigin}/projects/project-1/chapters/chapter-2/story-knowledge-tasks**`, async route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "POST,GET,OPTIONS" } });
+    if (route.request().method() === "POST") {
+      expect(route.request().postDataJSON()).toEqual({ configurationVersionId: "config", modelId: "model" }); expect(route.request().headers().authorization).toBe("Bearer session-token");
+      attempts++;
+      if (attempts === 1) return route.fulfill({ status: 409, headers: { "access-control-allow-origin": "*" }, json: { code: "UPSTREAM_CHANGED", message: "fixture-secret" } });
+      if (attempts === 3) { await lateSubmit; return route.fulfill({ headers: { "access-control-allow-origin": "*" }, json: { ...task, id: "late-task" } }); }
+      await pendingSubmit; submitted = true;
+    }
+    await route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify(route.request().method() === "POST" ? task : { tasks: submitted ? [task] : [], nextCursor: null }) });
+  });
+  await page.route(`${apiOrigin}/story-knowledge-tasks/first-task`, route => route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify(task) }));
+  const entry = page.getByRole("region", { name: "创建故事知识任务" });
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
+  await expect(entry.getByRole("button", { name: "创建故事知识任务" })).toBeDisabled();
+  await entry.getByLabel("首次生成模型").selectOption("model");
+  await entry.getByRole("button", { name: "创建故事知识任务" }).click();
+  await expect(entry.getByRole("status")).toContainText("原文、候选或模型配置已变化");
+  await expect(entry).not.toContainText("fixture-secret");
+  await expect(entry.getByRole("button", { name: "创建故事知识任务" })).toBeDisabled();
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
+  await entry.getByLabel("首次生成模型").selectOption("model");
+  await entry.getByRole("button", { name: "创建故事知识任务" }).click();
+  await expect(entry.getByRole("button", { name: "创建故事知识任务" })).toBeDisabled();
+  await expect(entry.getByRole("button", { name: "读取可用模型" })).toBeDisabled();
+  await expect(entry.getByLabel("首次生成模型")).toBeDisabled();
+  release();
+  await expect(page.getByLabel("任务编号")).toHaveValue("first-task");
+  await expect(page.getByRole("region", { name: "章节任务列表" }).getByRole("button", { name: "查看任务 first-task" })).toBeVisible();
+  expect(attempts).toBe(2);
+  await page.screenshot({ path: "/private/tmp/initial-story-task.png" });
+
+  tested = false;
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
+  await expect(entry.getByRole("status")).toContainText("没有已测试的大陆模型");
+  await expect(entry.getByLabel("首次生成模型")).toBeDisabled();
+  tested = true; processingRegion = "overseas";
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
+  await expect(entry.getByRole("status")).toContainText("没有已测试的大陆模型");
+  await expect(entry.getByLabel("首次生成模型")).toBeDisabled();
+  processingRegion = "mainland";
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
+  await entry.getByLabel("首次生成模型").selectOption("model");
+  await entry.getByRole("button", { name: "创建故事知识任务" }).click();
+  await expect(entry.getByRole("button", { name: "读取可用模型" })).toBeDisabled();
+
   await page.getByRole("textbox", { name: "新版本正文" }).fill("剑啸。");
   await page.getByRole("button", { name: "生成差异" }).click();
   await expect(page.getByText("新增 · 1")).toBeVisible();
   await expect(page.getByRole("group", { name: "新增内容" }).getByText("剑啸。", { exact: true })).toBeVisible();
   await expect(page.getByText("删除 · 1")).toBeVisible();
   await expect(page.getByRole("group", { name: "删除内容" }).getByText("剑鸣。", { exact: true })).toBeVisible();
+  const lateResponse = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/story-knowledge-tasks"));
+  releaseLate();
+  await (await lateResponse).finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByLabel("任务编号")).toHaveValue("first-task");
+  await expect(entry.getByRole("status")).toContainText("先读取可用模型");
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobile = page.getByRole("region", { name: "移动端工作区" });
@@ -42,6 +103,7 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await expect(mobile.getByText("只读结果")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "新版本正文" })).toBeHidden();
   await expect(page.getByRole("button", { name: "现在处理" })).toBeHidden();
+  await expect(entry).toBeHidden();
 
   await mobile.getByRole("button", { name: "审核" }).click();
   await expect(mobile.getByText("暂无待审核内容")).toBeVisible();
@@ -93,6 +155,7 @@ async function mockProjectImportApi(page: import("@playwright/test").Page) {
     }
 
     const responses: Record<string, object> = {
+      "GET /projects/project-1/chapters/chapter-2/story-knowledge-tasks": { tasks: [], nextCursor: null },
       "POST /auth/device": { deviceToken: "device-token" },
       "POST /auth/phone/challenges": { challengeId: "challenge-1", expiresAt: "2026-09-29T08:00:00.000Z" },
       "POST /auth/phone/verify": { actor: { userId: "user-1", workspaceId: "studio-1" }, sessionToken: "session-token" },
