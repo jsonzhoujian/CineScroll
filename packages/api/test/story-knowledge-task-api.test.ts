@@ -68,21 +68,47 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
       } } });
     assert.equal((await executor.run(owner, child.body.id)).state, "succeeded");
     const candidate = await knowledge.getActive(owner, "p", "c");
+    assert.deepEqual((await tasks.get(owner, child.body.id)).result, { candidateVersionId: candidate.id, extractionStatus: "partially_succeeded" });
+    const read = await http.get(`/story-knowledge-tasks/${child.body.id}`).set("authorization", bearer).expect(200);
+    assert.equal(read.body.result.extractionStatus, "partially_succeeded");
+    assert.ok(!JSON.stringify(read.body).includes("new-fixture"));
     assert.equal(candidate.extractionStatus, "partially_succeeded");
     assert.equal(candidate.status, "candidate");
     assert.deepEqual(candidate.facts.map(fact => fact.id), ["rain"]);
     assert.deepEqual(candidate.failures.map(failure => failure.scopeKey), ["identity"]);
     await assert.rejects(() => executor.run(owner, child.body.id), { code: "STATE_CONFLICT" });
     const blocked = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
-    assert.equal((await executor.run(owner, blocked.id)).state, "failed");
+    assert.equal((await executor.run(owner, blocked.id)).reason, "CANDIDATE_EXISTS");
     assert.equal((await knowledge.getActive(owner, "p", "c")).id, candidate.id);
-    for (const mode of ["wrong-envelope", "source-changed"] as const) {
+    const competingKnowledge = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
+      sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
+      idGenerator: () => `race${++version}`, clock: () => new Date("2026-10-05") });
+    let release!: () => void, ready!: () => void, running = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const bothStarted = new Promise<void>(resolve => { ready = resolve; });
+    const competing = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: competingKnowledge,
+      model: { async generate(input) {
+        if (++running === 2) ready();
+        await gate;
+        return { contractVersion: "0.1.0", jobId: input.jobId, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed",
+          items: [{ scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } }] };
+      } } });
+    const first = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+    const second = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+    const competingRuns = Promise.all([competing.run(owner, first.id), competing.run(owner, second.id)]);
+    await bothStarted; release();
+    const outcomes = await competingRuns;
+    assert.equal(outcomes.filter(outcome => outcome.state === "succeeded").length, 1);
+    assert.equal(outcomes.find(outcome => outcome.state !== "succeeded")?.reason, "CANDIDATE_EXISTS");
+    assert.equal(outcomes.find(outcome => outcome.state === "succeeded")?.result?.extractionStatus, "failed");
+    for (const mode of ["wrong-envelope", "provider-error", "source-changed"] as const) {
       const isolated = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
         sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
         idGenerator: () => `isolated${++version}`, clock: () => new Date("2026-10-05") });
       const queued = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
       const invalid = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: isolated,
         model: { async generate(input) {
+          if (mode === "provider-error") throw new Error("new-fixture: vendor private response");
           if (mode === "source-changed") {
             const project = (await projects.findProject(owner, "p"))!;
             project.chapters[0]!.activeSourceVersionId = "source2";
@@ -91,7 +117,11 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
           return { contractVersion: "0.1.0", jobId: mode === "wrong-envelope" ? "forged" : input.jobId,
             stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed", items: [] };
         } } });
-      assert.equal((await invalid.run(owner, queued.id)).state, "failed");
+      const outcome = await invalid.run(owner, queued.id);
+      assert.equal(outcome.state, mode === "source-changed" ? "paused" : "failed");
+      assert.equal(outcome.reason, mode === "source-changed" ? "UPSTREAM_CHANGED" : mode === "wrong-envelope" ? "INVALID_RESPONSE" : "PROVIDER_UNAVAILABLE");
+      assert.equal(outcome.result, null);
+      assert.ok(!JSON.stringify(outcome).includes("new-fixture"));
       await assert.rejects(() => isolated.getActive(owner, "p", "c"), { code: "STAGE_RESULT_NOT_FOUND" });
     }
   } finally { await app.close(); }

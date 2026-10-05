@@ -10,8 +10,10 @@
 
 当前合规/投诉状态门禁仍未实现；项目权限采用数据库 RLS，不承诺与管理员并发撤权的线性化。凭据检查后的订阅变更同样不保证即时取消在途调用。
 
-当前通用任务服务将执行器错误统一记录为 failed/PROVIDER_UNAVAILABLE，尚不能细分无效响应、已存在候选及在途上游变化。succeeded 表示候选处理与落库完成，不代表所有条目成功或质量验收通过；应通过候选 extractionStatus 和 failures 展示局部失败。若模型全部条目失败，也保留失败候选供审核。
+执行器通过受控 TaskExecutionError 保留原因：原文变化为 paused/UPSTREAM_CHANGED；无效响应为 failed/INVALID_RESPONSE；已有候选或竞争知识头 CAS 失败为 failed/CANDIDATE_EXISTS；未知错误为 failed/PROVIDER_UNAVAILABLE。原文持久化门禁使用内部 StoryKnowledgeSourceChangedError 区分知识头冲突，既有故事知识 API 仍返回 VERSION_CONFLICT。
 
-候选保存与任务终态更新不是同一事务，崩溃仍可能留下已落库候选和 running 任务；禁止自动重发可能收费的调用。租约、恢复、计费、结果指针、当前合规/投诉门禁与真实模型传输均未交付。
+成功终态携带 result={candidateVersionId, extractionStatus}，与终态同次 revision CAS 持久化；succeeded 表示候选处理与落库完成，不代表所有条目成功或质量验收通过。partially_succeeded 表示局部成功，failed 表示所有条目失败但失败候选已保存。任务状态接口返回这些字段，尚未新增前端展示。旧任务及其他未返回候选的执行器 result=null；不补造历史关联。指针只用于同一项目/章节已有鉴权读取，不是独立访问授权。
+
+候选保存与任务终态更新不是同一事务，崩溃仍可能留下已落库候选和 running 任务；禁止自动重发可能收费的调用。租约、恢复、计费、当前合规/投诉门禁与真实模型传输均未交付。任务仓储升级需管理员先应用 0004_model_task_results.sql；本次仅在临时测试库执行，不自动升级业务库。
 
 验证入口为任务执行服务及故事知识 getActive：覆盖部分成功候选、凭据边界、重复任务拒绝、已有候选不覆盖、错配响应拒绝、生成期间原文变化不落库。临时 PostgreSQL 测试通过未提交重导入阻塞候选写入，确认其等待提交后拒绝旧原文，并允许当前原文写入。不证明实际模型语义准确率。

@@ -10,6 +10,8 @@
 
 回调只接收服务器解密的凭据、jobId 和输入引用，不返回模型响应给任务记录。阶段 Adapter 必须验证模型能力及结构化响应、实现 jobId/scope 幂等、生成候选内容；本基础层不证明生成成功的业务质量。
 
+可信回调可返回严格的候选版本指针和 extractionStatus（不是供应商响应）。0004_model_task_results.sql 将 result_json 与终态同次 CAS 更新，旧任务保持 null；细分 INVALID_RESPONSE/CANDIDATE_EXISTS 失败及在途 UPSTREAM_CHANGED 暂停。受控错误仅保留枚举，其他异常仍净化，不保存凭据或厂商错误消息。此更新不让候选写入与任务终态成为同一事务。
+
 ## 尚未交付
 
 故事知识阶段已有 opt-in HTTP 入口及实际项目 ContextReader，详见 STORY_KNOWLEDGE_TASK_API.md。尚无前端列表、自动调度/轮询、租约、崩溃恢复、计费、任务级境外授权或真实生成，也未挂载生产模块。服务/存储失败后任务可能停留在 running；不得自动重新发出可能已计费的请求。运行期间上游变化不取消已发出的调用，候选内容落库还需版本校验。此基础层不能称为可上线的可靠队列。

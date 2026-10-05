@@ -7,7 +7,7 @@ import type {
   StoryKnowledgeRepository,
   StoryKnowledgeVersion,
 } from "./index.ts";
-import { StoryKnowledgeError } from "./index.ts";
+import { StoryKnowledgeError, StoryKnowledgeSourceChangedError } from "./index.ts";
 
 type VersionRow = QueryResultRow & { version_json: StoryKnowledgeVersion };
 type BibleRow = QueryResultRow & { bible_json: StoryBible };
@@ -31,7 +31,7 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
           [version.projectId, version.chapterId],
         );
         if (!source.rows[0]) throw new StoryKnowledgeError("SOURCE_VERSION_NOT_FOUND", "章节不存在或无权访问");
-        if (source.rows[0].active_source_version_id !== version.sourceVersionId) throw new StoryKnowledgeError("VERSION_CONFLICT", "原文已更新，请重新生成");
+        if (source.rows[0].active_source_version_id !== version.sourceVersionId) throw new StoryKnowledgeSourceChangedError();
       }
       await lockHead(client, actor, version.projectId, version.chapterId);
       if (expectedActiveVersionId !== undefined) await assertActive(client, actor, version.projectId, version.chapterId, expectedActiveVersionId);

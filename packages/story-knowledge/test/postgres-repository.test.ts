@@ -6,6 +6,7 @@ import { setTimeout } from "node:timers/promises";
 import { Pool, type PoolClient } from "pg";
 
 import type { StoryBible, StoryKnowledgeVersion } from "../src/index.ts";
+import { StoryKnowledgeSourceChangedError } from "../src/index.ts";
 import { PostgresStoryKnowledgeRepository } from "../src/postgres-repository.ts";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -144,18 +145,20 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
         values ('srcv_new','prj_story','chp_story',2,now(),$1,4,'新版原文')`, [actor.userId]);
       await reimport.query("update chapters set active_source_version_id='srcv_new' where id='chp_story'");
       const saving = repository.saveCandidate(actor, version("skv_stale"), null, true);
-      const rejected = assert.rejects(saving, { code: "VERSION_CONFLICT" });
+      const rejected = assert.rejects(saving, error => error instanceof StoryKnowledgeSourceChangedError && error.code === "VERSION_CONFLICT");
       let waiting = false;
       for (let attempt = 0; attempt < 100 && !waiting; attempt += 1) {
+        // Statistics are otherwise cached for this admin transaction.
+        await reimport.query("select pg_stat_clear_snapshot()");
         const activity = await reimport.query(`select 1 from pg_stat_activity
           where usename='novel_story_test' and wait_event_type='Lock'
           and query like 'select active_source_version_id from chapters%'`);
         waiting = activity.rowCount === 1;
         if (!waiting) await setTimeout(10);
       }
-      assert.equal(waiting, true, "候选写入必须等待未提交的原文变更");
       await reimport.query("commit");
       await rejected;
+      assert.equal(waiting, true, "候选写入必须等待未提交的原文变更");
       assert.equal(await repository.findActive(actor, "prj_story", "chp_story"), null);
       const current = { ...version("skv_current"), sourceVersionId: "srcv_new" };
       await repository.saveCandidate(actor, current, null, true);

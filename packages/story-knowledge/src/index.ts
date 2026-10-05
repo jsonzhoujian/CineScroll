@@ -172,6 +172,11 @@ export class StoryKnowledgeError extends Error {
   }
 }
 
+/** Preserves the public VERSION_CONFLICT code while identifying the source guard internally. */
+export class StoryKnowledgeSourceChangedError extends StoryKnowledgeError {
+  constructor() { super("VERSION_CONFLICT", "原文已更新，请重新生成"); }
+}
+
 export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepository {
   readonly #activeVersionIds = new Map<string, string>();
   readonly #versions = new Map<string, StoryKnowledgeVersion>();
