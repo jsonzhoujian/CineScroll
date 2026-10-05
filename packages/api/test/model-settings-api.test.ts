@@ -54,6 +54,10 @@ test("模型设置 API 只使用登录工作室，负责人保存 Key，成员�
     await http.post("/workspace/model-settings").send(body).expect(401);
     const owner = `Bearer ${await sessions.issue("owner", "studio")}`;
     const editor = `Bearer ${await sessions.issue("editor", "studio")}`;
+    const capabilities = await http.get("/workspace/model-settings/capabilities").set("authorization", editor).expect(200);
+    assert.equal(capabilities.body.canManage, false);
+    assert.equal(capabilities.body.advanced, true);
+    assert.ok(capabilities.body.providers.some((p: { id: string }) => p.id === "openai"));
     await http.post("/workspace/model-settings").set("authorization", editor).send(body).expect(403);
     await http.post("/workspace/model-settings").set("authorization", owner).send({ ...body, workspaceId: "other" }).expect(400);
     const saved = await http.post("/workspace/model-settings").set("authorization", owner).send(body).expect(201);
@@ -92,5 +96,10 @@ test("连接测试的境外授权必须由负责人明确提供，失败不泄�
     const failed = await http.post("/workspace/model-settings/test").set("authorization", owner).send({ expectedVersionId: tested.body.id, allowNonMainland: true }).expect(503);
     assert.equal(failed.body.code, "PROVIDER_UNAVAILABLE"); assert.ok(!JSON.stringify(failed.body).includes("fixture-key"));
     for (const userId of ["free", "outsider"]) await http.get("/workspace/model-settings").set("authorization", `Bearer ${await sessions.issue(userId, "studio")}`).expect(403);
+    const free = await http.get("/workspace/model-settings/capabilities").set("authorization", `Bearer ${await sessions.issue("free", "studio")}`).expect(200);
+    assert.equal(free.body.advanced, false); assert.equal(free.body.canManage, false);
+    await http.get("/workspace/model-settings/capabilities").set("authorization", `Bearer ${await sessions.issue("outsider", "studio")}`).expect(403);
+    const ownerCapabilities = await http.get("/workspace/model-settings/capabilities").set("authorization", owner).expect(200);
+    assert.equal(ownerCapabilities.body.canManage, true);
   } finally { await app.close(); }
 });

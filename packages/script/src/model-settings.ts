@@ -88,6 +88,15 @@ export class WorkspaceModelSettings {
     await this.#authorize(actor, false); const current = await this.#options.repository.find(actor.workspaceId);
     return current ? publicConfig(current) : null;
   }
+  async capabilities(actor: Actor) {
+    const access = await this.#options.access.read(actor);
+    if (!access) throw new ModelSettingsError("FORBIDDEN");
+    return { advanced: access.advanced, canManage: access.owner && access.advanced,
+      providers: MODEL_PROVIDERS.map(provider => {
+        const processingRegion = this.#options.probe?.processingRegion(provider.id) ?? "unknown";
+        return { ...provider, processingRegion, available: processingRegion !== "unknown" };
+      }) };
+  }
   async configure(actor: Actor, input: { expectedVersionId: string | null; providerId: string; apiKey: string }): Promise<PublicModelConfiguration> {
     await this.#authorize(actor, true);
     if (!MODEL_PROVIDERS.some(({ id }) => id === input.providerId) || typeof input.apiKey !== "string"

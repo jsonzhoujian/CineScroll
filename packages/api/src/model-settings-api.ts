@@ -23,6 +23,7 @@ class ModelSettingsController {
     if (!result.allowed) throw new ModelRateLimitError(result.retryAfterSeconds);
   }
   async get(request: SessionRequest) { return { configuration: await safely(() => this.settings.get(request.actor)) }; }
+  async capabilities(request: SessionRequest) { return safely(() => this.settings.capabilities(request.actor)); }
   async configure(request: SessionRequest, body: unknown) {
     const value = object(body, ["expectedVersionId", "providerId", "apiKey"]);
     const { expectedVersionId, providerId, apiKey } = value;
@@ -62,11 +63,11 @@ Controller("workspace/model-settings")(ModelSettingsController);
 UseGuards(SessionGuard)(ModelSettingsController);
 Inject(MODEL_SETTINGS)(ModelSettingsController, undefined, 0);
 Inject(MODEL_RATE_LIMITER)(ModelSettingsController, undefined, 1);
-for (const [method, decorator] of [["get", Get()], ["configure", Post()], ["testConnection", Post("test")]] as const) {
+for (const [method, decorator] of [["get", Get()], ["capabilities", Get("capabilities")], ["configure", Post()], ["testConnection", Post("test")]] as const) {
   decorator(ModelSettingsController.prototype, method, Object.getOwnPropertyDescriptor(ModelSettingsController.prototype, method)!);
   Header("Cache-Control", "no-store")(ModelSettingsController.prototype, method, Object.getOwnPropertyDescriptor(ModelSettingsController.prototype, method)!);
   Req()(ModelSettingsController.prototype, method, 0);
-  if (method !== "get") Body()(ModelSettingsController.prototype, method, 1);
+  if (method === "configure" || method === "testConnection") Body()(ModelSettingsController.prototype, method, 1);
 }
 /** Opt-in module: production must supply authoritative workspace membership and entitlement access. */
 export class ModelSettingsApiModule {

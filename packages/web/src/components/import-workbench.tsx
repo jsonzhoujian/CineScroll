@@ -8,6 +8,7 @@ import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type W
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
 import type { ReviewFilter } from "../lib/story-knowledge-review";
 import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
+import { ModelSettingsPanel } from "./model-settings-panel";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
 type MobileTab = "progress" | "review" | "decisions" | "notifications";
@@ -25,6 +26,7 @@ const initialProject: ProjectDraft = {
 };
 
 export function ImportWorkbench() {
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const api = useMemo(() => new ApiClient(), []);
   const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: "login", mode: "trace" });
   const { step, mode } = navigation;
@@ -162,8 +164,9 @@ export function ImportWorkbench() {
       <nav className="modes" aria-label="工作模式">
         {workbenchModes.map((item) => <button key={item.id} type="button" className={mode === item.id ? "active" : ""} aria-pressed={mode === item.id} onClick={() => setMode(item.id)}>{item.label}</button>)}
       </nav>
-      <div className="top-meta"><span>中国大陆区</span><i /> <span>{project?.title || "未命名项目"}</span></div>
+      <div className="top-meta"><span>中国大陆区</span><i /> <span>{project?.title || "未命名项目"}</span>{step !== "login" && <button type="button" className="text-button model-settings-entry" onClick={() => setModelSettingsOpen(true)}>工作室模型设置</button>}</div>
     </header>
+    {modelSettingsOpen && <ModelSettingsPanel api={api} onClose={() => setModelSettingsOpen(false)} />}
 
     <div className="body-grid">
       <aside className="step-rail">

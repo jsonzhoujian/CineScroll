@@ -31,6 +31,7 @@ All routes require Bearer session authentication. Workspace and actor come exclu
 | Method / path | Input | Permissions |
 | --- | --- | --- |
 | GET `/workspace/model-settings` | none | advanced workspace member; returns `{configuration: masked active configuration or null}` |
+| GET `/workspace/model-settings/capabilities` | none | active workspace member; returns advanced subscription, canManage and provider availability/route metadata; no Key or configuration |
 | POST `/workspace/model-settings` | `expectedVersionId: string|null`, `providerId: string`, `apiKey: string` | advanced workspace owner |
 | POST `/workspace/model-settings/test` | `expectedVersionId: string`, `allowNonMainland: boolean` | advanced workspace owner |
 

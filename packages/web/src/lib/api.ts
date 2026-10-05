@@ -1,16 +1,18 @@
 import type { DocumentRequest, ProjectDraft } from "./workflow";
 
-type ApiErrorBody = { code?: string; message?: string };
+type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: number };
 
 export class ApiClientError extends Error {
   readonly status: number;
   readonly code: string | undefined;
+  readonly retryAfterSeconds: number | undefined;
 
-  constructor(status: number, code: string | undefined, message: string) {
+  constructor(status: number, code: string | undefined, message: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "ApiClientError";
     this.status = status;
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -87,7 +89,14 @@ export type StoryKnowledgeVersion = {
 
 type CredentialMode = "none" | "device" | "session";
 
+export type ModelConfiguration = { id: string; providerId: string; keyMask: string; tested: boolean; availableModelIds: string[]; processingRegion: "mainland" | "overseas" | "unknown" };
+export type ModelCapabilities = { advanced: boolean; canManage: boolean; providers: Array<{ id: string; name: string; kind: string; available: boolean; processingRegion: "mainland" | "overseas" | "unknown" }> };
+
 export class ApiClient {
+  modelCapabilities() { return this.request<ModelCapabilities>("/workspace/model-settings/capabilities", { method: "GET", cache: "no-store" }, "session"); }
+  modelConfiguration() { return this.request<{ configuration: ModelConfiguration | null }>("/workspace/model-settings", { method: "GET", cache: "no-store" }, "session"); }
+  saveModelKey(input: { expectedVersionId: string | null; providerId: string; apiKey: string }) { return this.request<ModelConfiguration>("/workspace/model-settings", { method: "POST", body: JSON.stringify(input) }, "session"); }
+  testModelConnection(expectedVersionId: string, allowNonMainland: boolean) { return this.request<ModelConfiguration>("/workspace/model-settings/test", { method: "POST", body: JSON.stringify({ expectedVersionId, allowNonMainland }) }, "session"); }
   readonly #baseUrl: string;
   #sessionToken: string | null = null;
   #deviceToken: string | null = null;
@@ -216,7 +225,7 @@ export class ApiClient {
       throw new Error("无法连接服务，请检查 API 是否已启动");
     }
     const body = await response.json().catch(() => ({})) as ApiErrorBody & T;
-    if (!response.ok) throw new ApiClientError(response.status, body.code, body.message || `请求失败（${response.status}）`);
+    if (!response.ok) throw new ApiClientError(response.status, body.code, body.message || `请求失败（${response.status}）`, body.retryAfterSeconds);
     return body;
   }
 }
