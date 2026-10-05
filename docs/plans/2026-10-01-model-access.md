@@ -52,6 +52,10 @@ Task 3 HTTP slice (2026-10-05): opt-in `ModelSettingsApiModule` with authenticat
 
 ## Task 4 — Settings and model lists
 
+Task 3 local TLS verification (2026-10-05): add opt-in disposable TLS PostgreSQL/Nest production test. Real local cluster run passes successful restricted-login initialization, fake Key save, CAS rejection, restart masked read, revoked subscription and failure on invalid CA, extra role membership or missing audit INSERT. No business database, deployed service, real Key or external model call. Fixture roles are removed; disposable database rows remain. Runtime successful initialization gap from the prior slice is covered locally; deployed HTTPS/body/CORS/logging and regional-policy verification remain outstanding. See MODEL_SETTINGS_API.md for explicit environment and isolation requirements.
+
+Verification: API typecheck passes; default full regression 139 pass, eight explicitly opt-in database tests skipped. Standards and Spec reviews found no blockers; resource cleanup suggestions were applied to compile failure and role-drop failure paths.
+
 Task 3 production-composition slice (2026-10-05, approved): optional modelSettings defaults off; explicit enable validates independent 32-byte key, separate verified-TLS connection and known provider routes. Composes repository, membership/entitlement reader, native probe and PostgreSQL quotas. Nest initialization rejects unsafe login/effective role or missing database prerequisites. No production deployment, business migration, external credentials or live probe. Two production factory/Nest tests pass, API typecheck passes; default regression 139 pass and seven opt-in database tests skipped. Real successful TLS database initialization and full HTTP/database flow remain to be verified in deployment staging; no readiness claim from configuration tests alone.
 
 Two-axis review corrected reachable administrative-role/critical-table ownership checks and missing versions/audit/per-operation grant checks; stale API contract wording was synchronized. Dangerous-role database fixtures remain a staging verification requirement. Standards re-review found no remaining code blocker.

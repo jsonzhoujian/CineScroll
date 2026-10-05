@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import "reflect-metadata";
+import { Pool } from "pg";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+import { HmacSessionManager } from "@novel-adaptation/identity";
+import { createProductionApi } from "../src/production.ts";
+
+// Opt-in: only a disposable admin-owned TLS database, never a business database.
+test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅撤销并拒绝额外角色", {
+  skip: !process.env.TEST_TLS_DATABASE_URL || !process.env.TEST_TLS_CA_PATH,
+}, async () => {
+  const databaseUrl = process.env.TEST_TLS_DATABASE_URL!;
+  const ca = await readFile(process.env.TEST_TLS_CA_PATH!, "utf8");
+  const admin = new Pool({ connectionString: databaseUrl, ssl: { ca, rejectUnauthorized: true } });
+  const suffix = randomUUID().replaceAll("-", "");
+  const login = `model_${suffix}`, extraRole = `extra_${suffix}`;
+  const workspaceId = `w_${suffix}`, userId = `u_${suffix}`;
+  const sessionSecret = "0123456789abcdef0123456789abcdef";
+  const restrictedUrl = new URL(databaseUrl); restrictedUrl.username = login; restrictedUrl.password = "";
+  const config = {
+    databaseUrl, databaseTlsCa: ca, sessionSecret, deviceTokenSecret: "abcdef0123456789abcdef0123456789",
+    trustedProxyHops: 0, smsEndpoint: "https://sms.example/verify", smsApiKey: "fixture",
+    wechatAppId: "fixture", wechatAppSecret: "fixture", wechatRedirectUri: "https://app.example/callback",
+    complianceEndpoint: "https://compliance.example/scan", complianceApiKey: "fixture",
+    modelSettings: { enabled: true as const, encryptionKeyBase64: Buffer.alloc(32, 7).toString("base64"),
+      databaseUrl: restrictedUrl.toString(), databaseTlsCa: ca, routes: { deepseek: "mainland" as const } },
+  };
+  const start = async (databaseTlsCa = ca) => {
+    const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa } });
+    try {
+      const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
+      const app = ref.createNestApplication();
+      try { await app.listen(0, "127.0.0.1"); }
+      catch (error) { await app.close(); throw error; }
+      return { http: request(app.getHttpServer()), close: async () => { try { await app.close(); } finally { await production.close(); } } };
+    } catch (error) { await production.close(); throw error; }
+  };
+  try {
+    for (const path of ["../../identity/migrations/0001_identity.sql", "../../script/migrations/0001_model_settings.sql", "../../script/migrations/0002_workspace_model_access.sql", "../migrations/0001_model_rate_limits.sql"]) {
+      await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    }
+    // Identifiers are generated locally from hex UUIDs, not supplied by users.
+    await admin.query(`create role ${login} login nosuperuser nocreatedb nocreaterole nobypassrls`);
+    await admin.query(`grant novel_app to ${login}`);
+    await admin.query(`create role ${extraRole} nologin`);
+    await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)", [userId, workspaceId]);
+    await admin.query("insert into workspace_model_members(workspace_id,user_id,role) values($1,$2,'owner')", [workspaceId, userId]);
+    await admin.query("insert into workspace_model_entitlements values($1,'advanced',true,now()-interval '1 hour',now()+interval '1 hour')", [workspaceId]);
+    await assert.rejects(() => start("invalid-test-ca"), { message: "MODEL_DATABASE_NOT_READY" });
+    const sessions = new HmacSessionManager({ secret: sessionSecret, resolveActor: async () => ({ userId, workspaceId }) });
+    const bearer = `Bearer ${await sessions.issue(userId, workspaceId)}`;
+    let version: string;
+    const first = await start();
+    try {
+      await first.http.get("/workspace/model-settings").expect(401);
+      const saved = await first.http.post("/workspace/model-settings").set("authorization", bearer)
+        .send({ expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-not-real-key" }).expect(201);
+      version = saved.body.id;
+      assert.equal(saved.body.keyMask, "••••••••");
+      assert.ok(!JSON.stringify(saved.body).includes("fixture-not-real-key"));
+      await first.http.post("/workspace/model-settings").set("authorization", bearer)
+        .send({ expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-not-real-key" }).expect(409);
+    } finally { await first.close(); }
+    const second = await start();
+    try {
+      const read = await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(200);
+      assert.equal(read.body.configuration.id, version!);
+      assert.equal(read.body.configuration.ciphertext, undefined);
+      await admin.query("update workspace_model_entitlements set enabled=false where workspace_id=$1", [workspaceId]);
+      await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(403);
+    } finally { await second.close(); }
+    await admin.query(`grant ${extraRole} to ${login}`);
+    await assert.rejects(start, { message: "MODEL_DATABASE_NOT_READY" });
+    await admin.query(`revoke ${extraRole} from ${login}`);
+    await admin.query("revoke insert on model_settings_audit from novel_app");
+    try { await assert.rejects(start, { message: "MODEL_DATABASE_NOT_READY" }); }
+    finally { await admin.query("grant insert on model_settings_audit to novel_app"); }
+  } finally {
+    try { await admin.query(`drop role if exists ${login}`); }
+    finally {
+      try { await admin.query(`drop role if exists ${extraRole}`); }
+      finally { await admin.end(); }
+    }
+  }
+});
