@@ -1,7 +1,7 @@
 import type { Actor, AspectRatio, NarrativeMode, TargetDurationSeconds } from "./index.ts";
 import { ModelSettingsError, type TaskModelSnapshot, type WorkspaceModelSettings } from "./model-settings.ts";
 
-export type TaskInput = { sourceVersionId: string; upstreamConfirmedVersionIds: string[];
+export type TaskInput = { stage: "story_knowledge" | "script"; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE";
@@ -32,11 +32,13 @@ export class ModelTaskService {
   async #context(actor: Actor, projectId: string, chapterId: string) {
     const input = await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
-    if (!input.sourceVersionId || !input.upstreamConfirmedVersionIds.length || input.upstreamConfirmedVersionIds.some(id => !id)
+    if (!["story_knowledge", "script"].includes(input.stage) || !input.sourceVersionId
+      || (input.stage === "script" && !input.upstreamConfirmedVersionIds.length)
+      || (input.stage === "story_knowledge" && input.upstreamConfirmedVersionIds.length !== 0) || input.upstreamConfirmedVersionIds.some(id => !id)
       || ![60, 180, 300].includes(input.generationParameters.targetDurationSeconds)
       || !["9:16", "16:9"].includes(input.generationParameters.aspectRatio)
       || !["narration", "dialogue"].includes(input.generationParameters.narrativeMode)) throw new ModelTaskError("INVALID_CONTEXT");
-    return { sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
+    return { stage: input.stage, sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
       generationParameters: { targetDurationSeconds: input.generationParameters.targetDurationSeconds,
         aspectRatio: input.generationParameters.aspectRatio, narrativeMode: input.generationParameters.narrativeMode } };
   }
@@ -79,7 +81,7 @@ export class ModelTaskService {
   }
 }
 function sameInput(a: TaskInput, b: TaskInput) {
-  return a.sourceVersionId === b.sourceVersionId
+  return a.stage === b.stage && a.sourceVersionId === b.sourceVersionId
     && a.upstreamConfirmedVersionIds.length === b.upstreamConfirmedVersionIds.length
     && a.upstreamConfirmedVersionIds.every((id, i) => id === b.upstreamConfirmedVersionIds[i])
     && a.generationParameters.targetDurationSeconds === b.generationParameters.targetDurationSeconds

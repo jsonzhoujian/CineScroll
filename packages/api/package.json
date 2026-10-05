@@ -5,7 +5,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./production": "./src/production.ts",
-    "./model-settings": "./src/model-settings-api.ts"
+    "./model-settings": "./src/model-settings-api.ts",
+    "./story-knowledge-tasks": "./src/story-knowledge-task-api.ts",
+    "./story-knowledge-task-context": "./src/story-knowledge-task-context.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

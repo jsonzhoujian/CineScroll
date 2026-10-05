@@ -15,7 +15,7 @@ async function exercise(repository: ModelTaskRepository) {
     probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
   const config = await settings.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-old-key" });
   const tested = await settings.testConnection(actor, config.id);
-  let context = { sourceVersionId: "source1", upstreamConfirmedVersionIds: ["knowledge1", "plan1"],
+  let context = { stage: "script" as const, sourceVersionId: "source1", upstreamConfirmedVersionIds: ["knowledge1", "plan1"],
     generationParameters: { targetDurationSeconds: 180 as const, aspectRatio: "9:16" as const, narrativeMode: "narration" as const } };
   const service = new ModelTaskService({ settings, repository, contextReader: { read: async () => structuredClone(context) }, idGenerator: () => `job${++job}` });
   const original = await service.submit(actor, { projectId: "p", chapterId: "c", configurationVersionId: tested.id, modelId: "m" });

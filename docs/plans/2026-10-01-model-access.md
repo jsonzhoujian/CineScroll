@@ -84,4 +84,6 @@ Owner-only settings UI: provider → masked key input → test connection → av
 
 ## Task 5 — Live regression and rollout
 
+Story knowledge task API slice (2026-10-05, approved): stage-tagged immutable inputs, authoritative project/source context and session-authenticated opt-in submit/read/paused-resubmit routes. No real AI, dispatcher, frontend task list or production mounting. Current compliance/complaint gating, quotas and recovery remain rollout prerequisites. Default regression: 143 passed, nine database tests skipped; API and script typechecks passed. Both reviews identified invalid path IDs incorrectly mapped to 503; a red-green HTTP regression now verifies 400. See `docs/contracts/STORY_KNOWLEDGE_TASK_API.md`.
+
 Configure secrets outside Git and choose permitted deployment routes. Run explicitly authorized live semantic tests using self-owned fixtures and human ground truth. Do not claim model accuracy from transport fixtures. Rollout remains blocked until native adapters, persistent secrets, API permissions, UI and regional-policy checks are complete.
