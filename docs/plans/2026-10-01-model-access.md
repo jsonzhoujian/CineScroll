@@ -52,6 +52,10 @@ Task 3 HTTP slice (2026-10-05): opt-in `ModelSettingsApiModule` with authenticat
 
 ## Task 4 — Settings and model lists
 
+Task 3 rate-limit slice (2026-10-05, approved): shared workspace PostgreSQL atomic windows (configure 10/60s, test 5/60s), separate counters, fail-closed storage and missing injection, HTTP 429 with retry seconds. Production bootstrap remains disabled. Real isolated database tests 2/2 pass, HTTP tests 4/4 pass, API typecheck passes; default full regression 137 pass and seven database tests skipped. Standards review has no blocker. No live model calls; trusted function ownership and stale workspace-counter cleanup are rollout prerequisites.
+
+Spec review identified a clean-database test-role prerequisite; the harness now initializes `novel_app` independently. Application UPDATE/DELETE denial and invalid function-operation coverage were added. No remaining blocking Spec finding.
+
 Task 3 authority slice (2026-10-05, approved): add independent workspace owner/editor/reviewer records and manually administered advanced subscription intervals, with read-only application grants and forced RLS. Missing/inactive membership or missing/disabled/future/expired subscription denies BYOK; never infer workspace owner from project roles. Adapter is available for domain injection, not mounted in production. See `docs/contracts/WORKSPACE_MODEL_ACCESS.md`. No payment integration or administrative UI.
 
 Authority verification: two tests pass in an isolated temporary PostgreSQL cluster, including disabled/ordinary subscriptions, reviewer reads, expiry, revoked membership and denied application writes/deletes. Script typecheck passes; default full regression 134 pass and six opt-in database tests skipped. Standards and Spec review: no blocking findings. Production assembly, sensitive-endpoint limits and administrator-change auditing remain prerequisites.

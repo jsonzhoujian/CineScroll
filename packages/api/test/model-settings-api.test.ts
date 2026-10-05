@@ -7,12 +7,46 @@ import { HmacSessionManager } from "@novel-adaptation/identity";
 import { InMemoryModelSettingsRepository, WorkspaceModelSettings } from "@novel-adaptation/script/model-settings";
 import { ModelSettingsApiModule } from "../src/model-settings-api.ts";
 
+test("超限返回429和重试时间，存储故障返回503且不写Key", async () => {
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async () => ({ userId: "owner", workspaceId: "studio" }) });
+  const settings = new WorkspaceModelSettings({ repository: new InMemoryModelSettingsRepository(), encryptionKey: new Uint8Array(32).fill(1), idGenerator: () => "v1", access: { read: async () => ({ owner: true, advanced: true }) } });
+  let unavailable = false;
+  const ref = await Test.createTestingModule({ imports: [ModelSettingsApiModule.register({ sessionVerifier: sessions, settings, rateLimiter: { consume: async (workspace, action) => {
+    assert.equal(workspace, "studio"); assert.ok(action === "configure" || action === "test");
+    if (unavailable) throw new Error("private-url");
+    return { allowed: false, retryAfterSeconds: 42 };
+  } } })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()), authorization = `Bearer ${await sessions.issue("owner", "studio")}`;
+    const body = { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" };
+    const limited = await http.post("/workspace/model-settings").set("authorization", authorization).send(body).expect(429);
+    assert.equal(limited.headers["retry-after"], "42"); assert.equal(limited.body.retryAfterSeconds, 42);
+    await http.post("/workspace/model-settings/test").set("authorization", authorization).send({ expectedVersionId: "v1", allowNonMainland: false }).expect(429);
+    unavailable = true;
+    const failed = await http.post("/workspace/model-settings").set("authorization", authorization).send(body).expect(503);
+    assert.equal(failed.body.code, "STORAGE_UNAVAILABLE"); assert.ok(!JSON.stringify(failed.body).includes("private-url"));
+    assert.equal(await settings.get({ userId: "owner", workspaceId: "studio" }), null);
+  } finally { await app.close(); }
+});
+
+test("未配置限流存储时模型写接口拒绝服务", async () => {
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async () => ({ userId: "owner", workspaceId: "studio" }) });
+  const settings = new WorkspaceModelSettings({ repository: new InMemoryModelSettingsRepository(), encryptionKey: new Uint8Array(32).fill(1), idGenerator: () => "v1", access: { read: async () => ({ owner: true, advanced: true }) } });
+  const ref = await Test.createTestingModule({ imports: [ModelSettingsApiModule.register({ sessionVerifier: sessions, settings })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
+  try {
+    await request(app.getHttpServer()).post("/workspace/model-settings").set("authorization", `Bearer ${await sessions.issue("owner", "studio")}`).send({ expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" }).expect(503);
+    assert.equal(await settings.get({ userId: "owner", workspaceId: "studio" }), null);
+  } finally { await app.close(); }
+});
+
 test("模型设置 API 只使用登录工作室，负责人保存 Key，成员仅脱敏读取", async () => {
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async (userId) => ({ userId, workspaceId: userId === "other" ? "other" : "studio" }) });
   let id = 0;
   const repository = new InMemoryModelSettingsRepository();
   const settings = new WorkspaceModelSettings({ repository, encryptionKey: new Uint8Array(32).fill(1), idGenerator: () => `v${++id}`, access: { read: async (actor) => ({ owner: actor.userId === "owner", advanced: true }) } });
-  const ref = await Test.createTestingModule({ imports: [ModelSettingsApiModule.register({ sessionVerifier: sessions, settings })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [ModelSettingsApiModule.register({ sessionVerifier: sessions, settings, rateLimiter: { consume: async () => ({ allowed: true, retryAfterSeconds: 0 }) } })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
   try {
     const http = request(app.getHttpServer());
@@ -42,7 +76,7 @@ test("连接测试的境外授权必须由负责人明确提供，失败不泄�
     access: { read: async (actor) => actor.userId === "outsider" ? null : ({ owner: actor.userId === "owner", advanced: actor.userId !== "free" }) },
     probe: { processingRegion: () => "overseas", test: async () => { probes++; if (fail) throw new Error("fixture-key"); return { modelIds: ["pinned"], processingRegion: "overseas" }; } },
   });
-  const ref = await Test.createTestingModule({ imports: [ModelSettingsApiModule.register({ sessionVerifier: sessions, settings })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [ModelSettingsApiModule.register({ sessionVerifier: sessions, settings, rateLimiter: { consume: async () => ({ allowed: true, retryAfterSeconds: 0 }) } })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
   try {
     const http = request(app.getHttpServer()); const owner = `Bearer ${await sessions.issue("owner", "studio")}`;
