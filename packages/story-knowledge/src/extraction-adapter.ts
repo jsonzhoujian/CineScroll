@@ -87,7 +87,7 @@ export class StoryKnowledgeExtractionRunner {
   }
 }
 
-function assertGenerationRequest(request: unknown): asserts request is StoryKnowledgeGenerationRequest {
+export function assertGenerationRequest(request: unknown): asserts request is StoryKnowledgeGenerationRequest {
   if (!isRecord(request)
     || !hasOnlyKeys(request, ["contractVersion", "jobId", "stage", "projectId", "chapterId", "sourceVersionId",
       "upstreamConfirmedVersionIds", "scopeKeys", "retryOfJobId", "generationParameters", "input"])

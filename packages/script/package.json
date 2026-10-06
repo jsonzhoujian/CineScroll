@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./bounded-json": "./src/bounded-json.ts",
     ".": "./src/index.ts",
     "./episode-plan-runner": "./src/episode-plan-runner.ts",
     "./script-content": "./src/script-content.ts",
