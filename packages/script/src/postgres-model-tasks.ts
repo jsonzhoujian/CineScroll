@@ -72,12 +72,17 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   async #transaction<T>(workspaceId: string, action: (client: ModelSettingsClient) => Promise<T>): Promise<T> {
     let client: ModelSettingsClient | undefined;
     try {
-      client = await this.#pool.connect(); await client.query("begin"); await client.query("set local statement_timeout='5s'");
+      client = await this.#pool.connect(); await client.query("begin isolation level read committed"); await client.query("set local statement_timeout='5s'");
       await client.query("select set_config('app.model_workspace_id',$1,true)", [workspaceId]);
       const result = await action(client); await client.query("commit"); return result;
     } catch (error) {
       try { await client?.query("rollback"); } catch { /* Sanitized below. */ }
       if (error instanceof ModelTaskError) throw error;
+      if (typeof error === "object" && error !== null && "code" in error) {
+        const capacity = { PZ001: "TASK_LIMITS_UNAVAILABLE", PZ002: "TASK_QUEUE_FULL", PZ003: "TASK_EXECUTION_FULL" } as const;
+        const code = String(error.code) as keyof typeof capacity;
+        if (capacity[code]) throw new ModelTaskError(capacity[code]);
+      }
       if (typeof error === "object" && error !== null && "code" in error && ["23505", "P0001"].includes(String(error.code))) throw new ModelTaskError("STATE_CONFLICT");
       throw new ModelTaskError("STORAGE_UNAVAILABLE");
     } finally { client?.release(); }

@@ -29,6 +29,7 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await expect(directory.getByText("待后续处理 · 3 字")).toBeVisible();
 
   let submitted = false;
+  let queueFull = false;
   let attempts = 0;
   let release!: () => void;
   const pendingSubmit = new Promise<void>(resolve => { release = resolve; });
@@ -40,6 +41,7 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await page.route(`${apiOrigin}/projects/project-1/chapters/chapter-2/story-knowledge-tasks**`, async route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "POST,GET,OPTIONS" } });
     if (route.request().method() === "POST") {
+      if (queueFull) return route.fulfill({ status: 429, headers: { "access-control-allow-origin": "*" }, json: { code: "TASK_QUEUE_FULL" } });
       expect(route.request().postDataJSON()).toEqual({ configurationVersionId: "config", modelId: "model" }); expect(route.request().headers().authorization).toBe("Bearer session-token");
       attempts++;
       if (attempts === 1) return route.fulfill({ status: 409, headers: { "access-control-allow-origin": "*" }, json: { code: "UPSTREAM_CHANGED", message: "fixture-secret" } });
@@ -68,6 +70,12 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await expect(page.getByRole("region", { name: "章节任务列表" }).getByRole("button", { name: "查看任务 first-task" })).toBeVisible();
   expect(attempts).toBe(2);
   await page.screenshot({ path: "/private/tmp/initial-story-task.png" });
+  queueFull = true;
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
+  await entry.getByLabel("首次生成模型").selectOption("model");
+  await entry.getByRole("button", { name: "创建故事知识任务" }).click();
+  await expect(entry.getByRole("status")).toContainText("工作室排队任务已达上限");
+  queueFull = false;
 
   tested = false;
   await entry.getByRole("button", { name: "读取可用模型" }).click();

@@ -6,10 +6,12 @@ import { randomUUID } from "node:crypto";
 import { WorkspaceModelSettings, InMemoryModelSettingsRepository } from "../src/model-settings.ts";
 import { ModelTaskService, InMemoryModelTaskRepository, TaskExecutionError, type ModelTaskRepository } from "../src/model-tasks.ts";
 import { PostgresModelTaskRepository } from "../src/postgres-model-tasks.ts";
+const fixtureLimits = () => ({ maxQueued: 100, maxExecuting: 100 });
 
-async function exercise(repository: ModelTaskRepository) {
+async function exercise(repository: ModelTaskRepository, configure?: (workspaceId: string) => Promise<void>) {
   let version = 0, job = 0, calls = 0;
   const actor = { userId: "u", workspaceId: randomUUID() };
+  await configure?.(actor.workspaceId);
   const settings = new WorkspaceModelSettings({ repository: new InMemoryModelSettingsRepository(), encryptionKey: new Uint8Array(32).fill(7),
     access: { read: async () => ({ owner: true, advanced: true }) }, idGenerator: () => `v${++version}`,
     probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
@@ -56,6 +58,7 @@ async function exercise(repository: ModelTaskRepository) {
   assert.equal(unicodePage.tasks[0]?.id, "\uE000");
   assert.equal((await repository.listStoryKnowledge(actor.workspaceId, "p", "unicode-list", { limit: 1, cursor: unicodePage.nextCursor })).tasks[0]?.id, "\u{10000}");
   const scanWorkspace = randomUUID();
+  await configure?.(scanWorkspace);
   for (const [id, stage] of [["scan-a", "story_knowledge"], ["scan-b", "story_knowledge"], ["scan-script", "script"]] as const) {
     await repository.insert({ ...original, workspaceId: scanWorkspace, id, input: { ...original.input, stage } });
   }
@@ -69,7 +72,52 @@ async function exercise(repository: ModelTaskRepository) {
   return original;
 }
 
-test("旧Key任务暂停，新任务保留原输入；上游变化拒绝重新提交", async () => { await exercise(new InMemoryModelTaskRepository()); });
+test("旧Key任务暂停，新任务保留原输入；上游变化拒绝重新提交", async () => { await exercise(new InMemoryModelTaskRepository(Date.now, fixtureLimits)); });
+
+async function exerciseLimits(repository: ModelTaskRepository, workspaceId: string) {
+  const template = await exercise(new InMemoryModelTaskRepository(Date.now, fixtureLimits));
+  const fixture = (id: string) => ({ ...template, workspaceId, id, parentTaskId: null });
+  const inserts = await Promise.allSettled([repository.insert(fixture("limit-a")), repository.insert(fixture("limit-b"))]);
+  assert.equal(inserts.filter(row => row.status === "fulfilled").length, 1);
+  const full = inserts.find(row => row.status === "rejected");
+  assert.equal(full?.status === "rejected" ? full.reason.code : null, "TASK_QUEUE_FULL");
+  const first = inserts.find(row => row.status === "fulfilled");
+  assert.ok(first && first.status === "fulfilled");
+  await repository.transition(workspaceId, first.value.id, 0, "running", null);
+  const next = await repository.insert(fixture("limit-next"));
+  await assert.rejects(() => repository.transition(workspaceId, next.id, 0, "running", null), { code: "TASK_EXECUTION_FULL" });
+  assert.equal((await repository.find(workspaceId, next.id))?.state, "queued");
+}
+test("工作室并发提交不会超过排队上限", async () => {
+  await exerciseLimits(new InMemoryModelTaskRepository(Date.now, () => ({ maxQueued: 1, maxExecuting: 1 })), "limit-workspace");
+});
+
+async function exerciseExecutionLimits(repository: ModelTaskRepository, workspaceId: string) {
+  const template = await exercise(new InMemoryModelTaskRepository(Date.now, fixtureLimits));
+  for (const id of ["execute-a", "execute-b"]) await repository.insert({ ...template, workspaceId, id, parentTaskId: null });
+  const claims = await Promise.allSettled([repository.transition(workspaceId, "execute-a", 0, "running", null), repository.transition(workspaceId, "execute-b", 0, "running", null)]);
+  assert.equal(claims.filter(row => row.status === "fulfilled").length, 1);
+  const full = claims.find(row => row.status === "rejected");
+  assert.equal(full?.status === "rejected" ? full.reason.code : null, "TASK_EXECUTION_FULL");
+}
+test("不同任务并发抢占受同一工作室执行上限约束", async () => {
+  await exerciseExecutionLimits(new InMemoryModelTaskRepository(Date.now, () => ({ maxQueued: 2, maxExecuting: 1 })), "execution-workspace");
+});
+test("过期与未知任务继续占用执行额度，匹配结果恢复后才释放", async () => {
+  let now = 0;
+  const repository = new InMemoryModelTaskRepository(() => now, () => ({ maxQueued: 2, maxExecuting: 1 }));
+  const template = await exercise(new InMemoryModelTaskRepository(Date.now, fixtureLimits));
+  const workspaceId = "uncertain-limits";
+  for (const id of ["held", "waiting"]) await repository.insert({ ...template, workspaceId, id, parentTaskId: null });
+  await repository.transition(workspaceId, "held", 0, "running", null);
+  now += 600_001;
+  await assert.rejects(() => repository.transition(workspaceId, "waiting", 0, "running", null), { code: "TASK_EXECUTION_FULL" });
+  await repository.recover(workspaceId, "held", 1, null);
+  await assert.rejects(() => repository.transition(workspaceId, "waiting", 0, "running", null), { code: "TASK_EXECUTION_FULL" });
+  await repository.recover(workspaceId, "held", 2, { candidateVersionId: "matched", extractionStatus: "succeeded" });
+  assert.equal((await repository.transition(workspaceId, "waiting", 0, "running", null)).state, "running");
+  await assert.rejects(() => new InMemoryModelTaskRepository().insert({ ...template, id: "no-config" }), { code: "TASK_LIMITS_UNAVAILABLE" });
+});
 
 test("故事知识许可缺失或受限禁止创建和执行，读取仍可用", async () => {
   const actor = { userId: "u", workspaceId: "policy-workspace" };
@@ -79,7 +127,7 @@ test("故事知识许可缺失或受限禁止创建和执行，读取仍可用",
     probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
   const saved = await settings.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" });
   const config = await settings.testConnection(actor, saved.id);
-  const options = { settings, repository: new InMemoryModelTaskRepository(), idGenerator: () => `policy${++job}`,
+  const options = { settings, repository: new InMemoryModelTaskRepository(Date.now, fixtureLimits), idGenerator: () => `policy${++job}`,
     contextReader: { read: async () => ({ stage: "story_knowledge" as const, sourceVersionId: "s", upstreamConfirmedVersionIds: [], generationParameters: { targetDurationSeconds: 180 as const, aspectRatio: "9:16" as const, narrativeMode: "narration" as const } }) } };
   const selection = { projectId: "p", chapterId: "c", configurationVersionId: config.id, modelId: "m" };
   await assert.rejects(() => new ModelTaskService(options).submit(actor, selection), { code: "POLICY_RESTRICTED" });
@@ -102,7 +150,7 @@ test("故事知识许可缺失或受限禁止创建和执行，读取仍可用",
 
 test("过期执行只恢复结果或转待人工处理，不再次调用模型", async () => {
   let now = Date.parse("2026-10-05T00:00:00Z");
-  const repository = new InMemoryModelTaskRepository(() => now);
+  const repository = new InMemoryModelTaskRepository(() => now, fixtureLimits);
   const original = await exercise(repository);
   const fixture = { ...original, input: { ...original.input, stage: "story_knowledge" as const, upstreamConfirmedVersionIds: [] }, id: "crashed", parentTaskId: null, model: original.model, state: "queued" as const, revision: 0, reason: null, result: null };
   await repository.insert(fixture);
@@ -140,7 +188,27 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     await admin.query(await readFile(new URL("../migrations/0006_chapter_task_list.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0007_story_task_scan.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0008_generation_policy_reason.sql", import.meta.url), "utf8"));
-    const original = await exercise(new PostgresModelTaskRepository(app));
+    await admin.query(await readFile(new URL("../migrations/0009_workspace_task_limits.sql", import.meta.url), "utf8"));
+    const configure = async (workspaceId: string) => { await admin.query("insert into workspace_task_limits values($1,100,100) on conflict do nothing", [workspaceId]); };
+    const original = await exercise(new PostgresModelTaskRepository(app), configure);
+    const limitWorkspace = randomUUID();
+    await admin.query("insert into workspace_task_limits values($1,1,1)", [limitWorkspace]);
+    await exerciseLimits(new PostgresModelTaskRepository(app), limitWorkspace);
+    const executionWorkspace = randomUUID();
+    await admin.query("insert into workspace_task_limits values($1,2,1)", [executionWorkspace]);
+    await exerciseExecutionLimits(new PostgresModelTaskRepository(app), executionWorkspace);
+    await admin.query("update workspace_task_limits set max_executing=0,max_queued=0 where workspace_id=$1", [executionWorkspace]);
+    const pending = (await new PostgresModelTaskRepository(app).find(executionWorkspace, "execute-a"))?.state === "queued" ? "execute-a" : "execute-b";
+    await assert.rejects(() => new PostgresModelTaskRepository(app).transition(executionWorkspace, pending, 0, "running", null), { code: "TASK_EXECUTION_FULL" });
+    await assert.rejects(() => new PostgresModelTaskRepository(app).insert({ ...original, workspaceId: executionWorkspace, id: "lowered-limit", parentTaskId: null }), { code: "TASK_QUEUE_FULL" });
+    const isolation = await admin.connect();
+    try {
+      await isolation.query("begin isolation level repeatable read");
+      const fixture = { ...original, workspaceId: executionWorkspace, id: "unsafe-isolation", parentTaskId: null };
+      const { state: fixtureState, revision: fixtureRevision, reason: fixtureReason, result: fixtureResult, leaseExpiresAt: fixtureLease, ...fixturePayload } = fixture;
+      await assert.rejects(() => isolation.query("insert into model_tasks(workspace_id,id,payload,state,revision) values($1,$2,$3::jsonb,'queued',0)", [executionWorkspace,fixture.id,JSON.stringify(fixturePayload)]), { code: "PZ001" });
+    } finally { await isolation.query("rollback"); isolation.release(); }
+    await assert.rejects(() => app.query("update workspace_task_limits set max_executing=999"), { code: "42501" });
     const { state, revision, reason, ...payload } = original;
     const constraintId = randomUUID();
     await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision) values($1,$2,$3::jsonb,'queued',0)", [original.workspaceId, constraintId, JSON.stringify({ ...payload, id: constraintId, parentTaskId: null })]);
@@ -161,6 +229,17 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     const repaired = await Promise.allSettled([durable.recover(original.workspaceId, crashedId, 2, result), durable.recover(original.workspaceId, crashedId, 2, result)]);
     assert.equal(repaired.filter(item => item.status === "fulfilled").length, 1);
     assert.deepEqual((await durable.find(original.workspaceId, crashedId))?.result, result);
+    const unknownWorkspace = randomUUID();
+    await admin.query("insert into workspace_task_limits values($1,2,1)", [unknownWorkspace]);
+    const heldPayload = { ...payload, workspaceId: unknownWorkspace, id: "held", parentTaskId: null };
+    await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision,lease_expires_at) values($1,'held',$2::jsonb,'running',1,clock_timestamp()-interval '1 second')", [unknownWorkspace,JSON.stringify(heldPayload)]);
+    await durable.insert({ ...original, workspaceId: unknownWorkspace, id: "waiting", parentTaskId: null });
+    await assert.rejects(() => durable.transition(unknownWorkspace, "waiting", 0, "running", null), { code: "TASK_EXECUTION_FULL" });
+    await durable.recover(unknownWorkspace, "held", 1, null);
+    await assert.rejects(() => durable.transition(unknownWorkspace, "waiting", 0, "running", null), { code: "TASK_EXECUTION_FULL" });
+    await durable.recover(unknownWorkspace, "held", 2, result);
+    assert.equal((await durable.transition(unknownWorkspace, "waiting", 0, "running", null)).state, "running");
+    await assert.rejects(() => durable.insert({ ...original, workspaceId: "missing-limits", id: "missing-limits", parentTaskId: null }), { code: "TASK_LIMITS_UNAVAILABLE" });
     assert.equal((await durable.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.length, 0);
     await assert.rejects(() => durable.transition(original.workspaceId, crashedId, 1, "succeeded", null, result), { code: "STATE_CONFLICT" });
     await assert.rejects(() => app.query("delete from model_tasks"));

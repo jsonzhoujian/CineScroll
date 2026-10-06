@@ -2,7 +2,7 @@ import { ModelTaskError, validateTaskScan, type ModelTaskRepository, type TaskSc
 import type { StoryKnowledgeTaskExecutor } from "./story-knowledge-task-executor.ts";
 
 type Options = { repository: ModelTaskRepository; executor: StoryKnowledgeTaskExecutor };
-export type DispatchItem = { id: string; outcome: "completed" | "raced" | "unavailable"; state?: TaskState; reason?: TaskReason | null };
+export type DispatchItem = { id: string; outcome: "completed" | "raced" | "unavailable" | "limited"; state?: TaskState; reason?: TaskReason | null };
 /** Internal bounded sweep, not a public API. Caller supplies a trusted workspace allowlist and scheduling policy. */
 export class StoryKnowledgeTaskDispatcher {
   readonly #options: Options;
@@ -21,7 +21,7 @@ export class StoryKnowledgeTaskDispatcher {
         items.push({ id: task.id, outcome: "completed", state: result.state, reason: result.reason });
       } catch (error) {
         // Never retry here: an exception may follow a paid call or a saved candidate.
-        items.push({ id: task.id, outcome: error instanceof ModelTaskError && error.code === "STATE_CONFLICT" ? "raced" : "unavailable" });
+        items.push({ id: task.id, outcome: error instanceof ModelTaskError && error.code === "TASK_EXECUTION_FULL" ? "limited" : error instanceof ModelTaskError && error.code === "STATE_CONFLICT" ? "raced" : "unavailable" });
       }
     }
     return { items, nextCursor: found.nextCursor };

@@ -18,7 +18,7 @@ export class TaskExecutionError extends Error {
 export type ModelTask = { id: string; workspaceId: string; createdBy: string; projectId: string; chapterId: string;
   parentTaskId: string | null; input: TaskInput; model: TaskModelSnapshot; state: TaskState; revision: number; reason: TaskReason | null; result: TaskResult | null; leaseExpiresAt: string | null };
 export class ModelTaskError extends Error {
-  readonly code: "TASK_NOT_FOUND" | "STATE_CONFLICT" | "UPSTREAM_CHANGED" | "INVALID_CONTEXT" | "STORAGE_UNAVAILABLE" | "POLICY_RESTRICTED";
+  readonly code: "TASK_NOT_FOUND" | "STATE_CONFLICT" | "UPSTREAM_CHANGED" | "INVALID_CONTEXT" | "STORAGE_UNAVAILABLE" | "POLICY_RESTRICTED" | "TASK_QUEUE_FULL" | "TASK_EXECUTION_FULL" | "TASK_LIMITS_UNAVAILABLE";
   constructor(code: ModelTaskError["code"]) { super(code); this.code = code; }
 }
 export interface ModelTaskRepository {
@@ -147,7 +147,15 @@ function sameInput(a: TaskInput, b: TaskInput) {
 export class InMemoryModelTaskRepository implements ModelTaskRepository {
   readonly #tasks = new Map<string, ModelTask>();
   readonly #clock: () => number;
-  constructor(clock: () => number = Date.now) { this.#clock = clock; }
+  readonly #limits: (workspaceId: string) => { maxQueued: number; maxExecuting: number } | null;
+  constructor(clock: () => number = Date.now, limits: (workspaceId: string) => { maxQueued: number; maxExecuting: number } | null = () => null) { this.#clock = clock; this.#limits = limits; }
+  #admit(workspaceId: string, mode: "queued" | "running") {
+    const limits = this.#limits(workspaceId);
+    if (!limits || ![limits.maxQueued,limits.maxExecuting].every(value => Number.isInteger(value) && value >= 0 && value <= 2147483647)) throw new ModelTaskError("TASK_LIMITS_UNAVAILABLE");
+    const count = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && (mode === "queued" ? task.state === "queued"
+      : task.state === "running" || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN")).length;
+    if (count >= (mode === "queued" ? limits.maxQueued : limits.maxExecuting)) throw new ModelTaskError(mode === "queued" ? "TASK_QUEUE_FULL" : "TASK_EXECUTION_FULL");
+  }
   async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     validateTaskScan(mode, page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.input.stage === "story_knowledge"
@@ -171,6 +179,7 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async insert(task: ModelTask) {
     if (task.state !== "queued" || task.revision !== 0 || task.reason !== null || task.result !== null || task.leaseExpiresAt !== null) throw new ModelTaskError("STATE_CONFLICT");
     if (this.#tasks.has(this.#key(task.workspaceId, task.id)) || (task.parentTaskId && [...this.#tasks.values()].some(t => t.workspaceId === task.workspaceId && t.parentTaskId === task.parentTaskId))) throw new ModelTaskError("STATE_CONFLICT");
+    this.#admit(task.workspaceId, "queued");
     this.#tasks.set(this.#key(task.workspaceId, task.id), structuredClone(task)); return structuredClone(task);
   }
   async transition(workspaceId: string, id: string, revision: number, state: TaskState, reason: TaskReason | null, result: TaskResult | null = null) {
@@ -178,6 +187,7 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
     validateTaskResult(state, result);
     const old = this.#tasks.get(this.#key(workspaceId, id));
     if (!old || old.revision !== revision || !(old.state === "queued" && state === "running" || old.state === "running" && ["paused", "failed", "succeeded"].includes(state))) throw new ModelTaskError("STATE_CONFLICT");
+    if (state === "running") this.#admit(workspaceId, "running");
     const updated = { ...old, state, reason, result: structuredClone(result), revision: revision + 1,
       leaseExpiresAt: state === "running" ? new Date(this.#clock() + 600_000).toISOString() : null };
     this.#tasks.set(this.#key(workspaceId, id), updated); return structuredClone(updated);

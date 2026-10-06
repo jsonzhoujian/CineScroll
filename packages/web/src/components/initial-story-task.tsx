@@ -50,7 +50,7 @@ function failure(error: unknown) {
     if (error.status === 403) return "无权创建任务或订阅已失效，请联系负责人。";
     if (error.status === 404) return "章节无权访问、不存在，或任务模块尚未启用。";
     if (error.status === 409) return "原文、候选或模型配置已变化，请刷新核对后操作。";
-    if (error.status === 429) return "请求过于频繁，请稍后再核对任务列表。";
+    if (error.status === 429) return error.code === "TASK_QUEUE_FULL" ? "工作室排队任务已达上限，请先处理已有任务后再创建。" : "请求过于频繁，请稍后再核对任务列表。";
   }
   return "操作未完成，提交结果可能未知。请先刷新任务列表核对，不会自动重试。";
 }

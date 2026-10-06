@@ -119,6 +119,7 @@ function describe(error: unknown) {
   if (error instanceof ApiClientError) {
     if (error.status === 401) return "登录已失效，请重新登录。";
     if (error.status === 403) return "无权操作或订阅已失效，请联系负责人。";
+    if (error.status === 429 && error.code === "TASK_QUEUE_FULL") return "工作室排队任务已达上限，请先处理已有任务后再重新提交。";
     if (error.status === 404) return "任务或候选不存在、无权访问，或当前服务尚未启用任务模块。";
     if (error.status === 409) return "任务、原文或模型配置已变化，请刷新状态后再操作；不会自动重提。";
   }
