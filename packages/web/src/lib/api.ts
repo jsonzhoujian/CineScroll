@@ -96,6 +96,12 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 
 export class ApiClient {
+  getChapterContext(projectId: string, chapterId: string) {
+    return this.request<{ project: { id: string; title: string; role: "owner" | "editor" | "reviewer" } & Pick<ProjectDraft, "aspectRatio" | "targetDurationSeconds" | "narrativeMode">; chapter: Chapter }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/context`, { method: "GET", cache: "no-store" }, "session");
+  }
+  getChapter(projectId: string, chapterId: string) {
+    return this.request<Chapter>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}`, { method: "GET", cache: "no-store" }, "session");
+  }
   storyTaskAvailability(projectId: string, chapterId: string, input: { configurationVersionId: string; modelId: string }) {
     const query = new URLSearchParams(input);
     return this.request<{ available: boolean; reason: "WORKSPACE_TASK_DISABLED" | "TASK_PROVIDER_UNSUPPORTED" | null }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge-tasks/availability?${query}`, { method: "GET", cache: "no-store" }, "session");

@@ -15,11 +15,12 @@ const conflictLabels = {
   author_contradiction: "原著前后矛盾", other: "其他",
 } as const;
 
-export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage, onNotice, onConfirmationChange, cursor, onCursorChange }: {
+export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage, onNotice, onConfirmationChange, cursor, onCursorChange, expectedVersionId }: {
   api: ApiClient;
   project: { id: string; title: string };
   chapter: Chapter;
   canManageStage: boolean;
+  expectedVersionId?: string;
   onNotice(message: string): void;
   onConfirmationChange(confirmed: boolean): void;
   cursor: { filter: ReviewFilter; selectedId: string | null };
@@ -37,7 +38,18 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
   const loadVersion = () => {
     let active = true;
     setLoading(true); setLoadError(null);
-    void api.getStoryKnowledge(project.id, chapter.id)
+    const read = async () => {
+      const result = await api.getStoryKnowledge(project.id, chapter.id);
+      if (expectedVersionId) {
+        const current = await api.getChapter(project.id, chapter.id);
+        if (result.id !== expectedVersionId || result.projectId !== project.id || result.chapterId !== chapter.id ||
+          result.sourceVersionId !== chapter.activeSourceVersionId || current.id !== chapter.id || current.activeSourceVersionId !== chapter.activeSourceVersionId) {
+          throw new Error("原文或活动候选已变化，停止审核；请返回任务面板查看历史结果。");
+        }
+      }
+      return result;
+    };
+    void read()
       .then((result) => { if (active) { setVersion(result); onCursorChange({ filter, selectedId: selectedId && result.facts.some(({ id }) => id === selectedId) ? selectedId : result.facts[0]?.id ?? null }); onConfirmationChange(result.status === "confirmed"); } })
       .catch((error: unknown) => {
         if (!active) return;
@@ -56,7 +68,7 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
     return loadVersion();
     // api and identity callbacks are stable for the lifetime of this project view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, chapter.id, onNotice, project.id]);
+  }, [api, chapter.id, onNotice, project.id, expectedVersionId]);
 
   const rows = useMemo(() => version ? buildReviewRows(version, filter) : [], [filter, version]);
   const selected = selectVisibleFact(rows, selectedId);

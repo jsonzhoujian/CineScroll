@@ -1,5 +1,69 @@
 import { expect, test, type Page } from "@playwright/test";
 const origin = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
+test("任务候选可进入对应章节审核，部分成功不自动确认", async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,OPTIONS" };
+  const chapter = { id: "c", title: "雨落", activeSourceVersionId: "s", versions: [{ id: "s", ordinal: 1, text: "雨落", fragments: [{ id: "f", ordinal: 1, text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`, route => route.fulfill({ headers, json: { project: { id: "p", title: "测试作品", role: "owner", aspectRatio: "16:9", targetDurationSeconds: 60, narrativeMode: "dialogue" }, chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`, route => route.fulfill({ headers, json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`, route => route.fulfill({ headers, json: {
+    id: "candidate", extractionJobId: "task", projectId: "p", chapterId: "c", sourceVersionId: "s", status: "candidate", extractionStatus: "partially_succeeded",
+    facts: [{ id: "rain", factType: "worldRule", statement: "雨落", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "s", fragmentId: "f" }] }],
+    failures: [{ scopeKey: "identity", originJobId: "task", code: "UNKNOWN", message: "待确认", retryable: true }],
+  } }));
+  await page.getByRole("button", { name: "进入审核", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "逐条核证，再让故事进入剧本" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认故事知识阶段" })).toBeDisabled();
+  await expect(page.getByRole("textbox", { name: "事实陈述" })).toHaveValue("雨落");
+  await page.getByRole("textbox", { name: "事实陈述" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "/private/tmp/task-review-entry.png" });
+});
+for (const change of ["source", "candidate", "during-load"]) {
+  test(`任务审核入口拒绝历史或晚到变化：${change}`, async ({ page }) => {
+    await setup(page);
+    const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,OPTIONS" };
+    const chapter = { id: "c", title: "雨落", activeSourceVersionId: change === "source" ? "new-source" : "s", versions: [] };
+    await page.route(`${origin}/projects/p/chapters/c/context`, route => route.fulfill({ headers, json: { project: { id: "p", title: "测试作品", role: "editor" }, chapter } }));
+    await page.route(`${origin}/projects/p/chapters/c`, route => route.fulfill({ headers, json: chapter }));
+    let reads = 0;
+    await page.route(`${origin}/projects/p/chapters/c/story-knowledge`, route => {
+      if (route.request().method() !== "OPTIONS") reads++;
+      return route.fulfill({ headers, json: { id: change === "candidate" || change === "during-load" && reads > 1 ? "new-candidate" : "candidate",
+        extractionJobId: "task", projectId: "p", chapterId: "c", sourceVersionId: "s", status: "candidate", extractionStatus: "partially_succeeded", facts: [], failures: [] } });
+    });
+    await page.getByRole("button", { name: "进入审核", exact: true }).click();
+    if (change === "during-load") await expect(page.getByText(/原文或活动候选已变化，停止审核/)).toBeVisible();
+    else {
+      await expect(page.getByText(/该结果已不是当前原文或活动候选，仅可只读预览/)).toBeVisible();
+      await expect(page.getByRole("heading", { name: "逐条核证，再让故事进入剧本" })).toHaveCount(0);
+      await page.getByRole("button", { name: "查看候选版本" }).click();
+      await expect(page.getByRole("region", { name: "任务候选版本" })).toBeVisible();
+    }
+    await expect(page.getByRole("button", { name: "确认故事知识阶段" })).toHaveCount(0);
+  });
+}
+test("原文流程请求在途时不能切入任务审核", async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,POST,OPTIONS" };
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  await page.route(`${origin}/projects`, async route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ headers, status: 204 });
+    entered(); await gate;
+    await route.fulfill({ headers, json: { id: "new-project", title: "另一个项目" } });
+  });
+  await page.route(`${origin}/projects/p/chapters/c/context`, route => route.fulfill({ headers, json: { project: { id: "p", title: "测试作品", role: "owner" }, chapter: { id: "c", activeSourceVersionId: "s", versions: [] } } }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`, route => route.fulfill({ headers, json: { id: "candidate", projectId: "p", chapterId: "c", sourceVersionId: "s", extractionJobId: "task" } }));
+  try {
+    await page.getByLabel("项目名称").fill("另一个项目");
+    await page.getByRole("checkbox", { name: /拥有该作品或合法改编权/ }).check();
+    await page.getByRole("button", { name: /创建项目/ }).click(); await started;
+    await page.getByRole("button", { name: "进入审核", exact: true }).click();
+    await expect(page.getByText("请等待当前原文流程操作完成，再进入任务审核。")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "逐条核证，再让故事进入剧本" })).toHaveCount(0);
+  } finally { release(); }
+});
 async function login(page: Page) {
   await page.getByRole("button", { name: "获取验证码" }).click();
   await page.getByLabel("验证码").fill("123456");

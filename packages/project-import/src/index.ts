@@ -410,6 +410,16 @@ export class ProjectImportService {
     return chapter;
   }
 
+  async getChapterContext(actor: Actor, projectId: string, chapterId: string) {
+    const access = await this.dependencies.repository.findProjectAccess(actor, projectId);
+    if (!access) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
+    const project = await this.dependencies.repository.findProject(actor, projectId);
+    const chapter = await this.getChapter(actor, projectId, chapterId);
+    if (!project) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
+    return { project: { id: project.id, title: project.title, role: access.role,
+      aspectRatio: project.aspectRatio, targetDurationSeconds: project.targetDurationSeconds, narrativeMode: project.narrativeMode }, chapter };
+  }
+
   async getImportedDocument(actor: Actor, projectId: string, documentId: string): Promise<ImportedDocument> {
     await this.authorizedProject(actor, projectId, false);
     const document = await this.dependencies.repository.findImportedDocument(actor, projectId, documentId);

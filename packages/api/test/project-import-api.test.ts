@@ -116,6 +116,13 @@ test("已认证用户可预检多章节、选择一章导入并读取可追溯�
     const chapter = await request(app.getHttpServer())
       .get(`/projects/${project.body.id}/chapters/${imported.body.chapter.id}`).set(authorized()).expect(200);
     assert.equal(chapter.body.title, "第2章 风起");
+    const contextPath = `/projects/${project.body.id}/chapters/${imported.body.chapter.id}/context`;
+    await request(app.getHttpServer()).get(contextPath).expect(401);
+    const context = await request(app.getHttpServer()).get(contextPath).set(authorized()).expect(200);
+    assert.equal(context.body.project.id, project.body.id);
+    assert.equal(context.body.project.role, "owner");
+    assert.equal(context.body.project.members, undefined);
+    assert.equal(context.body.chapter.id, imported.body.chapter.id);
     assert.equal(chapter.body.versions[0].text, "剑鸣。");
     assert.ok(chapter.body.versions[0].fragments[0].id);
 
@@ -137,6 +144,8 @@ test("已认证用户可预检多章节、选择一章导入并读取可追溯�
       .get(`/projects/${project.body.id}/chapters/${imported.body.chapter.id}`)
       .set(outsiderAuthorization).expect(404);
     assert.equal(hidden.body.code, "PROJECT_NOT_FOUND");
+    const hiddenContext = await request(app.getHttpServer()).get(contextPath).set(outsiderAuthorization).expect(404);
+    assert.equal(hiddenContext.body.code, "PROJECT_NOT_FOUND");
     await request(app.getHttpServer()).post(`/projects/${project.body.id}/imports/inspect`)
       .set(outsiderAuthorization).send(document).expect(404);
     await request(app.getHttpServer()).post(`/projects/${project.body.id}/chapters/import`)

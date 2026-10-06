@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryKnowledgeTask, type StoryKnowledgeVersion } from "../lib/api";
+import { ApiClientError, type ApiClient, type Chapter, type ModelConfiguration, type StoryKnowledgeTask, type StoryKnowledgeVersion } from "../lib/api";
 import { taskPresentation } from "../lib/task-status";
 import { ChapterTaskList, type TaskChapterContext } from "./chapter-task-list";
 import { InitialStoryTask } from "./initial-story-task";
 import { useTaskAvailability } from "../lib/use-task-availability";
 
-export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiClient; context?: TaskChapterContext; activeProjectId?: string }) {
+export type TaskReviewTarget = Awaited<ReturnType<ApiClient["getChapterContext"]>> & { expectedVersionId: string };
+export function TaskStatusPanel({ api, context, activeProjectId, onReview }: { api: ApiClient; context?: TaskChapterContext; activeProjectId?: string; onReview?(target: TaskReviewTarget): void }) {
   const [listContext, setListContext] = useState<TaskChapterContext | null>(null);
   const [listRevision, setListRevision] = useState(0);
   const [input, setInput] = useState(""), [id, setId] = useState("");
@@ -87,6 +88,26 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
     } catch (error) { if (stamp === epoch.current) { setNotice(describe(error)); setConfiguration(null); } }
     finally { if (stamp === epoch.current) setBusy(false); }
   }
+  async function enterReview() {
+    if (!task?.result || !onReview || busy) return;
+    const selected = task, resultId = task.result.candidateVersionId, stamp = epoch.current;
+    setBusy(true);
+    try {
+      const [current, target, active] = await Promise.all([api.getStoryKnowledgeTask(selected.id),
+        api.getChapterContext(selected.projectId, selected.chapterId), api.getStoryKnowledge(selected.projectId, selected.chapterId)]);
+      if (stamp !== epoch.current) return;
+      if (current.id !== selected.id || current.projectId !== selected.projectId || current.chapterId !== selected.chapterId ||
+        current.result?.candidateVersionId !== resultId || current.input.sourceVersionId !== selected.input.sourceVersionId ||
+        target.project.id !== selected.projectId || target.chapter.id !== selected.chapterId ||
+        !["owner", "editor", "reviewer"].includes(target.project.role)) throw new Error("context mismatch");
+      if (target.chapter.activeSourceVersionId !== selected.input.sourceVersionId || active.id !== resultId ||
+        active.projectId !== selected.projectId || active.chapterId !== selected.chapterId || active.sourceVersionId !== selected.input.sourceVersionId || active.extractionJobId !== selected.id) {
+        setNotice("该结果已不是当前原文或活动候选，仅可只读预览；请核对当前章节后再审核。"); return;
+      }
+      onReview({ ...target, expectedVersionId: resultId });
+    } catch (error) { if (stamp === epoch.current) setNotice(describe(error)); }
+    finally { if (stamp === epoch.current) setBusy(false); }
+  }
   const presentation = task ? taskPresentation(task) : null;
   return <section className="task-panel" aria-label="故事知识任务">
     <header><div><span className="eyebrow">后台任务 · 单任务查看</span><h2>故事知识任务</h2></div><span className="task-stamp">待审之卷</span></header>
@@ -101,6 +122,7 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
     {task && presentation && <article className="task-summary">
       <div><span className={`task-state state-${task.state}`}>{presentation.label}</span><p>{presentation.note}</p><small>任务 {task.id} · 原文 {task.input.sourceVersionId}<br />项目 {task.projectId} · 章节 {task.chapterId}（不跟随当前工作台选择）</small></div>
       {task.result && <button className="button secondary" disabled={busy} onClick={() => void viewCandidate()}>查看候选版本</button>}
+      {task.result && onReview && <button className="button primary" disabled={busy} onClick={() => void enterReview()}>进入审核</button>}
       {presentation.canResubmit && <div className="task-resubmit desktop-task-action">
         <label>当前已测试模型<select value={modelId} disabled={busy || !configuration} onChange={event => setModelId(event.target.value)}><option value="">选择模型</option>{configuration?.availableModelIds.map(model => <option key={model}>{model}</option>)}</select></label>
         <small>配置版本 {configuration?.id ?? "不可用"} · 此操作创建新任务，不覆盖旧记录。</small>

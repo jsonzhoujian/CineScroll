@@ -7,6 +7,7 @@ import {
   Catch,
   Controller,
   Get,
+  Header,
   Inject,
   Injectable,
   Module,
@@ -219,6 +220,9 @@ export class ProjectController {
 
   getChapter(request: AuthenticatedRequest, projectId: string, chapterId: string) {
     return this.projects.getChapter(request.actor!, projectId, chapterId);
+  }
+  getChapterContext(request: AuthenticatedRequest, projectId: string, chapterId: string) {
+    return this.projects.getChapterContext(request.actor!, projectId, chapterId);
   }
 
   getImportedDocument(request: AuthenticatedRequest, projectId: string, documentId: string) {
@@ -455,6 +459,11 @@ Req()(ProjectController.prototype, "importChapter", 0);
 Param("projectId")(ProjectController.prototype, "importChapter", 1);
 Body()(ProjectController.prototype, "importChapter", 2);
 Get(":projectId/chapters/:chapterId")(ProjectController.prototype, "getChapter", Object.getOwnPropertyDescriptor(ProjectController.prototype, "getChapter")!);
+Get(":projectId/chapters/:chapterId/context")(ProjectController.prototype, "getChapterContext", Object.getOwnPropertyDescriptor(ProjectController.prototype, "getChapterContext")!);
+Header("Cache-Control", "no-store")(ProjectController.prototype, "getChapterContext", Object.getOwnPropertyDescriptor(ProjectController.prototype, "getChapterContext")!);
+Req()(ProjectController.prototype, "getChapterContext", 0);
+Param("projectId")(ProjectController.prototype, "getChapterContext", 1);
+Param("chapterId")(ProjectController.prototype, "getChapterContext", 2);
 Req()(ProjectController.prototype, "getChapter", 0);
 Param("projectId")(ProjectController.prototype, "getChapter", 1);
 Param("chapterId")(ProjectController.prototype, "getChapter", 2);

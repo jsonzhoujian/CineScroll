@@ -9,7 +9,7 @@ import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../
 import type { ReviewFilter } from "../lib/story-knowledge-review";
 import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
 import { ModelSettingsPanel } from "./model-settings-panel";
-import { TaskStatusPanel } from "./task-status-panel";
+import { TaskStatusPanel, type TaskReviewTarget } from "./task-status-panel";
 
 type Step = "login" | "project" | "source" | "chapter" | "version";
 type MobileTab = "progress" | "review" | "decisions" | "notifications";
@@ -49,9 +49,22 @@ export function ImportWorkbench() {
   const [reimportText, setReimportText] = useState("");
   const [diff, setDiff] = useState<SourceVersionDiff | null>(null);
   const [busy, setBusy] = useState(false);
+  const workflowBusy = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmedStoryKnowledgeChapterId, setConfirmedStoryKnowledgeChapterId] = useState<string | null>(null);
   const [reviewCursor, setReviewCursor] = useState<{ filter: ReviewFilter; selectedId: string | null }>({ filter: "all", selectedId: null });
+  const [taskReviewTarget, setTaskReviewTarget] = useState<TaskReviewTarget | null>(null);
+  const enterTaskReview = (target: TaskReviewTarget) => {
+    if (workflowBusy.current) { setNotice("请等待当前原文流程操作完成，再进入任务审核。"); return; }
+    setProject(target.project); setChapter(target.chapter); setTaskReviewTarget(target);
+    setProjectDraft({ title: target.project.title, rightsDeclared: false, aspectRatio: target.project.aspectRatio,
+      targetDurationSeconds: target.project.targetDurationSeconds, narrativeMode: target.project.narrativeMode });
+    setConfirmedStoryKnowledgeChapterId(null); setReviewCursor({ filter: "all", selectedId: null });
+    setImportedDocument(null); setDocument(null); setChapters([]); setSelectedChapter(null);
+    setSourceText(""); setFile(null); setDiff(null); setReimportText("");
+    setNavigation({ step: "version", mode: "review" });
+    setNotice("已定位任务对应章节；候选需逐项审核，不会自动确认。");
+  };
   const syncStoryKnowledgeConfirmation = useCallback((chapterId: string, confirmed: boolean) => {
     setConfirmedStoryKnowledgeChapterId((current) => confirmed ? chapterId : current === chapterId ? null : current);
   }, []);
@@ -88,9 +101,10 @@ export function ImportWorkbench() {
   }, [api]);
 
   const run = async (operation: () => Promise<void>) => {
+    workflowBusy.current = true;
     setBusy(true); setNotice(null);
     try { await operation(); } catch (error) { setNotice(error instanceof Error ? error.message : "操作失败，请重试"); }
-    finally { setBusy(false); }
+    finally { workflowBusy.current = false; setBusy(false); }
   };
 
   const sendCode = () => run(async () => {
@@ -183,7 +197,7 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
-        {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} />}
+        {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>
@@ -217,7 +231,11 @@ export function ImportWorkbench() {
         </Panel>}
 
         {mode === "trace" && step === "version" && chapter && <VersionDesk chapter={chapter} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
-        {mode !== "trace" && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
+        {mode === "review" && taskReviewTarget && taskReviewTarget.project.id === project?.id && taskReviewTarget.chapter.id === chapter?.id
+          ? <StoryKnowledgeWorkbench key={`task-review:${taskReviewTarget.expectedVersionId}`} api={api} project={taskReviewTarget.project} chapter={taskReviewTarget.chapter}
+              expectedVersionId={taskReviewTarget.expectedVersionId} canManageStage={taskReviewTarget.project.role !== "editor"} cursor={reviewCursor}
+              onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
+          : mode !== "trace" && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
 
