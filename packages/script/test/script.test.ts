@@ -5,6 +5,17 @@ import { InMemoryScriptRepository, ScriptService } from "../src/index.ts";
 
 const actor = { userId: "usr_owner", workspaceId: "wsp_studio" } as const;
 
+test("拆集方案上游知识变化后不能确认旧候选", async () => {
+  let upstream = "bible-1", id = 0;
+  const service = new ScriptService({ repository: new InMemoryScriptRepository(), accessReader: { findProjectAccess: async () => ({ role: "owner" }) },
+    upstreamReader: { findConfirmedStoryBible: async () => ({ versionId: upstream, sourceVersionId: "s", factIds: ["event"], fragmentIds: ["f"] }) },
+    idGenerator: () => `plan-${++id}`, clock: () => new Date("2026-10-06") });
+  const candidate = await service.recordEpisodePlan(actor, { expectedActiveVersionId: null, projectId: "p", chapterId: "c", sourceVersionId: "s", storyBibleVersionId: "bible-1", targetDurationSeconds: 60,
+    aspectRatio: "9:16", narrativeMode: "dialogue", episodes: [{ id: "e", ordinal: 1, title: "雨落", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }], majorAdaptationProposals: [] });
+  upstream = "bible-2";
+  await assert.rejects(() => service.confirmEpisodePlan(actor, "p", "c", { expectedActiveVersionId: candidate.id }), { code: "VERSION_CONFLICT" });
+});
+
 test("重大改编建议必须逐项裁决，获批后才能确认拆集方案", async () => {
   const ids = ["plan_candidate", "plan_decided", "plan_confirmed"];
   const service = new ScriptService({

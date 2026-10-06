@@ -7,6 +7,7 @@ import "./mobile.css";
 import "./story-knowledge.css";
 import "./model-settings.css";
 import "./task-status.css";
+import "./episode-plan.css";
 
 export const metadata: Metadata = {
   title: "映卷 · 小说动态漫改编工作台",

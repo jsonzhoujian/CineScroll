@@ -88,6 +88,12 @@ export type StoryKnowledgeVersion = {
 };
 
 type CredentialMode = "none" | "device" | "session";
+export type EpisodePlanView = {
+  plan: { id: string; projectId: string; chapterId: string; sourceVersionId: string; storyBibleVersionId: string; status: "candidate" | "confirmed"; targetDurationSeconds: number; recommendationRationale?: string;
+    episodes: Array<{ id: string; ordinal: number; title: string; sourceFragmentIds: string[]; coreEventFactIds: string[] }>;
+    majorAdaptationProposals: Array<{ id: string; summary: string; rationale: string; affectedFactIds: string[]; decision?: { outcome: "approved" | "rejected"; reason?: string } }> };
+  current: boolean; canReview: boolean; sourceFragments: Array<{ id: string; text: string }>; coreEvents: Array<{ id: string; statement: string }>;
+};
 
 export type ModelConfiguration = { id: string; providerId: string; keyMask: string; tested: boolean; availableModelIds: string[]; processingRegion: "mainland" | "overseas" | "unknown" };
 export type ModelCapabilities = { advanced: boolean; canManage: boolean; providers: Array<{ id: string; name: string; kind: string; available: boolean; processingRegion: "mainland" | "overseas" | "unknown" }> };
@@ -96,6 +102,13 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 
 export class ApiClient {
+  getEpisodePlan(projectId: string, chapterId: string) { return this.request<EpisodePlanView>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan`, { method: "GET", cache: "no-store" }, "session"); }
+  decideEpisodeAdaptation(projectId: string, chapterId: string, proposalId: string, input: { expectedActiveVersionId: string; decision: "approved" | "rejected"; reason: string }) {
+    return this.request<EpisodePlanView["plan"]>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan/proposals/${encodeURIComponent(proposalId)}/decision`, { method: "POST", body: JSON.stringify(input) }, "session");
+  }
+  confirmEpisodePlan(projectId: string, chapterId: string, expectedActiveVersionId: string) {
+    return this.request<EpisodePlanView["plan"]>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan/confirm`, { method: "POST", body: JSON.stringify({ expectedActiveVersionId }) }, "session");
+  }
   getChapterContext(projectId: string, chapterId: string) {
     return this.request<{ project: { id: string; title: string; role: "owner" | "editor" | "reviewer" } & Pick<ProjectDraft, "aspectRatio" | "targetDurationSeconds" | "narrativeMode">; chapter: Chapter }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/context`, { method: "GET", cache: "no-store" }, "session");
   }

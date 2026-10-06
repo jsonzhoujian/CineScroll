@@ -1,0 +1,13 @@
+.episode-plan-panel{margin:24px 0;border-top:3px solid var(--jade);padding:24px;background:var(--sheet)}
+.episode-plan-panel>header{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.episode-plan-panel>header h2{font-size:26px;font-weight:500}
+.episode-plan-panel nav{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+.episode-plan-panel nav [aria-pressed=true]{border-color:var(--vermilion);color:var(--vermilion)}
+.episode-plan-evidence{display:grid;grid-template-columns:1.4fr 1fr;border:1px solid var(--line)}
+.episode-plan-evidence section{padding:18px}.episode-plan-evidence section+section{border-left:1px solid var(--line)}
+.episode-plan-evidence article{border-left:2px solid var(--gold);padding:10px 14px;background:#eee7d9;margin-bottom:12px}
+.episode-plan-panel h3{font-size:15px;font-weight:500}.episode-plan-panel small{color:var(--muted);overflow-wrap:anywhere}
+.episode-proposal{margin:14px 0;padding:18px;border:1px solid var(--line);background:rgba(255,255,255,.45)}
+.episode-proposal label{display:block;margin:14px 0;font-size:12px}.episode-proposal input{display:block;width:100%;margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--sheet)}
+.episode-proposal button+button{margin-left:10px}
+@media(max-width:720px){.episode-plan-panel{padding:16px}.episode-plan-panel>header{align-items:start;flex-direction:column}.episode-plan-evidence{grid-template-columns:1fr}.episode-plan-evidence section+section{border-left:0;border-top:1px solid var(--line)}}

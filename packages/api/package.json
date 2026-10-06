@@ -8,7 +8,8 @@
     "./model-settings": "./src/model-settings-api.ts",
     "./story-knowledge-tasks": "./src/story-knowledge-task-api.ts",
     "./story-knowledge-task-context": "./src/story-knowledge-task-context.ts",
-    "./story-knowledge-task-executor": "./src/story-knowledge-task-executor.ts"
+    "./story-knowledge-task-executor": "./src/story-knowledge-task-executor.ts",
+    "./episode-plans": "./src/episode-plan-api.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

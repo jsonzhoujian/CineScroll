@@ -63,6 +63,7 @@ export type RecordEpisodePlanInput = Readonly<{
 }>;
 
 export interface ScriptRepository {
+  findEpisodePlanVersion(actor: Actor, projectId: string, chapterId: string, versionId: string): Promise<EpisodePlanVersion | null>;
   saveEpisodePlan(
     actor: Actor,
     version: EpisodePlanVersion,
@@ -109,6 +110,7 @@ export class ScriptError extends Error {
     | "UNRESOLVED_MAJOR_ADAPTATION"
     | "CONFIRMED_PLAN_REQUIRES_SUGGESTION"
     | "FORBIDDEN"
+    | "STORAGE_UNAVAILABLE"
     | "VERSION_CONFLICT";
 
   constructor(code: ScriptError["code"], message: string) {
@@ -123,6 +125,7 @@ export class InMemoryScriptRepository implements ScriptRepository {
   readonly #versions = new Map<string, EpisodePlanVersion>();
   readonly #confirmedVersionIds = new Map<string, string>();
   readonly #operationResults = new Map<string, { fingerprint: string; versionId: string }>();
+  async findEpisodePlanVersion(actor: Actor, projectId: string, chapterId: string, id: string) { return structuredClone(this.#versions.get(versionKey(key(actor, projectId, chapterId), id)) ?? null); }
 
   async saveEpisodePlan(
     actor: Actor,
@@ -261,6 +264,17 @@ export class ScriptService {
       createdAt: this.#clock().toISOString(),
     }, input.expectedActiveVersionId, generationOperation);
   }
+  async getEpisodePlan(actor: Actor, projectId: string, chapterId: string, versionId?: string): Promise<EpisodePlanVersion> {
+    if (!await this.#accessReader.findProjectAccess(actor, projectId)) throw new ScriptError("EPISODE_PLAN_NOT_FOUND", "拆集方案不存在");
+    const version = versionId ? await this.#repository.findEpisodePlanVersion(actor, projectId, chapterId, versionId) : await this.#repository.findActiveEpisodePlan(actor, projectId, chapterId);
+    if (!version) throw new ScriptError("EPISODE_PLAN_NOT_FOUND", "拆集方案不存在");
+    return version;
+  }
+  async #assertCurrentUpstream(actor: Actor, projectId: string, chapterId: string, version: EpisodePlanVersion) {
+    const upstream = await this.#upstreamReader.findConfirmedStoryBible(actor, projectId, chapterId);
+    if (!upstream) throw new ScriptError("CONFIRMED_STORY_BIBLE_NOT_FOUND", "请先确认当前原文的故事知识");
+    if (upstream.versionId !== version.storyBibleVersionId || upstream.sourceVersionId !== version.sourceVersionId) throw new ScriptError("VERSION_CONFLICT", "拆集方案上游已变化");
+  }
 
   async decideMajorAdaptation(
     actor: Actor,
@@ -280,12 +294,14 @@ export class ScriptService {
     };
     const replayed = await this.#repository.findOperationResult(actor, projectId, chapterId, operation.key);
     if (replayed) {
+      await this.#assertCurrentUpstream(actor, projectId, chapterId, replayed.version);
       if (replayed.fingerprint !== operation.fingerprint) {
         throw new ScriptError("INVALID_EPISODE_PLAN", "相同裁决操作的内容不一致");
       }
       return replayed.version;
     }
     const active = await this.#activeCandidate(actor, projectId, chapterId, input.expectedActiveVersionId);
+    await this.#assertCurrentUpstream(actor, projectId, chapterId, active);
     const proposal = active.majorAdaptationProposals.find(({ id }) => id === input.proposalId);
     if (!proposal) throw new ScriptError("PROPOSAL_NOT_FOUND", "重大改编建议不存在");
     if (proposal.decision) throw new ScriptError("PROPOSAL_ALREADY_DECIDED", "重大改编建议已经裁决");
@@ -312,8 +328,9 @@ export class ScriptService {
     await this.#requireReviewer(actor, projectId);
     const operation = { key: `confirmation:${input.expectedActiveVersionId}`, fingerprint: "confirm" };
     const replayed = await this.#repository.findOperationResult(actor, projectId, chapterId, operation.key);
-    if (replayed) return replayed.version;
+    if (replayed) { await this.#assertCurrentUpstream(actor, projectId, chapterId, replayed.version); return replayed.version; }
     const active = await this.#activeCandidate(actor, projectId, chapterId, input.expectedActiveVersionId);
+    await this.#assertCurrentUpstream(actor, projectId, chapterId, active);
     if (active.majorAdaptationProposals.some(({ decision }) => !decision)) {
       throw new ScriptError("UNRESOLVED_MAJOR_ADAPTATION", "所有重大改编建议都必须逐项批准或拒绝");
     }

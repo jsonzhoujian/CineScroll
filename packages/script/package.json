@@ -19,7 +19,8 @@
     "./postgres-model-settings": "./src/postgres-model-settings.ts",
     "./workspace-model-access": "./src/workspace-model-access.ts",
     "./model-tasks": "./src/model-tasks.ts",
-    "./postgres-model-tasks": "./src/postgres-model-tasks.ts"
+    "./postgres-model-tasks": "./src/postgres-model-tasks.ts",
+    "./postgres-episode-plan": "./src/postgres-episode-plan.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

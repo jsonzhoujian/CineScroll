@@ -8,6 +8,14 @@ unlocks: [T07]
 
 Generate and confirm a structured dynamic-comic script while preserving evidence for every adaptation choice.
 
+## Incremental delivery — persisted episode-plan review (2026-10-06)
+
+- Added PostgreSQL episode-plan versions, heads and operation results with immutable records, tenant/project RLS, upstream/source references and transactional CAS. Current source and confirmed knowledge are locked and compared through writes; formal heads cannot be cleared or rewound.
+- Added optional authenticated read/history/major-adaptation decision/confirmation API, plus an upstream reader that rejects knowledge from old source versions. Editors are read-only for decisions/confirmation; owners and reviewers may decide.
+- The review workbench explicitly reads saved candidates after story knowledge confirmation, displays target duration, per-episode source evidence and events, and requires each major-adaptation proposal to be decided before explicit confirmation. Empty/stale results do not become invented or editable candidates.
+- Not delivered here: AI episode-plan background tasks/provider transport, production API wiring, script正文 API/UI/persistence or formal revision workflow. Trusted EpisodePlanRunner remains the candidate-writing entry. T06 stays in progress.
+- Contract and verification: `docs/contracts/EPISODE_PLAN_WORKBENCH.md`, `docs/plans/2026-10-06-episode-plan-workbench.md`.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.
