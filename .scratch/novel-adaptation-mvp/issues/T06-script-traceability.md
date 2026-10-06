@@ -16,6 +16,14 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Not delivered here: AI episode-plan background tasks/provider transport, production API wiring, script正文 API/UI/persistence or formal revision workflow. Trusted EpisodePlanRunner remains the candidate-writing entry. T06 stays in progress.
 - Contract and verification: `docs/contracts/EPISODE_PLAN_WORKBENCH.md`, `docs/plans/2026-10-06-episode-plan-workbench.md`.
 
+## Incremental delivery — episode task foundation (2026-10-06)
+
+- Added explicit `resultType: episodePlan` for script-stage tasks, with exactly one confirmed knowledge version and no story retry metadata; legacy script tasks remain distinct.
+- Episode tasks require explicit workspace/provider admission and generation policy. Queued tasks recheck admission before model invocation and pause when disabled.
+- Request-scoped submission is idempotent under concurrent inserts; replay returns the original task snapshot and conflicting model selection is rejected. Source, knowledge or result type changes pause execution without invoking a model.
+- Verification: 6 new public-service tests pass; full Node regression 171 pass, 10 database tests skipped; script TypeScript passes. No real model calls.
+- Still outstanding: authoritative episode context/executor, persisted result recovery, dedicated scanning/dispatch, authenticated task API and review-page controls. This is task foundation only; T06 remains in progress. Plan: `docs/plans/2026-10-06-episode-plan-tasks.md`.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.
