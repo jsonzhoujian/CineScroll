@@ -12,6 +12,7 @@ import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts"
 import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor.ts";
 import { StoryKnowledgeTaskDispatcher } from "../src/story-knowledge-task-dispatcher.ts";
 import { StoryKnowledgeTaskWorker } from "../src/story-knowledge-task-worker.ts";
+import { StoryKnowledgeWorkerModule } from "../src/story-knowledge-worker-module.ts";
 import { PostgresModelTaskRepository } from "@novel-adaptation/script/postgres-model-tasks";
 import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
@@ -130,26 +131,57 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     const brokenRepository = new PostgresModelTaskRepository({ async connect() { throw new Error("private database error"); } });
     const backoffWorker = new StoryKnowledgeTaskWorker({ dispatcher: new StoryKnowledgeTaskDispatcher({ repository: brokenRepository, executor }),
       enabled: true, workspaceIds: ["w"], intervalMs: 100, maxBackoffMs: 400,
-      wait: async (delay, signal) => { delays.push(delay); if (delays.length === 3) {
+      wait: async (delay, signal) => {
+        assert.equal(backoffWorker.status().state, "running");
+        assert.equal(backoffWorker.status().lastError, "DISPATCH_UNAVAILABLE");
+        assert.equal(backoffWorker.status().backoffMs, delay);
+        assert.equal(backoffWorker.status().lastScanAt, null);
+        delays.push(delay); if (delays.length === 3) {
         queueMicrotask(() => { void backoffWorker.stop(); });
         await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
       } } });
     await backoffWorker.start();
     assert.deepEqual(delays, [200, 400, 400]);
+    const fatalRef = await Test.createTestingModule({ imports: [StoryKnowledgeWorkerModule.register({
+      dispatcher: new StoryKnowledgeTaskDispatcher({ repository: brokenRepository, executor }), enabled: true, workspaceIds: ["w"],
+      wait: async () => { throw new Error("fixture-key private database error 雨落"); },
+    })] }).compile();
+    const fatalApp = fatalRef.createNestApplication();
+    await fatalApp.init();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const fatalWorker = fatalApp.get(StoryKnowledgeTaskWorker);
+    assert.deepEqual(fatalWorker.status(), { enabled: true, state: "error", lastScanAt: null, backoffMs: 0, lastError: "WORKER_LOOP_FAILED" });
+    const snapshot = fatalWorker.status(); snapshot.state = "running";
+    assert.equal(fatalWorker.status().state, "error");
+    await fatalApp.close();
     assert.throws(() => new StoryKnowledgeTaskWorker({ dispatcher, enabled: true, workspaceIds: [] }), /INVALID_WORKER_CONFIG/);
     assert.throws(() => new StoryKnowledgeTaskWorker({ dispatcher, workspaceIds: ["w", "w"] }), /INVALID_WORKER_CONFIG/);
-    await new StoryKnowledgeTaskWorker({ dispatcher, workspaceIds: ["w"] }).start();
+    const disabledRef = await Test.createTestingModule({ imports: [StoryKnowledgeWorkerModule.register({ dispatcher, workspaceIds: ["w"] })] }).compile();
+    const disabledApp = disabledRef.createNestApplication();
+    await disabledApp.init();
+    const disabledWorker = disabledApp.get(StoryKnowledgeTaskWorker);
+    assert.equal(disabledWorker.status().state, "stopped");
+    await disabledApp.close();
     assert.equal(dispatchCalls, 0);
-    const worker = new StoryKnowledgeTaskWorker({ dispatcher, enabled: true, workspaceIds: ["w"] });
-    const lifetime = worker.start();
+    const workerRef = await Test.createTestingModule({ imports: [StoryKnowledgeWorkerModule.register({ dispatcher, enabled: true, workspaceIds: ["w"] })] }).compile();
+    const workerApp = workerRef.createNestApplication();
+    await workerApp.init();
+    const worker = workerApp.get(StoryKnowledgeTaskWorker);
     await enteredModel;
+    assert.equal(worker.status().state, "running");
     await assert.rejects(() => worker.start(), /WORKER_ALREADY_RUNNING/);
     const competingTick = await dispatcher.tick("w", "run");
     assert.equal(competingTick.items.length, 0);
     let stopped = false;
-    const stopping = worker.stop().then(() => { stopped = true; });
+    const stopping = workerApp.close().then(() => { stopped = true; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(worker.status().state, "stopping");
     assert.equal(stopped, false);
-    releaseWorker(); await stopping; await lifetime;
+    releaseWorker(); await stopping;
+    assert.equal(worker.status().state, "stopped");
+    assert.ok(worker.status().lastScanAt);
+    assert.equal(worker.status().backoffMs, 0);
+    assert.ok(!JSON.stringify(worker.status()).includes("new-fixture"));
     assert.equal(dispatchCalls, 1);
     const held = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
     await taskRepository.transition("w", held.id, 0, "running", null);
