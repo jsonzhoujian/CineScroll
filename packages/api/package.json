@@ -9,7 +9,8 @@
     "./story-knowledge-tasks": "./src/story-knowledge-task-api.ts",
     "./story-knowledge-task-context": "./src/story-knowledge-task-context.ts",
     "./story-knowledge-task-executor": "./src/story-knowledge-task-executor.ts",
-    "./episode-plans": "./src/episode-plan-api.ts"
+    "./episode-plans": "./src/episode-plan-api.ts",
+    "./episode-plan-task-executor": "./src/episode-plan-task-executor.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

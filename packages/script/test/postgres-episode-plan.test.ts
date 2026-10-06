@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PostgresScriptRepository } from "../src/postgres-episode-plan.ts";
-import type { EpisodePlanVersion } from "../src/index.ts";
+import { ScriptUpstreamChangedError, type EpisodePlanVersion } from "../src/index.ts";
 
 test("PostgreSQL拆集版本重建可读、CAS、权限与上游门禁", { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const { Pool } = createRequire(new URL("../../project-import/package.json", import.meta.url))("pg");
@@ -24,7 +24,8 @@ test("PostgreSQL拆集版本重建可读、CAS、权限与上游门禁", { skip:
     await admin.query("insert into story_knowledge_heads(workspace_id,project_id,chapter_id,active_version_id,confirmed_version_id) values($1,$2,$3,$4,$4)", [actor.workspaceId, projectId, chapterId, bibleId]);
     const version: EpisodePlanVersion = { id: `plan-${suffix}`, parentVersionId: null, projectId, chapterId, sourceVersionId: sourceId, storyBibleVersionId: bibleId, targetDurationSeconds: 60, aspectRatio: "9:16", narrativeMode: "dialogue", episodes: [{ id: "e", ordinal: 1, title: "雨落", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }], majorAdaptationProposals: [], status: "candidate", createdBy: actor.userId, createdAt: "2026-10-06T00:00:00Z" };
     const repository = new PostgresScriptRepository(app);
-    await repository.saveEpisodePlan(actor, version, null);
+    const generationOperation = { key: `generation:task-${suffix}`, fingerprint: "trusted-generation" };
+    await repository.saveEpisodePlan(actor, version, null, generationOperation);
     assert.deepEqual(await new PostgresScriptRepository(app).findActiveEpisodePlan(actor, projectId, chapterId), version);
     assert.equal(await repository.findEpisodePlanVersion({ ...actor, workspaceId: "other" }, projectId, chapterId, version.id), null);
     assert.equal(await repository.findActiveEpisodePlan({ ...actor, userId: "outsider" }, projectId, chapterId), null);
@@ -35,7 +36,7 @@ test("PostgreSQL拆集版本重建可读、CAS、权限与上游门禁", { skip:
     const confirmed = { ...active, id: `confirmed-${suffix}`, parentVersionId: active.id, status: "confirmed" as const, confirmedBy: actor.userId, confirmedAt: version.createdAt };
     await assert.rejects(() => repository.saveEpisodePlan({ ...actor, userId: "editor" }, { ...confirmed, createdBy: "editor", confirmedBy: "editor" }, active.id), { code: "FORBIDDEN" });
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2", [projectId, chapterId]);
-    await assert.rejects(() => repository.saveEpisodePlan(actor, confirmed, active.id), { code: "VERSION_CONFLICT" });
+    await assert.rejects(() => repository.saveEpisodePlan(actor, confirmed, active.id), ScriptUpstreamChangedError);
     await admin.query("update chapters set active_source_version_id=$3 where project_id=$1 and id=$2", [projectId, chapterId, sourceId]);
     const operation = { key: `confirmation:${active.id}`, fingerprint: "confirm" };
     await repository.saveEpisodePlan(actor, confirmed, active.id, operation);
@@ -53,6 +54,9 @@ test("PostgreSQL拆集版本重建可读、CAS、权限与上游门禁", { skip:
       await assert.rejects(() => rewindConnection.query("update episode_plan_heads set active_version_id=$4 where workspace_id=$1 and project_id=$2 and chapter_id=$3", [actor.workspaceId,projectId,chapterId,version.id]), { code: "42501" });
     } finally { await rewindConnection.query("rollback"); rewindConnection.release(); }
     assert.deepEqual((await new PostgresScriptRepository(app).findOperationResult(actor, projectId, chapterId, operation.key))?.version, confirmed);
+    // A review head advance must not replace the generation result used for task reconciliation.
+    assert.deepEqual((await new PostgresScriptRepository(app).findOperationResult(actor, projectId, chapterId, generationOperation.key))?.version, version);
+    assert.equal(await repository.findOperationResult({ ...actor,userId: "outsider" },projectId,chapterId,generationOperation.key),null);
     assert.deepEqual(await repository.saveEpisodePlan(actor, { ...confirmed, id: "ignored" }, active.id, operation), confirmed);
     await assert.rejects(() => repository.saveEpisodePlan(actor, { ...next, id: "after-confirm", parentVersionId: confirmed.id }, confirmed.id), { code: "CONFIRMED_PLAN_REQUIRES_SUGGESTION" });
   } finally { await app.end(); await admin.end(); }

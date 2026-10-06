@@ -45,6 +45,8 @@ export function validateTaskResult(state: TaskState, result: TaskResult | null):
     || !["succeeded", "partially_succeeded", "failed"].includes(result.extractionStatus)) throw new ModelTaskError("STATE_CONFLICT");
 }
 export interface ModelTaskContextReader {
+  /** Optional membership-only read gate; historical tasks remain visible when generation prerequisites change. */
+  canRead?(actor: Actor, projectId: string, chapterId: string): Promise<boolean>;
   /** Must verify project membership, stage prerequisites and confirmed upstream versions. */
   read(actor: Actor, projectId: string, chapterId: string): Promise<TaskInput | null>;
   readRetry?(actor: Actor, projectId: string, chapterId: string, selection: StoryRetrySelection): Promise<TaskInput | null>;
@@ -109,7 +111,9 @@ export class ModelTaskService {
   async get(actor: Actor, id: string) {
     const task = await this.#options.repository.find(actor.workspaceId, id);
     if (!task) throw new ModelTaskError("TASK_NOT_FOUND");
-    await this.#context(actor, task.projectId, task.chapterId);
+    if (this.#options.contextReader.canRead) {
+      if (!await this.#options.contextReader.canRead(actor,task.projectId,task.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+    } else await this.#context(actor, task.projectId, task.chapterId);
     return task;
   }
   async submit(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string }) {
@@ -213,7 +217,7 @@ export class ModelTaskService {
         state = ["UPSTREAM_CHANGED", "POLICY_RESTRICTED"].includes(reason) ? "paused" : "failed";
       } else if (error instanceof ModelTaskError && ["WORKSPACE_TASK_DISABLED", "TASK_PROVIDER_UNSUPPORTED"].includes(error.code)) {
         state = "paused"; reason = "NOT_READY";
-      } else if (error instanceof ModelTaskError && ["POLICY_RESTRICTED", "STATE_CONFLICT", "UPSTREAM_CHANGED", "INVALID_CONTEXT"].includes(error.code)) {
+      } else if (error instanceof ModelTaskError && ["POLICY_RESTRICTED", "STATE_CONFLICT", "UPSTREAM_CHANGED", "INVALID_CONTEXT", "TASK_NOT_FOUND"].includes(error.code)) {
         state = "paused"; reason = error.code === "POLICY_RESTRICTED" ? "POLICY_RESTRICTED" : "UPSTREAM_CHANGED";
       } else if (error instanceof ModelSettingsError && ["VERSION_CONFLICT", "FORBIDDEN", "NOT_READY"].includes(error.code)) {
         state = "paused"; reason = error.code as TaskReason;

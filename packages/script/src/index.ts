@@ -120,6 +120,11 @@ export class ScriptError extends Error {
   }
 }
 
+/** Preserves the public version-conflict contract while identifying a transactional upstream gate failure. */
+export class ScriptUpstreamChangedError extends ScriptError {
+  constructor() { super("VERSION_CONFLICT", "上游原文或故事知识已变化"); this.name = "ScriptUpstreamChangedError"; }
+}
+
 export class InMemoryScriptRepository implements ScriptRepository {
   readonly #activeVersionIds = new Map<string, string>();
   readonly #versions = new Map<string, EpisodePlanVersion>();
@@ -270,6 +275,12 @@ export class ScriptService {
     if (!version) throw new ScriptError("EPISODE_PLAN_NOT_FOUND", "拆集方案不存在");
     return version;
   }
+  /** Immutable generation operation lookup, independent of current review head. */
+  async getEpisodePlanGeneration(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<EpisodePlanVersion | null> {
+    if (!await this.#accessReader.findProjectAccess(actor,projectId)) throw new ScriptError("EPISODE_PLAN_NOT_FOUND", "拆集方案不存在");
+    const result = await this.#repository.findOperationResult(actor,projectId,chapterId,`generation:${jobId}`);
+    return result?.version.generationJobId === jobId ? result.version : null;
+  }
   async #assertCurrentUpstream(actor: Actor, projectId: string, chapterId: string, version: EpisodePlanVersion) {
     const upstream = await this.#upstreamReader.findConfirmedStoryBible(actor, projectId, chapterId);
     if (!upstream) throw new ScriptError("CONFIRMED_STORY_BIBLE_NOT_FOUND", "请先确认当前原文的故事知识");
@@ -377,6 +388,7 @@ function validateEpisodePlan(
   storyBible: Awaited<ReturnType<ScriptUpstreamReader["findConfirmedStoryBible"]>> & {},
 ): void {
   if (input.storyBibleVersionId !== storyBible.versionId || input.sourceVersionId !== storyBible.sourceVersionId) {
+    if (input.generationJobId) throw new ScriptUpstreamChangedError();
     throw new ScriptError("INVALID_EPISODE_PLAN", "拆集方案的上游版本与已确认故事知识不一致");
   }
   if (![60, 180, 300].includes(input.targetDurationSeconds)) {

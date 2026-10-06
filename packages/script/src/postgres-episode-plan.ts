@@ -1,4 +1,4 @@
-import { ScriptError, type Actor, type EpisodePlanVersion, type ScriptRepository } from "./index.ts";
+import { ScriptError, ScriptUpstreamChangedError, type Actor, type EpisodePlanVersion, type ScriptRepository } from "./index.ts";
 import type { ModelSettingsPool, ModelSettingsClient } from "./postgres-model-settings.ts";
 
 export class PostgresScriptRepository implements ScriptRepository {
@@ -24,7 +24,7 @@ export class PostgresScriptRepository implements ScriptRepository {
       await client.query("select set_config('app.story_knowledge_operation',case when can_review_project($1) then 'confirm' else 'candidate' end,true)", [version.projectId]);
       const knowledge = (await client.query("select h.confirmed_version_id,v.source_version_id from story_knowledge_heads h left join story_knowledge_versions v on v.workspace_id=h.workspace_id and v.project_id=h.project_id and v.chapter_id=h.chapter_id and v.id=h.confirmed_version_id where h.workspace_id=$1 and h.project_id=$2 and h.chapter_id=$3 for share of h",params)).rows[0];
       if (!knowledge?.confirmed_version_id) throw new ScriptError("CONFIRMED_STORY_BIBLE_NOT_FOUND", "请先确认故事知识");
-      if (chapter.active_source_version_id !== version.sourceVersionId || knowledge.confirmed_version_id !== version.storyBibleVersionId || knowledge.source_version_id !== version.sourceVersionId) throw new ScriptError("VERSION_CONFLICT", "上游原文或故事知识已变化");
+      if (chapter.active_source_version_id !== version.sourceVersionId || knowledge.confirmed_version_id !== version.storyBibleVersionId || knowledge.source_version_id !== version.sourceVersionId) throw new ScriptUpstreamChangedError();
       await client.query("insert into episode_plan_heads(workspace_id,project_id,chapter_id) values($1,$2,$3) on conflict do nothing",params);
       const head = (await client.query("select active_version_id from episode_plan_heads where workspace_id=$1 and project_id=$2 and chapter_id=$3 for update",params)).rows[0]!;
       if (operation) {

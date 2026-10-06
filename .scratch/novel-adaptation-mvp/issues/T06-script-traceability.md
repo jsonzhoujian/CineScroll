@@ -24,6 +24,15 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Verification: 6 new public-service tests pass; full Node regression 171 pass, 10 database tests skipped; script TypeScript passes. No real model calls.
 - Still outstanding: authoritative episode context/executor, persisted result recovery, dedicated scanning/dispatch, authenticated task API and review-page controls. This is task foundation only; T06 remains in progress. Plan: `docs/plans/2026-10-06-episode-plan-tasks.md`.
 
+## Incremental delivery — episode task execution and reconciliation (2026-10-06)
+
+- Authoritative episode context verifies project membership, current source (at most 20,000 characters), confirmed knowledge from that source and project generation parameters. Historical task reads use a membership-only gate while generation prerequisites remain strict.
+- Internal credentialed executor constructs a frozen canonical request from source fragments and accepted story-bible facts. All accepted events are conservatively required as core events until a separate classifier exists. Existing plan heads prevent automatic overwrite; generation produces a candidate only.
+- Before and after model response, checks source, confirmed knowledge, membership, parameters and generation policy. Final transactional upstream conflicts now use a typed VERSION_CONFLICT-compatible error and pause as UPSTREAM_CHANGED, distinct from candidate-head conflicts.
+- Recovery uses the immutable generation operation index and matches source, knowledge and parameters even after review-head advances or source updates. Missing results become EXECUTION_UNCERTAIN; never reissue a model request.
+- Verification: 11 executor integration tests pass; full Node regression 182 pass, 10 database tests skipped. Dedicated PostgreSQL operation-index/upstream-gate test passes; script/API TypeScript checks pass; dual review has no remaining blockers.
+- Still not delivered: vendor-native episode transport, independent scan/dispatch, authenticated task API, generation/status UI and production wiring. No real AI calls or production enablement. T06 remains in progress.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.
