@@ -13,6 +13,7 @@ import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor
 import { StoryKnowledgeTaskDispatcher } from "../src/story-knowledge-task-dispatcher.ts";
 import { StoryKnowledgeTaskWorker } from "../src/story-knowledge-task-worker.ts";
 import { StoryKnowledgeWorkerModule } from "../src/story-knowledge-worker-module.ts";
+import { DeepSeekStoryKnowledgeModel } from "../src/deepseek-story-model.ts";
 import { PostgresModelTaskRepository } from "@novel-adaptation/script/postgres-model-tasks";
 import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
@@ -90,17 +91,23 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     const enteredModel = new Promise<void>(resolve => { entered = resolve; });
     const modelGate = new Promise<void>(resolve => { releaseWorker = resolve; });
     const executor = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: knowledge,
-      model: { async generate(input, credentials) {
+      model: new DeepSeekStoryKnowledgeModel({ fetch: async (url, init) => {
         dispatchCalls++;
         entered(); await modelGate;
-        assert.equal(credentials.apiKey, "new-fixture");
+        assert.equal(url, "https://api.deepseek.com/chat/completions");
+        assert.equal(new Headers(init?.headers).get("authorization"), "Bearer new-fixture");
+        assert.ok(!String(init?.body).includes("new-fixture"));
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.model, "m");
+        const input = JSON.parse(body.messages[1].content);
         assert.deepEqual(input.input.sourceFragments, [{ id: "f", text: "雨落" }]);
-        return { contractVersion: "0.1.0", jobId: input.jobId, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1",
+        const extraction = { contractVersion: "0.1.0", jobId: input.jobId, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1",
           status: "partially_succeeded", items: [
             { scopeKey: "weather", status: "succeeded", value: { id: "rain", factType: "worldRule", statement: "正在下雨", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "source1", fragmentId: "f" }] } },
             { scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } },
           ] };
-      } } });
+        return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
+      } }) });
     const dispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository, executor });
     const scans: { workspace: unknown; cursor: unknown; recover: boolean }[] = [];
     const scanRepository = new PostgresModelTaskRepository({ async connect() {
@@ -279,33 +286,64 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     assert.equal(outcomes.filter(outcome => outcome.state === "succeeded").length, 1);
     assert.equal(outcomes.find(outcome => outcome.state !== "succeeded")?.reason, "CANDIDATE_EXISTS");
     assert.equal(outcomes.find(outcome => outcome.state === "succeeded")?.result?.extractionStatus, "failed");
-    for (const mode of ["wrong-envelope", "provider-error", "policy-changed", "source-changed"] as const) {
+    for (const mode of ["success", "wrong-envelope", "provider-error", "timeout", "policy-changed", "source-changed"] as const) {
       const isolated = new StoryKnowledgeService({ repository: new InMemoryStoryKnowledgeRepository(), projectAccessReader: projects,
         sourceReader: { async findSourceVersion() { return { id: "source1", fragmentIds: ["f"] }; } },
         idGenerator: () => `isolated${++version}`, clock: () => new Date("2026-10-05") });
       const queued = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
+      let httpCalls = 0;
       const invalid = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: isolated,
-        model: { async generate(input) {
+        model: new DeepSeekStoryKnowledgeModel({ timeoutMs: 100, fetch: async (_url, init) => {
+          httpCalls++;
+          assert.equal(new Headers(init?.headers).get("authorization"), "Bearer new-fixture");
+          const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
           if (mode === "provider-error") throw new Error("new-fixture: vendor private response");
+          if (mode === "timeout") return new Promise<Response>((_resolve, reject) => {
+            init!.signal!.addEventListener("abort", () => reject(new Error("new-fixture: timeout")), { once: true });
+          });
           if (mode === "policy-changed") policyAllowed = false;
           if (mode === "source-changed") {
             const project = (await projects.findProject(owner, "p"))!;
             project.chapters[0]!.activeSourceVersionId = "source2";
             await projects.saveProject(owner, project);
           }
-          return { contractVersion: "0.1.0", jobId: mode === "wrong-envelope" ? "forged" : input.jobId,
-            stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: "failed", items: [] };
-        } } });
+          const extraction = { contractVersion: "0.1.0", jobId: mode === "wrong-envelope" ? "forged" : input.jobId,
+            stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1", status: mode === "success" ? "succeeded" : "failed",
+            items: mode === "success" ? [{ scopeKey: "weather", status: "succeeded", value: { id: "rain", factType: "worldRule", statement: "正在下雨",
+              assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "source1", fragmentId: "f" }] } }]
+              : [{ scopeKey: "identity", status: "failed", error: { code: "UNKNOWN", message: "无法确定", retryable: true } }] };
+          return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
+        } }) });
       const isolatedDispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository, executor: invalid });
+      const isolatedWorker = new StoryKnowledgeTaskWorker({ dispatcher: isolatedDispatcher, enabled: true, workspaceIds: ["w"],
+        wait: async (_delay, signal) => {
+          queueMicrotask(() => { void isolatedWorker.stop(); });
+          await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+        } });
+      await isolatedWorker.start();
       const report = await isolatedDispatcher.tick("w", "run");
-      assert.equal(report.items.find(item => item.id === queued.id)?.outcome, "completed");
+      assert.equal(report.items.find(item => item.id === queued.id), undefined);
+      assert.equal(httpCalls, 1);
       assert.ok(!JSON.stringify(report).includes("new-fixture"));
       const outcome = (await taskRepository.find(owner.workspaceId, queued.id))!;
-      assert.equal(outcome.state, ["source-changed", "policy-changed"].includes(mode) ? "paused" : "failed");
-      assert.equal(outcome.reason, mode === "policy-changed" ? "POLICY_RESTRICTED" : mode === "source-changed" ? "UPSTREAM_CHANGED" : mode === "wrong-envelope" ? "INVALID_RESPONSE" : "PROVIDER_UNAVAILABLE");
-      assert.equal(outcome.result, null);
+      assert.equal(outcome.state, mode === "success" ? "succeeded" : ["source-changed", "policy-changed"].includes(mode) ? "paused" : "failed");
+      assert.equal(outcome.reason, mode === "success" ? null : mode === "policy-changed" ? "POLICY_RESTRICTED" : mode === "source-changed" ? "UPSTREAM_CHANGED" : mode === "wrong-envelope" ? "INVALID_RESPONSE" : "PROVIDER_UNAVAILABLE");
+      if (mode !== "success") assert.equal(outcome.result, null);
       assert.ok(!JSON.stringify(outcome).includes("new-fixture"));
-      await assert.rejects(() => isolated.getActive(owner, "p", "c"), { code: "STAGE_RESULT_NOT_FOUND" });
+      if (mode !== "source-changed") {
+        const status = await http.get(`/story-knowledge-tasks/${queued.id}`).set("authorization", bearer).expect(200);
+        assert.equal(status.body.state, outcome.state);
+        assert.equal(status.body.reason, outcome.reason);
+        if (mode === "success") {
+          const candidate = await isolated.getActive(owner, "p", "c");
+          assert.equal(candidate.status, "candidate");
+          assert.equal(candidate.extractionStatus, "succeeded");
+          assert.deepEqual(status.body.result, { candidateVersionId: candidate.id, extractionStatus: "succeeded" });
+          assert.deepEqual(candidate.facts.map(fact => fact.statement), ["正在下雨"]);
+        } else assert.equal(status.body.result, null);
+        assert.ok(!JSON.stringify(status.body).includes("new-fixture"));
+      }
+      if (mode !== "success") await assert.rejects(() => isolated.getActive(owner, "p", "c"), { code: "STAGE_RESULT_NOT_FOUND" });
       policyAllowed = true;
     }
   } finally { await app.close(); }

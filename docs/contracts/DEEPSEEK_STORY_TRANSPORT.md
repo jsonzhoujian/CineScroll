@@ -12,4 +12,6 @@
 
 测试注入fetch，覆盖凭据认证头、请求快照、拒绝错误配置、大小限制、脱敏、截断/错配、超时及零重试。没有发送真实请求或验证语义准确率。fetch端口必须遵守AbortSignal取消连接/响应体；模拟忽略信号时调用仍按截止返回，但不能保证外部资源关闭。
 
+闭环集成验证：本地任务API提交与共享Key换版/重提交，经真实Worker生命周期、调度器、执行器及本适配器，fetch模拟completion，内存知识服务保存成功和部分成功候选；任务API读取对应结果，候选仍为candidate。超时、错配与供应商异常转失败、result=null且无候选；Worker停止后再次扫描未重复发送。策略/原文变更仍阻止落库。此验证不是生产数据库、真实HTTP网络或供应商联调。
+
 官方协议参考：[Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[JSON Output](https://api-docs.deepseek.com/guides/json_mode/)；查询日期2026-10-06。
