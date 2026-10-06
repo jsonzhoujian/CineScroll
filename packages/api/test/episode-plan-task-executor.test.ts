@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "reflect-metadata";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+import { HmacSessionManager } from "@novel-adaptation/identity";
+import { EpisodePlanTaskApiModule } from "../src/episode-plan-task-api.ts";
 import { InMemoryProjectImportRepository } from "@novel-adaptation/project-import";
 import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 import { InMemoryScriptRepository, ScriptService, ScriptUpstreamChangedError, type ScriptRepository } from "@novel-adaptation/script";
@@ -10,7 +15,7 @@ import { EpisodePlanUpstreamReader } from "../src/episode-plan-api.ts";
 import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "../src/episode-plan-task-executor.ts";
 import { EpisodePlanTaskDispatcher, EpisodePlanTaskWorker } from "../src/episode-plan-task-dispatcher.ts";
 
-async function fixture(planRepository: ScriptRepository = new InMemoryScriptRepository()) {
+async function fixture(planRepository: ScriptRepository = new InMemoryScriptRepository(), providerIds: readonly string[] = ["deepseek"]) {
   const actor = { userId: "owner", workspaceId: "w" }, projects = new InMemoryProjectImportRepository();
   const project = { id: "p", workspaceId: "w", ownerUserId: "owner", title: "雨落", aspectRatio: "9:16" as const, targetDurationSeconds: 60 as const, narrativeMode: "dialogue" as const, dataRegion: "CN" as const, createdAt: "2026-10-06",
     members: [{ userId: "owner", role: "owner" as const }], chapters: [{ id: "c", title: "雨落", activeSourceVersionId: "s", versions: [{ id: "s", ordinal: 1, createdBy: "owner", createdAt: "2026-10-06", characterCount: 2, text: "雨落", fragments: [{ id: "f", ordinal: 1, startOffset: 0, endOffset: 2, text: "雨落", contentHash: "h" }] }] }] };
@@ -24,14 +29,16 @@ async function fixture(planRepository: ScriptRepository = new InMemoryScriptRepo
     probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
   const config = await settings.testConnection(actor, (await settings.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" })).id);
   const repository = new InMemoryModelTaskRepository(() => now, () => ({ maxQueued: 10, maxExecuting: 10 }));
-  const tasks = new ModelTaskService({ settings, repository, contextReader: context, episodeAdmission: { workspaceIds: ["w"], providerIds: ["deepseek"] }, generationPolicy: { isAllowed: async () => allowed }, idGenerator: () => `task${++id}` });
+  const tasks = new ModelTaskService({ settings, repository, contextReader: context, episodeAdmission: { workspaceIds: ["w"], providerIds }, generationPolicy: { isAllowed: async () => allowed }, idGenerator: () => `task${++id}` });
   const confirm = async () => {
     const extracted = await knowledge.recordExtraction(actor, { contractVersion: "0.1.0", jobId: `job${++id}`, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "s", status: "succeeded", items: [{ scopeKey: "events", status: "succeeded", value: { id: "event", factType: "event", statement: "开始下雨", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "s", fragmentId: "f" }] } }] });
     const reviewed = await knowledge.reviewFact(actor,"p","c",{ expectedActiveVersionId: extracted.id, factId: "event", outcome: "accepted", reason: "符合原文" });
     return knowledge.confirmStage(actor,"p","c",{ expectedActiveVersionId: reviewed.id, reason: "完成" });
   };
   const submit = () => tasks.submitEpisodePlan(actor, { projectId: "p", chapterId: "c", configurationVersionId: config.id, modelId: "m", requestId: `request${++id}` });
-  return { actor, projects, project, knowledge, script, context, tasks, repository, confirm, submit, expire: () => { now += 600_001; }, block: () => { allowed = false; } };
+  return { actor, projects, project, knowledge, script, context, tasks, repository, confirm, submit,
+    settingsSelection: async () => ({ configurationVersionId: config.id,modelId: "m" }),
+    expire: () => { now += 600_001; }, block: () => { allowed = false; } };
 }
 function response(r: EpisodePlanGenerationRequest) {
   return { contractVersion: "0.1.0", jobId: r.jobId, stage: "script", resultType: "episodePlan", projectId: "p", chapterId: "c", sourceVersionId: "s", upstreamConfirmedVersionIds: [...r.upstreamConfirmedVersionIds], status: "succeeded", recommendationRationale: "保留事件", episodes: [{ id: "e", ordinal: 1, title: "雨落", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }], majorAdaptationProposals: [] };
@@ -164,4 +171,56 @@ test("拆集 Worker 默认关闭，显式开启后处理任务且可安全停止
   const running = worker.start(); await ready;
   assert.equal((await f.tasks.get(f.actor,task.id)).state,"succeeded"); assert.equal(calls,1);
   await worker.stop(); await running; assert.equal(worker.status().state,"stopped");
+});
+
+test("认证拆集任务 API 只接收模型选择与请求标识，幂等提交并隔离历史类型", async () => {
+  const f = await fixture();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()), base = "/projects/p/chapters/c/episode-plan-tasks";
+    const auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` };
+    await http.get(base).expect(401);
+    await http.get(base).set("authorization",`Bearer ${await sessions.issue("outsider","w")}`).expect(404);
+    const template = await f.settingsSelection();
+    await http.post(base).set(auth).send({ ...template,requestId: "r" }).expect(404);
+    await f.confirm();
+    await http.post(base).set(auth).send({ ...template,requestId: "r",sourceVersionId: "forged" }).expect(400);
+    const first = await http.post(base).set(auth).send({ ...template,requestId: "r" }).expect(201);
+    const replay = await http.post(base).set(auth).send({ ...template,requestId: "r" }).expect(201);
+    assert.equal(replay.body.id,first.body.id); assert.equal(first.body.input.resultType,"episodePlan");
+    assert.ok(!JSON.stringify(first.body).includes("fixture-key"));
+    await http.post(base).set(auth).send({ ...template,requestId: "r",modelId: "different" }).expect(409);
+    await http.post(base).set("authorization",`Bearer ${await sessions.issue("outsider","w")}`).send({ ...template,requestId: "outsider" }).expect(404);
+    await http.get(`/episode-plan-tasks/${first.body.id}`).set("authorization",`Bearer ${await sessions.issue("outsider","w")}`).expect(404);
+    const read = await http.get(`/episode-plan-tasks/${first.body.id}`).set(auth).expect(200);
+    assert.equal(read.headers["cache-control"],"no-store");
+    const legacyInput = structuredClone(first.body.input); delete legacyInput.resultType;
+    await f.repository.insert({ ...first.body,id: "legacy",input: legacyInput });
+    await http.get("/episode-plan-tasks/legacy").set(auth).expect(404);
+    const list = await http.get(base).set(auth).expect(200); assert.deepEqual(list.body.tasks.map((t: { id: string }) => t.id),[first.body.id]);
+    await http.get(`${base}?limit=0`).set(auth).expect(400);
+    await http.post(`/episode-plan-tasks/${first.body.id}/run`).set(auth).expect(404);
+    const availability = await http.get(`${base}/availability`).set(auth).query(template).expect(200); assert.equal(availability.body.available,true);
+    await http.get(`${base}/availability`).set(auth).query({ ...template,apiKey: "forged" }).expect(400);
+    f.block(); await http.post(base).set(auth).send({ ...template,requestId: "blocked" }).expect(403);
+    f.project.chapters[0]!.activeSourceVersionId = "new-source"; await f.projects.saveProject(f.actor,f.project);
+    await http.get(`/episode-plan-tasks/${first.body.id}`).set(auth).expect(200);
+    await http.get(base).set(auth).expect(200);
+  } finally { await app.close(); }
+});
+
+test("拆集厂商白名单拒绝返回403且可用性说明限制", async () => {
+  const f = await fixture(new InMemoryScriptRepository(),[]); await f.confirm();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),base = "/projects/p/chapters/c/episode-plan-tasks",auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },selection = await f.settingsSelection();
+    const denied = await http.post(base).set(auth).send({ ...selection,requestId: "r" }).expect(403);
+    assert.equal(denied.body.code,"TASK_PROVIDER_UNSUPPORTED");
+    const availability = await http.get(`${base}/availability`).set(auth).query(selection).expect(200);
+    assert.deepEqual(availability.body,{ available: false,reason: "TASK_PROVIDER_UNSUPPORTED" });
+  } finally { await app.close(); }
 });

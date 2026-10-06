@@ -24,11 +24,18 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
     });
   }
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
+    return this.#list(workspaceId,projectId,chapterId,page,"story_knowledge");
+  }
+  listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
+    return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
+  }
+  #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan") {
     validateTaskPage(page);
     return this.#transaction(workspaceId, async client => {
+      const taskKind = kind === "episodePlan" ? "payload->'input'->>'stage'='script' and payload->'input'->>'resultType'='episodePlan'" : "payload->'input'->>'stage'='story_knowledge'";
       const rows = (await client.query(`select payload,state,revision,reason,result_json,lease_expires_at from model_tasks
         where workspace_id=$1 and payload->>'projectId'=$2 and payload->>'chapterId'=$3
-          and payload->'input'->>'stage'='story_knowledge' and ($4::text is null or id collate "C">$4::text collate "C")
+          and ${taskKind} and ($4::text is null or id collate "C">$4::text collate "C")
         order by id collate "C" limit $5`, [workspaceId,projectId,chapterId,page.cursor,page.limit+1])).rows;
       const tasks = rows.slice(0, page.limit).map(decode);
       return { tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null };

@@ -90,6 +90,11 @@ async function exercise(repository: ModelTaskRepository, configure?: (workspaceI
   assert.deepEqual((await repository.scanEpisodePlans(scanWorkspace,"recover",{ limit: 20,cursor: null })).tasks,[]);
   assert.deepEqual((await repository.scanEpisodePlans(scanWorkspace,"run",{ limit: 20,cursor: null })).tasks.map(t => t.id),["episode-b"]);
   assert.deepEqual((await repository.scanEpisodePlans("unrelated","run",{ limit: 20,cursor: null })).tasks,[]);
+  const episodeList = await repository.listEpisodePlans(scanWorkspace,"p","c",{ limit: 1,cursor: null });
+  assert.deepEqual(episodeList.tasks.map(t => t.id),["episode-a"]); assert.equal(episodeList.nextCursor,"episode-a");
+  assert.deepEqual((await repository.listEpisodePlans(scanWorkspace,"p","c",{ limit: 1,cursor: episodeList.nextCursor })).tasks.map(t => t.id),["episode-b"]);
+  assert.deepEqual((await repository.listEpisodePlans(scanWorkspace,"p","other-chapter",{ limit: 20,cursor: null })).tasks,[]);
+  assert.deepEqual((await repository.listEpisodePlans("unrelated","p","c",{ limit: 20,cursor: null })).tasks,[]);
   return original;
 }
 
@@ -223,6 +228,7 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     await admin.query(await readFile(new URL("../migrations/0008_generation_policy_reason.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0009_workspace_task_limits.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0011_episode_task_scan.sql", import.meta.url), "utf8"));
+    await admin.query(await readFile(new URL("../migrations/0012_episode_task_list.sql", import.meta.url), "utf8"));
     const configure = async (workspaceId: string) => { await admin.query("insert into workspace_task_limits values($1,100,100) on conflict do nothing", [workspaceId]); };
     const original = await exercise(new PostgresModelTaskRepository(app), configure);
     const limitWorkspace = randomUUID();

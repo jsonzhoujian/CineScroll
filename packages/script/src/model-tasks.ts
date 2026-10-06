@@ -29,6 +29,7 @@ export interface ModelTaskRepository {
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
+  listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   find(workspaceId: string, id: string): Promise<ModelTask | null>;
   insert(task: ModelTask): Promise<ModelTask>;
   transition(workspaceId: string, id: string, expectedRevision: number, state: TaskState, reason: TaskReason | null, result?: TaskResult | null): Promise<ModelTask>;
@@ -69,8 +70,9 @@ export class ModelTaskService {
     if (model && !admission.providerIds.includes(model.providerId)) return { available: false, reason: "TASK_PROVIDER_UNSUPPORTED" };
     return { available: true, reason: null };
   }
-  async availability(actor: Actor, projectId: string, chapterId: string, selection: { configurationVersionId: string; modelId: string }): Promise<TaskAvailability> {
+  async availability(actor: Actor, projectId: string, chapterId: string, selection: { configurationVersionId: string; modelId: string }, expectedResultType?: "episodePlan"): Promise<TaskAvailability> {
     const context = await this.#context(actor, projectId, chapterId);
+    if (expectedResultType && context.resultType !== expectedResultType) throw new ModelTaskError("INVALID_CONTEXT");
     const workspace = this.#admission(actor, context);
     if (!workspace.available) return workspace;
     const model = await this.#options.settings.selectForTask(actor, selection.configurationVersionId, selection.modelId);
@@ -91,6 +93,13 @@ export class ModelTaskService {
     validateTaskPage(page);
     await this.#context(actor, projectId, chapterId);
     return this.#options.repository.listStoryKnowledge(actor.workspaceId, projectId, chapterId, page);
+  }
+  async listEpisodePlans(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest = { limit: 20,cursor: null }) {
+    validateTaskPage(page);
+    if (this.#options.contextReader.canRead) {
+      if (!await this.#options.contextReader.canRead(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+    } else await this.#context(actor,projectId,chapterId);
+    return this.#options.repository.listEpisodePlans(actor.workspaceId,projectId,chapterId,page);
   }
   async #context(actor: Actor, projectId: string, chapterId: string, retry?: StoryRetrySelection) {
     const input = retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
@@ -269,9 +278,16 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
     return structuredClone({ tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null });
   }
   async listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
+    return this.#list(workspaceId,projectId,chapterId,page,"story_knowledge");
+  }
+  async listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
+    return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
+  }
+  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan"): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
-      && task.chapterId === chapterId && task.input.stage === "story_knowledge" && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0))
+      && task.chapterId === chapterId && (kind === "episodePlan" ? task.input.stage === "script" && task.input.resultType === "episodePlan" : task.input.stage === "story_knowledge")
+      && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0))
       .sort((a, b) => compareTaskIds(a.id, b.id)).slice(0, page.limit + 1);
     const tasks = rows.slice(0, page.limit);
     return structuredClone({ tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null });

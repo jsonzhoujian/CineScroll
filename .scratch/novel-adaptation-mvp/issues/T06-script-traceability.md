@@ -38,6 +38,14 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Latest increment (2026-10-06): independent episode task scanning and internal dispatcher now match both script stage and episodePlan result type, use workspace-scoped bounded byte-ordered pagination, and discover only queued tasks or expired/uncertain recovery tasks. Executors reauthorize original submitters and claim through CAS. Default-off worker loop is reused through its public tick interface; no production registration or public execution route was added.
 - Verification: full Node suite 184 pass, 10 database tests skipped; dedicated real PostgreSQL task contract run 7 pass (including episode pagination, isolation and recovery); script/API TypeScript and Standards/Spec reviews pass. Added migration 0011 provides matching partial indexes, applied only to the isolated test database. Remaining: authenticated episode task API and review-page controls, vendor-native transport and production wiring.
 
+## Incremental delivery — authenticated episode task API (2026-10-06)
+
+- Optional Session-guarded module provides episode task submission, availability, chapter-scoped history and individual state reads; no public run/recover route. Only model selection plus requestId are accepted at submission; client context, workspace and Key fields are rejected.
+- Current members can inspect historical tasks after source changes. Type, workspace and chapter filters isolate episode tasks from legacy script/story tasks. Fixed bounded cursor pagination is supported by memory and PostgreSQL adapters and migration 0012's partial chapter index.
+- Admission/policy denial returns 403, intent conflicts 409, capacity errors 429, invalid request 400, missing/nonmember/wrong-kind 404. No-store and sanitized errors retain the credential boundary.
+- Verification: full Node regression 186 pass, 10 database tests skipped; independent real PostgreSQL task contract run 7 pass; script/API TypeScript checks pass; Standards and Spec reviews have no remaining blockers. Security review drove strict session/input/secret boundaries; PostgreSQL best-practices review drove the list index. No real AI calls or production registration.
+- Next: review-page model selection, submission, progress and explicit result loading. Shared production limits/billing, native vendor transport and production enablement remain deferred. T06 stays in progress.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.
