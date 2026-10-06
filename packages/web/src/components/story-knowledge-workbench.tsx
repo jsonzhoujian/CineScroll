@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiClientError, type ApiClient, type Chapter, type StoryKnowledgeVersion } from "../lib/api";
+import { StoryKnowledgeRetry } from "./story-knowledge-retry";
 import { availableFactActions, buildReviewRows, canConfirmStoryKnowledge, resolutionGroupCandidates, selectFactEvidence, selectVisibleFact, storyFactTypeLabel, type FactAction, type ReviewFilter } from "../lib/story-knowledge-review";
 
 const filters: ReadonlyArray<{ id: ReviewFilter; label: string }> = [
@@ -144,6 +145,7 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
       <div className={`knowledge-state state-${version.status}`}><b>{version.status === "confirmed" ? "已确认" : version.status === "needs_resolution" ? "待裁决" : "待审核"}</b><small>{version.extractionStatus === "partially_succeeded" ? "部分提取成功" : version.extractionStatus === "failed" ? "提取失败" : "提取完成"}</small></div>
     </header>
     <nav className="knowledge-filters" aria-label="故事事实筛选">{filters.map((item) => <button type="button" key={item.id} aria-pressed={filter === item.id} className={filter === item.id ? "active" : ""} onClick={() => onCursorChange({ filter: item.id, selectedId })}>{item.label}<span>{buildReviewRows(version, item.id).length}</span></button>)}</nav>
+    {version.status !== "confirmed" && version.failures.length > 0 && <StoryKnowledgeRetry key={version.id} api={api} version={version} disabled={busy} onLoaded={next => { setVersion(next); onConfirmationChange(false); onCursorChange({ filter, selectedId: next.facts[0]?.id ?? null }); onNotice("重试候选已载入，请继续逐项审核；不会自动确认。"); }} />}
     <div className="knowledge-grid">
       <aside className="fact-ledger" aria-label="故事事实目录">
         {rows.map((row, index) => <button type="button" key={row.id} aria-current={selected?.id === row.id} className={selected?.id === row.id ? "selected" : ""} onClick={() => onCursorChange({ filter, selectedId: row.id })}>

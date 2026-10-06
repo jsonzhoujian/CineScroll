@@ -1,8 +1,11 @@
 import type { Actor, AspectRatio, NarrativeMode, TargetDurationSeconds } from "./index.ts";
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { ModelSettingsError, type TaskModelSnapshot, type WorkspaceModelSettings } from "./model-settings.ts";
 
-export type TaskInput = { stage: "story_knowledge" | "script"; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
+export type StoryRetrySelection = { expectedActiveVersionId: string; scopeKeys: string[] };
+export type StoryRetrySnapshot = StoryRetrySelection & { retryOfJobId: string };
+export type TaskInput = { stage: "story_knowledge" | "script"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
@@ -44,6 +47,7 @@ export function validateTaskResult(state: TaskState, result: TaskResult | null):
 export interface ModelTaskContextReader {
   /** Must verify project membership, stage prerequisites and confirmed upstream versions. */
   read(actor: Actor, projectId: string, chapterId: string): Promise<TaskInput | null>;
+  readRetry?(actor: Actor, projectId: string, chapterId: string, selection: StoryRetrySelection): Promise<TaskInput | null>;
 }
 export interface ModelTaskGenerationPolicy { isAllowed(actor: Actor, projectId: string, chapterId: string, sourceVersionId: string): Promise<boolean> }
 type ModelTaskOptions = { settings: WorkspaceModelSettings; repository: ModelTaskRepository; contextReader: ModelTaskContextReader; generationPolicy?: ModelTaskGenerationPolicy;
@@ -82,8 +86,8 @@ export class ModelTaskService {
     await this.#context(actor, projectId, chapterId);
     return this.#options.repository.listStoryKnowledge(actor.workspaceId, projectId, chapterId, page);
   }
-  async #context(actor: Actor, projectId: string, chapterId: string) {
-    const input = await this.#options.contextReader.read(actor, projectId, chapterId);
+  async #context(actor: Actor, projectId: string, chapterId: string, retry?: StoryRetrySelection) {
+    const input = retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
     if (!["story_knowledge", "script"].includes(input.stage) || !input.sourceVersionId
       || (input.stage === "script" && !input.upstreamConfirmedVersionIds.length)
@@ -91,7 +95,10 @@ export class ModelTaskService {
       || ![60, 180, 300].includes(input.generationParameters.targetDurationSeconds)
       || !["9:16", "16:9"].includes(input.generationParameters.aspectRatio)
       || !["narration", "dialogue"].includes(input.generationParameters.narrativeMode)) throw new ModelTaskError("INVALID_CONTEXT");
+    if (retry && (input.stage !== "story_knowledge" || !input.retry || input.retry.expectedActiveVersionId !== retry.expectedActiveVersionId
+      || !validIdentifier(input.retry.retryOfJobId) || !validRetrySelection(input.retry) || !sameScopes(input.retry.scopeKeys, retry.scopeKeys))) throw new ModelTaskError("INVALID_CONTEXT");
     return { stage: input.stage, sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
+      ...(retry && input.retry ? { retry: structuredClone(input.retry) } : {}),
       generationParameters: { targetDurationSeconds: input.generationParameters.targetDurationSeconds,
         aspectRatio: input.generationParameters.aspectRatio, narrativeMode: input.generationParameters.narrativeMode } };
   }
@@ -112,7 +119,7 @@ export class ModelTaskService {
   }
   async resubmit(actor: Actor, id: string, selection: { configurationVersionId: string; modelId: string }) {
     const old = await this.get(actor, id);
-    const current = await this.#context(actor, old.projectId, old.chapterId);
+    const current = await this.#context(actor, old.projectId, old.chapterId, old.input.retry);
     if (!sameInput(old.input, current)) throw new ModelTaskError("UPSTREAM_CHANGED");
     if (old.state !== "paused" || old.reason === "EXECUTION_UNCERTAIN") throw new ModelTaskError("STATE_CONFLICT");
     await this.assertGenerationAllowed(actor, old.projectId, old.chapterId, current);
@@ -121,6 +128,29 @@ export class ModelTaskService {
     this.#assertAdmission(actor, current, model);
     return this.#options.repository.insert({ ...old, id: this.#options.idGenerator(), createdBy: actor.userId,
       parentTaskId: old.id, model, state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
+  }
+  async submitRetry(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string } & StoryRetrySelection) {
+    if (!validIdentifier(input.requestId) || !validRetrySelection(input)) throw new ModelTaskError("INVALID_CONTEXT");
+    await this.#context(actor, input.projectId, input.chapterId);
+    const id = `retry_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
+    const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId && task.input.retry?.expectedActiveVersionId === input.expectedActiveVersionId
+      && sameScopes(task.input.retry.scopeKeys, input.scopeKeys) && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
+    const existing = await this.#options.repository.find(actor.workspaceId, id);
+    if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
+    const context = await this.#context(actor, input.projectId, input.chapterId, input);
+    await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
+    this.#assertAdmission(actor, context);
+    const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
+    this.#assertAdmission(actor, context, model);
+    try {
+      return await this.#options.repository.insert({ id, workspaceId: actor.workspaceId, createdBy: actor.userId, projectId: input.projectId, chapterId: input.chapterId,
+        parentTaskId: null, input: context, model, state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
+    } catch (error) {
+      if (!(error instanceof ModelTaskError && ["STATE_CONFLICT", "TASK_QUEUE_FULL"].includes(error.code))) throw error;
+      const duplicate = await this.#options.repository.find(actor.workspaceId, id);
+      if (!duplicate || !matches(duplicate)) throw error;
+      return duplicate;
+    }
   }
   /** Internal reconciliation only. Reader must return a persisted, task-matched result, never invoke a model. */
   async recover(actor: Actor, id: string, readResult: (task: ModelTask) => Promise<TaskResult | null>) {
@@ -138,7 +168,7 @@ export class ModelTaskService {
     let result: TaskResult | null = null;
     let executionError: TaskExecutionError | null = null;
     try {
-      const context = await this.#context(actor, task.projectId, task.chapterId);
+      const context = await this.#context(actor, task.projectId, task.chapterId, task.input.retry);
       await this.assertGenerationAllowed(actor, task.projectId, task.chapterId, task.input);
       if (!sameInput(task.input, context)) { state = "paused"; reason = "UPSTREAM_CHANGED"; }
       else result = await this.#options.settings.executeForTask(actor, task.model, async credentials => {
@@ -151,8 +181,8 @@ export class ModelTaskService {
       if (executionError) {
         reason = (executionError as TaskExecutionError).code;
         state = ["UPSTREAM_CHANGED", "POLICY_RESTRICTED"].includes(reason) ? "paused" : "failed";
-      } else if (error instanceof ModelTaskError && error.code === "POLICY_RESTRICTED") {
-        state = "paused"; reason = "POLICY_RESTRICTED";
+      } else if (error instanceof ModelTaskError && ["POLICY_RESTRICTED", "STATE_CONFLICT", "UPSTREAM_CHANGED", "INVALID_CONTEXT"].includes(error.code)) {
+        state = "paused"; reason = error.code === "POLICY_RESTRICTED" ? "POLICY_RESTRICTED" : "UPSTREAM_CHANGED";
       } else if (error instanceof ModelSettingsError && ["VERSION_CONFLICT", "FORBIDDEN", "NOT_READY"].includes(error.code)) {
         state = "paused"; reason = error.code as TaskReason;
       } else { state = "failed"; reason = "PROVIDER_UNAVAILABLE"; }
@@ -162,12 +192,16 @@ export class ModelTaskService {
 }
 function sameInput(a: TaskInput, b: TaskInput) {
   return a.stage === b.stage && a.sourceVersionId === b.sourceVersionId
+    && (!a.retry && !b.retry || !!a.retry && !!b.retry && a.retry.expectedActiveVersionId === b.retry.expectedActiveVersionId && a.retry.retryOfJobId === b.retry.retryOfJobId && sameScopes(a.retry.scopeKeys, b.retry.scopeKeys))
     && a.upstreamConfirmedVersionIds.length === b.upstreamConfirmedVersionIds.length
     && a.upstreamConfirmedVersionIds.every((id, i) => id === b.upstreamConfirmedVersionIds[i])
     && a.generationParameters.targetDurationSeconds === b.generationParameters.targetDurationSeconds
     && a.generationParameters.aspectRatio === b.generationParameters.aspectRatio
     && a.generationParameters.narrativeMode === b.generationParameters.narrativeMode;
 }
+function validIdentifier(value: unknown): value is string { return typeof value === "string" && !!value.trim() && value.length <= 256 && !/[\r\n]/.test(value); }
+function validRetrySelection(value: StoryRetrySelection) { return validIdentifier(value.expectedActiveVersionId) && Array.isArray(value.scopeKeys) && value.scopeKeys.length > 0 && value.scopeKeys.length <= 100 && value.scopeKeys.every(validIdentifier) && new Set(value.scopeKeys).size === value.scopeKeys.length; }
+function sameScopes(a: string[], b: string[]) { return a.length === b.length && a.every(scope => b.includes(scope)); }
 export class InMemoryModelTaskRepository implements ModelTaskRepository {
   readonly #tasks = new Map<string, ModelTask>();
   readonly #clock: () => number;

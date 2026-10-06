@@ -1,5 +1,7 @@
 # 故事知识任务执行器（初次提取）
 
+本文件保留初次提取切片的历史说明。当前执行器也支持显式局部重试、结果索引恢复及审核页操作，见 STORY_KNOWLEDGE_RETRY_TASK.md；生产装配状态以 PRODUCTION_STORY_TASKS.md 为准，默认仍关闭。
+
 `StoryKnowledgeTaskExecutor.run(actor, taskId)` 是内部可信入口，不暴露 HTTP run 路由，也没有自动调度。生产未装配；测试使用模拟模型。
 
 后续内部单次调度/恢复扫描基础见 STORY_TASK_DISPATCHER.md，调用现有run/recover；没有常驻Worker或生产定时器。

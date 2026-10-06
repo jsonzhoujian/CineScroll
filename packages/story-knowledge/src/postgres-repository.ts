@@ -32,19 +32,7 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
   async saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null, requireCurrentSource = false): Promise<StoryKnowledgeVersion> {
     return this.inTransaction(actor, async (client) => {
       await setOperation(client, "candidate");
-      if (requireCurrentSource) {
-        // SHARE conflicts with all chapter updates, including non-key active-source changes.
-        // Keep this lock until candidate insertion and head CAS have committed.
-        const source = await client.query<{ active_source_version_id: string | null } & QueryResultRow>(
-          "select active_source_version_id from chapters where project_id=$1 and id=$2 for share",
-          [version.projectId, version.chapterId],
-        );
-        if (!source.rows[0]) throw new StoryKnowledgeError("SOURCE_VERSION_NOT_FOUND", "章节不存在或无权访问");
-        if (source.rows[0].active_source_version_id !== version.sourceVersionId) throw new StoryKnowledgeSourceChangedError();
-        const policy = await client.query("select public.generation_allowed_locked($1,$2,$3,$4) as allowed",
-          [actor.workspaceId,version.projectId,version.chapterId,version.sourceVersionId]);
-        if (policy.rows[0]?.allowed !== true) throw new StoryKnowledgeGenerationRestrictedError();
-      }
+      if (requireCurrentSource) await assertCurrentGeneration(client, actor, version);
       await lockHead(client, actor, version.projectId, version.chapterId);
       if (expectedActiveVersionId !== undefined) await assertActive(client, actor, version.projectId, version.chapterId, expectedActiveVersionId);
       await insertVersion(client, actor, version);
@@ -84,9 +72,10 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
     });
   }
 
-  async saveRetryCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId: string, idempotencyKey: string, fingerprint: string): Promise<StoryKnowledgeVersion> {
+  async saveRetryCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId: string, idempotencyKey: string, fingerprint: string, requireCurrentSource = false): Promise<StoryKnowledgeVersion> {
     return this.inTransaction(actor, async (client) => {
       await setOperation(client, "retry");
+      if (requireCurrentSource) await assertCurrentGeneration(client, actor, version);
       await lockHead(client, actor, version.projectId, version.chapterId);
       const existing = await loadRetry(client, actor, version.projectId, version.chapterId, idempotencyKey);
       if (existing) {
@@ -186,6 +175,14 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
 
 async function setOperation(client: PoolClient, operation: "candidate" | "retry" | "confirm"): Promise<void> {
   await client.query("select set_config('app.story_knowledge_operation', $1, true)", [operation]);
+}
+async function assertCurrentGeneration(client: PoolClient, actor: Actor, version: StoryKnowledgeVersion): Promise<void> {
+  // SHARE blocks even non-key active-source updates until the result/head commit.
+  const source = await client.query("select active_source_version_id from chapters where project_id=$1 and id=$2 for share", [version.projectId, version.chapterId]);
+  if (!source.rows[0]) throw new StoryKnowledgeError("SOURCE_VERSION_NOT_FOUND", "章节不存在或无权访问");
+  if (source.rows[0].active_source_version_id !== version.sourceVersionId) throw new StoryKnowledgeSourceChangedError();
+  const policy = await client.query("select public.generation_allowed_locked($1,$2,$3,$4) as allowed", [actor.workspaceId, version.projectId, version.chapterId, version.sourceVersionId]);
+  if (policy.rows[0]?.allowed !== true) throw new StoryKnowledgeGenerationRestrictedError();
 }
 
 async function lockHead(client: PoolClient, actor: Actor, projectId: string, chapterId: string): Promise<void> {

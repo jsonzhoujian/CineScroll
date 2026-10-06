@@ -75,7 +75,7 @@ export class StoryKnowledgeExtractionRunner {
           expectedActiveVersionId,
           retryOfJobId: trustedSnapshot.retryOfJobId,
           extraction,
-        });
+        }, true);
       }
       return await this.#storyKnowledge.recordExtraction(actor, extraction, expectedActiveVersionId);
     } catch (error) {

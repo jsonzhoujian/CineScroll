@@ -7,6 +7,7 @@ const INSTRUCTIONS = `你是故事知识提取器。只输出json对象，不输
 复制请求的contractVersion、jobId、stage、projectId、chapterId、sourceVersionId。status为succeeded、partially_succeeded或failed，与items结果一致。
 items每项包含唯一scopeKey；成功项status=succeeded，value包含id、factType(character/relationship/event/location/prop/worldRule)、statement、assertionKind(explicit/inferred)、resolutionStatus(resolved/pending_identity/conflicting)、resolutionGroupId(null或分组ID)、evidence数组（sourceVersionId、fragmentId，必须来自请求）。不要生成decision、locked或人工确认字段。保留身份不确定和冲突，不擅自裁决。
 失败项status=failed，error包含code、message、retryable(boolean)。从所有原文片段提取人物、关系、事件、地点、道具和世界规则，保留环境与动作事实。
+若请求包含retryOfJobId，这是局部重试：只输出请求scopeKeys中的每个范围，scopeKey逐字保持一致，不遗漏、不额外生成其他范围；成功项不得沿用或覆盖输入中已存在事实的id。
 成功项例：{"scopeKey":"weather-1","status":"succeeded","value":{"id":"weather-1","factType":"worldRule","statement":"正在下雨","assertionKind":"explicit","resolutionStatus":"resolved","resolutionGroupId":null,"evidence":[{"sourceVersionId":"请求原文ID","fragmentId":"请求片段ID"}]}}。`;
 
 /** Trusted executor transport only. No credentials retained, retries, arbitrary URL or production mounting. */

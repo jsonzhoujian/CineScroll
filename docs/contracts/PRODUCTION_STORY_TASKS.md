@@ -1,5 +1,7 @@
 # 默认关闭的故事知识任务装配
 
+显式启用分支现同时注入局部重试规划器与上下文，复用既有任务表及重试结果索引，不需要新迁移；重试提交、执行和审核页行为见 STORY_KNOWLEDGE_RETRY_TASK.md。本变更不启用配置，也不代表真实供应商或部署验收已完成。
+
 `createProductionApi` 的 `storyTasks` 省略或 `{enabled:false}` 时不挂任务路由、不启动Worker。显式启用需BYOK开启、DeepSeek大陆授权、1～100个去重工作室ID，intervalMs可选100～60000。模型连接必须与业务连接指向同一主机/端口/数据库并使用同一TLS CA；允许不同登录账户，任务使用既有novel_app受限模型连接，不能用业务池权限执行。
 
 装配任务API、PostgresModelTaskRepository、PostgresGenerationPolicyReader、真实执行器/DeepSeek传输及生命周期模块。所有任务均以原始提交人重新鉴权，当前政策缺失默认拒绝。仅当前DeepSeek大陆凭据可生成，其他BYOK厂商尚未接入此任务适配器；白名单同时用于Worker扫描与新提交准入，不改变项目成员鉴权。未配置白名单的工作室不能提交/重提交新任务，但已有任务仍可按权限查看。详见STORY_TASK_ADMISSION.md。

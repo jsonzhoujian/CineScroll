@@ -1,5 +1,53 @@
 import { expect, test, type Page } from "@playwright/test";
 const origin = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
+for (const mode of ["success", "uncertain", "stale", "mobile"]) test(`审核页局部重试与明确载入：${mode}`, async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c", title: "雨落", activeSourceVersionId: "s", versions: [{ id: "s", ordinal: 1, text: "雨落", fragments: [{ id: "f", ordinal: 1, text: "雨落" }] }] };
+  const candidate = { id: "candidate", extractionJobId: "task", projectId: "p", chapterId: "c", sourceVersionId: "s", status: "candidate", extractionStatus: "partially_succeeded",
+    facts: [{ id: "rain", factType: "worldRule", statement: "雨落", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "s", fragmentId: "f" }] }],
+    failures: [{ scopeKey: "identity", originJobId: "task", code: "UNKNOWN", message: "待查", retryable: true }, { scopeKey: "blocked", originJobId: "task", code: "BLOCKED", message: "不可重试", retryable: false }, { scopeKey: "other", originJobId: "earlier-task", code: "UNKNOWN", message: "其他来源", retryable: true }] };
+  let submitted = false, posts = 0;
+  const next = { ...candidate, id: "retry-candidate", extractionJobId: "retry-task", failures: candidate.failures.slice(1) };
+  await page.route(`${origin}/projects/p/chapters/c/context`, route => route.fulfill({ headers, json: { project: { id: "p", title: "作品", role: "owner" }, chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`, route => route.fulfill({ headers, json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`, route => route.fulfill({ headers, json: submitted ? { ...next, id: mode === "stale" ? "newer-candidate" : next.id } : candidate }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge/versions/retry-candidate`, route => route.fulfill({ headers, json: next }));
+  await page.route(`${origin}/story-knowledge-tasks/retry-task`, route => route.fulfill({ headers, json: { id: "retry-task", projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: "succeeded", reason: null, result: { candidateVersionId: "retry-candidate", extractionStatus: "partially_succeeded" } } }));
+  let requestId: string | undefined;
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge-tasks/retries`, route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ headers, status: 204 });
+    posts++; const input = route.request().postDataJSON();
+    expect(input).toMatchObject({ expectedActiveVersionId: "candidate", scopeKeys: ["identity"], configurationVersionId: "config", modelId: "model" });
+    expect(input.requestId).toBeTruthy();
+    if (requestId) expect(input.requestId).toBe(requestId); else requestId = input.requestId;
+    if (mode === "uncertain" && posts === 1) return route.fulfill({ headers, status: 503, json: { code: "STORAGE_UNAVAILABLE" } });
+    submitted = true;
+    return route.fulfill({ headers, json: { id: "retry-task", projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: "queued", reason: null, result: null } });
+  });
+  await page.getByRole("button", { name: "进入审核", exact: true }).click();
+  const retry = page.getByRole("region", { name: "局部失败重试" });
+  if (mode === "mobile") { await page.setViewportSize({ width: 390, height: 844 }); await expect(retry).toBeHidden(); expect(posts).toBe(0); return; }
+  await expect(retry.getByRole("checkbox", { name: "identity" })).toBeEnabled();
+  await expect(retry.getByRole("checkbox", { name: "blocked" })).toBeDisabled();
+  await retry.getByRole("checkbox", { name: "identity" }).check();
+  await expect(retry.getByRole("checkbox", { name: "other" })).toBeDisabled();
+  await retry.getByRole("button", { name: "读取重试模型" }).click();
+  await retry.getByLabel("局部重试模型").selectOption("model");
+  if (mode === "success") { await retry.scrollIntoViewIfNeeded(); await page.screenshot({ path: "/private/tmp/story-knowledge-retry.png" }); }
+  await retry.getByRole("button", { name: "提交所选范围重试" }).click();
+  if (mode === "uncertain") {
+    await expect(retry.getByRole("button", { name: "核对原提交" })).toBeEnabled();
+    await expect(retry.getByLabel("局部重试模型")).toBeDisabled();
+    await retry.getByRole("button", { name: "核对原提交" }).click();
+  }
+  await expect(retry.getByRole("button", { name: "载入重试候选" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认故事知识阶段" })).toBeDisabled();
+  await retry.getByRole("button", { name: "载入重试候选" }).click();
+  if (mode === "stale") { await expect(retry.getByText(/原文或活动候选已变化/)).toBeVisible(); await expect(page.getByText("故事知识 · 版本 candidate")).toBeVisible(); }
+  else await expect(page.getByText("故事知识 · 版本 retry-candidate")).toBeVisible();
+  expect(posts).toBe(mode === "uncertain" ? 2 : 1);
+});
 test("任务候选可进入对应章节审核，部分成功不自动确认", async ({ page }) => {
   await setup(page);
   const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,OPTIONS" };

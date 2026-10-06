@@ -117,6 +117,7 @@ export interface StoryKnowledgeRepository {
     expectedActiveVersionId: string,
     idempotencyKey: string,
     fingerprint: string,
+    requireCurrentSource?: boolean,
   ): Promise<StoryKnowledgeVersion>;
   saveConfirmed(
     actor: Actor,
@@ -475,6 +476,10 @@ export class StoryKnowledgeService {
     const version = await this.#repository.findInitialExtraction(actor, projectId, chapterId, jobId);
     return version ? this.getVersion(actor, projectId, chapterId, version.id) : null;
   }
+  async getRetryExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string, retryOfJobId: string, scopeKeys: string[]): Promise<StoryKnowledgeVersion | null> {
+    const result = await this.#repository.findRetryResult(actor, projectId, chapterId, retryIdempotencyKey(retryOfJobId, jobId, scopeKeys));
+    return result ? this.getVersion(actor, projectId, chapterId, result.version.id) : null;
+  }
 
   async resolveFact(
     actor: Actor,
@@ -660,6 +665,7 @@ export class StoryKnowledgeService {
     projectId: string,
     chapterId: string,
     input: unknown,
+    requireCurrentSource = false,
   ): Promise<StoryKnowledgeVersion> {
     const command = parseRetryCommand(input);
     const { expectedActiveVersionId, retryOfJobId, extraction } = command;
@@ -760,7 +766,7 @@ export class StoryKnowledgeService {
       status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
       facts,
       failures,
-    }, current.id, idempotencyKey, fingerprint);
+    }, current.id, idempotencyKey, fingerprint, requireCurrentSource);
   }
 
   async confirmStage(

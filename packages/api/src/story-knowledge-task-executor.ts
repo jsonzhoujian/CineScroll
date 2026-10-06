@@ -12,14 +12,16 @@ export interface CredentialedStoryKnowledgeModel {
 type Options = { tasks: ModelTaskService; projects: Pick<ProjectImportRepository, "findProjectAccess" | "findChapter">;
   storyKnowledge: StoryKnowledgeService; model: CredentialedStoryKnowledgeModel };
 
-/** Initial extraction only; existing candidates require a separate, explicitly scoped regeneration flow. */
+/** Initial extraction or explicitly scoped retry; never confirms stage results. */
 export class StoryKnowledgeTaskExecutor {
   readonly #options: Options;
   constructor(options: Options) { this.#options = options; }
   async recover(actor: Actor, id: string) {
     return this.#options.tasks.recover(actor, id, async task => {
       if (task.input.stage !== "story_knowledge") throw new ModelTaskError("TASK_NOT_FOUND");
-      const candidate = await this.#options.storyKnowledge.getInitialExtraction(actor, task.projectId, task.chapterId, task.id);
+      const retry = task.input.retry;
+      const candidate = retry ? await this.#options.storyKnowledge.getRetryExtraction(actor, task.projectId, task.chapterId, task.id, retry.retryOfJobId, retry.scopeKeys)
+        : await this.#options.storyKnowledge.getInitialExtraction(actor, task.projectId, task.chapterId, task.id);
       if (!candidate || candidate.sourceVersionId !== task.input.sourceVersionId) return null;
       return { candidateVersionId: candidate.id, extractionStatus: candidate.extractionStatus };
     });
@@ -30,7 +32,7 @@ export class StoryKnowledgeTaskExecutor {
     if (task.input.stage !== "story_knowledge") throw new ModelTaskError("TASK_NOT_FOUND");
     return tasks.run(actor, id, async credentials => {
       try {
-        try {
+        if (!task.input.retry) try {
           await storyKnowledge.getActive(actor, task.projectId, task.chapterId);
           throw new TaskExecutionError("CANDIDATE_EXISTS");
         } catch (error) {
@@ -43,13 +45,18 @@ export class StoryKnowledgeTaskExecutor {
           if (chapter?.activeSourceVersionId !== task.input.sourceVersionId) throw new TaskExecutionError("UPSTREAM_CHANGED");
           const source = chapter.versions.find(version => version.id === task.input.sourceVersionId);
           if (!source) throw new TaskExecutionError("UPSTREAM_CHANGED");
+          if (task.input.retry) {
+            const active = await storyKnowledge.getActive(actor, task.projectId, task.chapterId);
+            if (active.id !== task.input.retry.expectedActiveVersionId || active.sourceVersionId !== source.id) throw new TaskExecutionError("UPSTREAM_CHANGED");
+          }
           return source;
         };
         const source = await readSource();
         const request: StoryKnowledgeGenerationRequest = {
           contractVersion: "0.1.0", jobId: task.id, stage: "storyKnowledge", projectId: task.projectId, chapterId: task.chapterId,
           sourceVersionId: source.id, upstreamConfirmedVersionIds: [],
-          scopeKeys: ["characters", "relationships", "events", "locations", "props", "worldRules"],
+          scopeKeys: task.input.retry?.scopeKeys ?? ["characters", "relationships", "events", "locations", "props", "worldRules"],
+          ...(task.input.retry ? { retryOfJobId: task.input.retry.retryOfJobId } : {}),
           generationParameters: task.input.generationParameters,
           input: { sourceFragments: source.fragments.map(({ id, text }) => ({ id, text })), confirmedUpstreamContent: [], approvedAdditionIds: [], lockedItemIds: [] },
         };
@@ -59,13 +66,13 @@ export class StoryKnowledgeTaskExecutor {
           await readSource();
           return response;
         } } });
-        const candidate = await runner.run(actor, request, null);
+        const candidate = await runner.run(actor, request, task.input.retry?.expectedActiveVersionId ?? null);
         return { candidateVersionId: candidate.id, extractionStatus: candidate.extractionStatus };
       } catch (error) {
         if (error instanceof StoryKnowledgeModelError && error.code === "INVALID_RESPONSE") throw new TaskExecutionError("INVALID_RESPONSE");
         if (error instanceof StoryKnowledgeSourceChangedError) throw new TaskExecutionError("UPSTREAM_CHANGED");
         if (error instanceof StoryKnowledgeGenerationRestrictedError || error instanceof ModelTaskError && error.code === "POLICY_RESTRICTED") throw new TaskExecutionError("POLICY_RESTRICTED");
-        if (error instanceof StoryKnowledgeError && error.code === "VERSION_CONFLICT") throw new TaskExecutionError("CANDIDATE_EXISTS");
+        if (error instanceof StoryKnowledgeError && error.code === "VERSION_CONFLICT") throw new TaskExecutionError(task.input.retry ? "UPSTREAM_CHANGED" : "CANDIDATE_EXISTS");
         throw error;
       }
     }, signal);

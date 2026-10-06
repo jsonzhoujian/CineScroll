@@ -308,6 +308,13 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
     const first = await repository.saveRetryCandidate(actor, retry, active!.id, "retry:job-2", "same");
     const repeated = await repository.saveRetryCandidate(actor, version("skv_ignored", active!.id), active!.id, "retry:job-2", "same");
     assert.deepEqual(repeated, first);
+    await adminPool.query("update chapters set active_source_version_id='srcv_new' where id='chp_story'");
+    await assert.rejects(() => repository.saveRetryCandidate(actor, version("skv_retry_stale", first.id), first.id, "stale-retry", "stale", true), error => error instanceof StoryKnowledgeSourceChangedError);
+    assert.equal((await repository.findActive(actor, "prj_story", "chp_story"))?.id, first.id);
+    await adminPool.query("update chapters set active_source_version_id='srcv_story' where id='chp_story'");
+    await adminPool.query("update source_generation_policy set state='blocked' where source_version_id='srcv_story'");
+    await assert.rejects(() => repository.saveRetryCandidate(actor, version("skv_retry_blocked", first.id), first.id, "blocked-retry", "blocked", true), { code: "FORBIDDEN" });
+    await adminPool.query("update source_generation_policy set state='allowed' where source_version_id='srcv_story'");
     await assert.rejects(
       () => repository.saveRetryCandidate(actor, version("skv_invalid", first.id), first.id, "retry:job-2", "different"),
       { code: "INVALID_RETRY" },

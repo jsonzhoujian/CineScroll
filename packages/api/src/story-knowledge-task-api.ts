@@ -38,6 +38,14 @@ class StoryKnowledgeTaskController {
     if (!this.retryPlanner) throw new ModelTaskError("TASK_NOT_FOUND");
     return safely(() => this.retryPlanner!.plan(request.actor, project, chapter, selection));
   }
+  async submitRetry(request: SessionRequest, projectId: string, chapterId: string, body: unknown) {
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["expectedActiveVersionId", "scopeKeys", "configurationVersionId", "modelId", "requestId"].includes(key))) throw new BadRequestException("重试参数无效");
+    const value = body as Record<string, unknown>;
+    if (!Array.isArray(value.scopeKeys) || !value.scopeKeys.length || value.scopeKeys.length > 100 || new Set(value.scopeKeys).size !== value.scopeKeys.length) throw new BadRequestException("重试参数无效");
+    const input = { projectId: identifier(projectId), chapterId: identifier(chapterId), expectedActiveVersionId: identifier(value.expectedActiveVersionId), scopeKeys: value.scopeKeys.map(identifier),
+      configurationVersionId: identifier(value.configurationVersionId), modelId: identifier(value.modelId), requestId: identifier(value.requestId) };
+    return safely(() => this.tasks.submitRetry(request.actor, input));
+  }
   async availability(request: SessionRequest, projectId: string, chapterId: string, query: Record<string, unknown>) {
     const chosen = selection(query);
     const project = identifier(projectId), chapter = identifier(chapterId);
@@ -90,6 +98,13 @@ Req()(StoryKnowledgeTaskController.prototype, "retryPlan", 0);
 Param("projectId")(StoryKnowledgeTaskController.prototype, "retryPlan", 1);
 Param("chapterId")(StoryKnowledgeTaskController.prototype, "retryPlan", 2);
 Body()(StoryKnowledgeTaskController.prototype, "retryPlan", 3);
+const submitRetryDescriptor = Object.getOwnPropertyDescriptor(StoryKnowledgeTaskController.prototype, "submitRetry")!;
+Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks/retries")(StoryKnowledgeTaskController.prototype, "submitRetry", submitRetryDescriptor);
+Header("Cache-Control", "no-store")(StoryKnowledgeTaskController.prototype, "submitRetry", submitRetryDescriptor);
+Req()(StoryKnowledgeTaskController.prototype, "submitRetry", 0);
+Param("projectId")(StoryKnowledgeTaskController.prototype, "submitRetry", 1);
+Param("chapterId")(StoryKnowledgeTaskController.prototype, "submitRetry", 2);
+Body()(StoryKnowledgeTaskController.prototype, "submitRetry", 3);
 for (const [method, decorator] of [["availability", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks/availability")], ["list", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(StoryKnowledgeTaskController.prototype, method)!;
   decorator(StoryKnowledgeTaskController.prototype, method, descriptor);

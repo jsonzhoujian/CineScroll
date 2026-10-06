@@ -11,6 +11,7 @@ import { ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import { PostgresModelTaskRepository } from "@novel-adaptation/script/postgres-model-tasks";
 import { PostgresGenerationPolicyReader } from "@novel-adaptation/story-knowledge/generation-policy";
 import { StoryKnowledgeTaskContext } from "./story-knowledge-task-context.ts";
+import { StoryKnowledgeRetryPlanner } from "./story-knowledge-retry-planner.ts";
 import { StoryKnowledgeTaskExecutor } from "./story-knowledge-task-executor.ts";
 import { StoryKnowledgeTaskDispatcher } from "./story-knowledge-task-dispatcher.ts";
 import { StoryKnowledgeTaskWorker } from "./story-knowledge-task-worker.ts";
@@ -202,7 +203,8 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
           return source ? { id: source.id, fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
         } }, idGenerator: () => `skv_${randomUUID()}`, clock: () => new Date() });
       const repository = new PostgresModelTaskRepository(restrictedPool);
-      const tasks = new ModelTaskService({ settings, repository, contextReader: new StoryKnowledgeTaskContext(taskProjects),
+      const retryPlanning = { projects: taskProjects, storyKnowledge: taskKnowledge };
+      const tasks = new ModelTaskService({ settings, repository, contextReader: new StoryKnowledgeTaskContext(taskProjects, new StoryKnowledgeRetryPlanner(retryPlanning)),
         storyAdmission: { workspaceIds: taskConfig.workspaceIds, providerIds: ["deepseek"] },
         generationPolicy: policy,
         idGenerator: () => `job_${randomUUID()}` });
@@ -210,7 +212,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         model: new DeepSeekStoryKnowledgeModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       worker = new StoryKnowledgeTaskWorker({ dispatcher: new StoryKnowledgeTaskDispatcher({ repository, executor }),
         enabled: true, workspaceIds: taskConfig.workspaceIds, ...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
-      apiModule.imports!.push(StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks }), StoryKnowledgeWorkerModule.forWorker(worker));
+      apiModule.imports!.push(StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks, retryPlanning }), StoryKnowledgeWorkerModule.forWorker(worker));
       apiModule.providers!.push({ provide: "STORY_TASK_DATABASE_STARTUP_CHECK", useValue: {
         onModuleInit: () => assertStoryTaskDatabase(restrictedPool, taskConfig.workspaceIds),
       } });

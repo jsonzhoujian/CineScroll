@@ -7,6 +7,7 @@
 - GET `/story-knowledge-tasks/:id`：读取已授权故事知识任务，200。
 - POST `/story-knowledge-tasks/:id/resubmit`：暂停任务创建唯一后继，201；重复或输入变化为409。
 - POST `/projects/:projectId/chapters/:chapterId/story-knowledge-tasks/retry-plan`：可选注入规划器后的只读局部重试准入，独立输入及限制见 STORY_KNOWLEDGE_RETRY_PLAN.md；不创建任务。
+- POST `/projects/:projectId/chapters/:chapterId/story-knowledge-tasks/retries`：提交局部重试任务，输入、快照、幂等及执行/恢复见 STORY_KNOWLEDGE_RETRY_TASK.md。
 
 创建和暂停重提交 POST 仅接受 `configurationVersionId` 与 `modelId`，禁止客户端指定原文版本、身份、阶段或生成参数。所有响应 no-store；模型 Key 不返回。跨项目访问或错误阶段任务为404；未认证401；模型访问拒绝403；存储失败503。
 

@@ -241,6 +241,29 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     await assert.rejects(() => admin.query("update model_tasks set state='succeeded',revision=2,lease_expires_at=null,result_json=$3::jsonb where workspace_id=$1 and id=$2",
       [original.workspaceId, constraintId, JSON.stringify({ candidateVersionId: "candidate", extractionStatus: null })]), { code: "23514" });
     const durable = new PostgresModelTaskRepository(app);
+    const retrySnapshot = { expectedActiveVersionId: "knowledge-base", retryOfJobId: "origin-job", scopeKeys: ["identity"] };
+    const retryActor = { userId: "retry-owner", workspaceId: randomUUID() };
+    await admin.query("insert into workspace_task_limits values($1,1,1)", [retryActor.workspaceId]);
+    let configSeq = 0;
+    const retrySettings = new WorkspaceModelSettings({ repository: new InMemoryModelSettingsRepository(), encryptionKey: new Uint8Array(32).fill(7),
+      access: { read: async () => ({ owner: true, advanced: true }) }, idGenerator: () => `retry-cfg-${++configSeq}`,
+      probe: { processingRegion: () => "mainland", test: async () => ({ modelIds: ["m"], processingRegion: "mainland" }) } });
+    const retryConfig = await retrySettings.testConnection(retryActor, (await retrySettings.configure(retryActor, { expectedVersionId: null, providerId: "deepseek", apiKey: "test-key" })).id);
+    const retryContext = { stage: "story_knowledge" as const, sourceVersionId: "source", upstreamConfirmedVersionIds: [], generationParameters: { targetDurationSeconds: 180 as const, aspectRatio: "9:16" as const, narrativeMode: "narration" as const } };
+    let simultaneousReads = 0, releaseRetry!: () => void;
+    const retryGate = new Promise<void>(resolve => { releaseRetry = resolve; });
+    const retryService = new ModelTaskService({ settings: retrySettings, repository: durable, contextReader: { read: async () => retryContext, readRetry: async () => {
+      if (++simultaneousReads === 2) releaseRetry(); await retryGate; return { ...retryContext, retry: retrySnapshot };
+    } },
+      storyAdmission: { workspaceIds: [retryActor.workspaceId], providerIds: ["deepseek"] }, generationPolicy: { isAllowed: async () => true }, idGenerator: randomUUID });
+    const intent = { projectId: "p", chapterId: "c", expectedActiveVersionId: retrySnapshot.expectedActiveVersionId, scopeKeys: ["identity"], configurationVersionId: retryConfig.id, modelId: "m", requestId: "same-intent" };
+    const duplicates = await Promise.all([retryService.submitRetry(retryActor, intent), retryService.submitRetry(retryActor, intent)]);
+    assert.equal(duplicates[0]!.id, duplicates[1]!.id);
+    const retryTask = await durable.insert({ ...original, id: randomUUID(), parentTaskId: null, state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null,
+      input: { ...original.input, stage: "story_knowledge", upstreamConfirmedVersionIds: [], retry: retrySnapshot } });
+    assert.deepEqual((await new PostgresModelTaskRepository(app).find(original.workspaceId, retryTask.id))?.input.retry, retrySnapshot);
+    assert.equal(await new PostgresModelTaskRepository(app).find("other-workspace", retryTask.id), null);
+    await assert.rejects(() => durable.insert(retryTask), { code: "STATE_CONFLICT" });
     await assert.rejects(() => durable.recover(original.workspaceId, constraintId, 1, null), { code: "STATE_CONFLICT" });
     assert.equal((await durable.transition(original.workspaceId, constraintId, 1, "paused", "POLICY_RESTRICTED")).reason, "POLICY_RESTRICTED");
     const crashedId = randomUUID();

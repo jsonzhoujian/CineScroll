@@ -114,6 +114,9 @@ export class ApiClient {
     return this.request<{ tasks: StoryKnowledgeTask[]; nextCursor: string | null }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge-tasks?${query}`, { method: "GET", cache: "no-store" }, "session");
   }
   getStoryKnowledgeTask(id: string) { return this.request<StoryKnowledgeTask>(`/story-knowledge-tasks/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }, "session"); }
+  submitStoryKnowledgeRetry(projectId: string, chapterId: string, input: { expectedActiveVersionId: string; scopeKeys: string[]; configurationVersionId: string; modelId: string; requestId: string }) {
+    return this.request<StoryKnowledgeTask>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge-tasks/retries`, { method: "POST", body: JSON.stringify(input) }, "session");
+  }
   resubmitStoryKnowledgeTask(id: string, input: { configurationVersionId: string; modelId: string }) {
     return this.request<StoryKnowledgeTask>(`/story-knowledge-tasks/${encodeURIComponent(id)}/resubmit`, { method: "POST", body: JSON.stringify(input) }, "session");
   }
