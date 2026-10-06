@@ -4,6 +4,7 @@ import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryKnow
 import { taskPresentation } from "../lib/task-status";
 import { ChapterTaskList, type TaskChapterContext } from "./chapter-task-list";
 import { InitialStoryTask } from "./initial-story-task";
+import { useTaskAvailability } from "../lib/use-task-availability";
 
 export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiClient; context?: TaskChapterContext; activeProjectId?: string }) {
   const [listContext, setListContext] = useState<TaskChapterContext | null>(null);
@@ -14,6 +15,7 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
   const [configuration, setConfiguration] = useState<ModelConfiguration | null>(null), [modelId, setModelId] = useState("");
   const [notice, setNotice] = useState("输入任务编号，读取后台状态。"), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const epoch = useRef(0);
+  const availability = useTaskAvailability(api, task?.projectId, task?.chapterId, configuration?.id, modelId);
   useEffect(() => {
     const url = new URL(window.location.href);
     const project = url.searchParams.get("taskProject") ?? "", chapter = url.searchParams.get("taskChapter") ?? "";
@@ -77,7 +79,7 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
     finally { if (stamp === epoch.current) setBusy(false); }
   }
   async function resubmit() {
-    if (!task || !taskPresentation(task).canResubmit || !configuration || !configuration.availableModelIds.includes(modelId)) return;
+    if (!availability.available || !task || !taskPresentation(task).canResubmit || !configuration || !configuration.availableModelIds.includes(modelId)) return;
     const stamp = epoch.current; setBusy(true);
     try {
       const next = await api.resubmitStoryKnowledgeTask(task.id, { configurationVersionId: configuration.id, modelId });
@@ -102,7 +104,8 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
       {presentation.canResubmit && <div className="task-resubmit desktop-task-action">
         <label>当前已测试模型<select value={modelId} disabled={busy || !configuration} onChange={event => setModelId(event.target.value)}><option value="">选择模型</option>{configuration?.availableModelIds.map(model => <option key={model}>{model}</option>)}</select></label>
         <small>配置版本 {configuration?.id ?? "不可用"} · 此操作创建新任务，不覆盖旧记录。</small>
-        <button className="button primary" disabled={busy || !configuration || !modelId} onClick={() => void resubmit()}>使用所选模型重新提交</button>
+        <p aria-live="polite">{availability.note}</p>
+        <button className="button primary" disabled={busy || !availability.available || !configuration || !modelId} onClick={() => void resubmit()}>使用所选模型重新提交</button>
       </div>}
     </article>}
     {candidate && <section className="task-candidate" aria-label="任务候选版本">
@@ -117,6 +120,8 @@ export function TaskStatusPanel({ api, context, activeProjectId }: { api: ApiCli
 function validId(value: string) { return !!value.trim() && value.length <= 256 && !/[\r\n]/.test(value); }
 function describe(error: unknown) {
   if (error instanceof ApiClientError) {
+    if (error.code === "WORKSPACE_TASK_DISABLED") return "当前工作室尚未启用故事知识生成，已有任务仍可查看。";
+    if (error.code === "TASK_PROVIDER_UNSUPPORTED") return "当前厂商尚未支持故事知识生成，请联系负责人。";
     if (error.status === 401) return "登录已失效，请重新登录。";
     if (error.status === 403) return "无权操作或订阅已失效，请联系负责人。";
     if (error.status === 429 && error.code === "TASK_QUEUE_FULL") return "工作室排队任务已达上限，请先处理已有任务后再重新提交。";

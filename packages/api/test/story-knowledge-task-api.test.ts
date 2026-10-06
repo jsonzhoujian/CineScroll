@@ -34,7 +34,7 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
   let maxExecuting = 100;
   const taskRepository = new InMemoryModelTaskRepository(() => now, () => ({ maxQueued, maxExecuting }));
   let policyAllowed = true;
-  const tasks = new ModelTaskService({ settings, repository: taskRepository, generationPolicy: { isAllowed: async () => policyAllowed }, contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
+  const tasks = new ModelTaskService({ settings, repository: taskRepository, storyAdmission: { workspaceIds: ["w"], providerIds: ["deepseek"] }, generationPolicy: { isAllowed: async () => policyAllowed }, contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async userId => ({ userId, workspaceId: "w" }) });
   const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
@@ -42,6 +42,12 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
     const http = request(app.getHttpServer()), bearer = `Bearer ${await sessions.issue("owner", "w")}`;
     const path = "/projects/p/chapters/c/story-knowledge-tasks";
     const selection = { configurationVersionId: tested.id, modelId: "m" };
+    const availabilityPath = `${path}/availability?configurationVersionId=${tested.id}&modelId=m`;
+    await http.get(availabilityPath).expect(401);
+    await http.get(`/projects/${"p".repeat(257)}/chapters/c/story-knowledge-tasks/availability?configurationVersionId=${tested.id}&modelId=m`).set("authorization", bearer).expect(400);
+    await http.get(availabilityPath).set("authorization", `Bearer ${await sessions.issue("outsider", "w")}`).expect(404);
+    const available = await http.get(availabilityPath).set("authorization", bearer).expect(200);
+    assert.deepEqual(available.body, { available: true, reason: null });
     policyAllowed = false;
     const restricted = await http.post(path).set("authorization", bearer).send(selection).expect(403);
     assert.equal(restricted.body.code, "POLICY_RESTRICTED");

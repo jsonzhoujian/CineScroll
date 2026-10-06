@@ -140,19 +140,31 @@ test("故事知识许可缺失或受限禁止创建和执行，读取仍可用",
   const saved = await settings.configure(actor, { expectedVersionId: null, providerId: "deepseek", apiKey: "fixture-key" });
   const config = await settings.testConnection(actor, saved.id);
   const options = { settings, repository: new InMemoryModelTaskRepository(Date.now, fixtureLimits), idGenerator: () => `policy${++job}`,
+    storyAdmission: { workspaceIds: [actor.workspaceId], providerIds: ["deepseek"] },
     contextReader: { read: async () => ({ stage: "story_knowledge" as const, sourceVersionId: "s", upstreamConfirmedVersionIds: [], generationParameters: { targetDurationSeconds: 180 as const, aspectRatio: "9:16" as const, narrativeMode: "narration" as const } }) } };
   const selection = { projectId: "p", chapterId: "c", configurationVersionId: config.id, modelId: "m" };
   await assert.rejects(() => new ModelTaskService(options).submit(actor, selection), { code: "POLICY_RESTRICTED" });
   const service = new ModelTaskService({ ...options, generationPolicy: { isAllowed: async () => allowed } });
   await assert.rejects(() => service.submit(actor, selection), { code: "POLICY_RESTRICTED" });
   allowed = true;
+  const disabled = new ModelTaskService({ ...options, storyAdmission: { workspaceIds: [], providerIds: ["deepseek"] }, generationPolicy: { isAllowed: async () => true } });
+  await assert.rejects(() => disabled.submit(actor, selection), { code: "WORKSPACE_TASK_DISABLED" });
+  assert.deepEqual((await disabled.listStoryKnowledge(actor, "p", "c")).tasks, []);
   const task = await service.submit(actor, selection);
+  assert.equal((await disabled.get(actor, task.id)).id, task.id);
+  assert.deepEqual(await disabled.availability(actor, "p", "c", selection), { available: false, reason: "WORKSPACE_TASK_DISABLED" });
+  const unsupported = new ModelTaskService({ ...options, storyAdmission: { workspaceIds: [actor.workspaceId], providerIds: [] }, generationPolicy: { isAllowed: async () => true } });
+  assert.deepEqual(await unsupported.availability(actor, "p", "c", selection), { available: false, reason: "TASK_PROVIDER_UNSUPPORTED" });
+  await assert.rejects(() => unsupported.submit(actor, selection), { code: "TASK_PROVIDER_UNSUPPORTED" });
   allowed = false;
   assert.equal((await service.get(actor, task.id)).state, "queued");
   const stopped = await service.run(actor, task.id, async () => { calls++; });
   assert.equal(stopped.reason, "POLICY_RESTRICTED"); assert.equal(stopped.state, "paused"); assert.equal(calls, 0);
   await assert.rejects(() => service.resubmit(actor, task.id, selection), { code: "POLICY_RESTRICTED" });
   allowed = true;
+  await assert.rejects(() => disabled.resubmit(actor, task.id, selection), { code: "WORKSPACE_TASK_DISABLED" });
+  await assert.rejects(() => unsupported.resubmit(actor, task.id, selection), { code: "TASK_PROVIDER_UNSUPPORTED" });
+  assert.equal((await service.listStoryKnowledge(actor, "p", "c")).tasks.length, 1);
   const next = await service.resubmit(actor, task.id, selection);
   // Invoke returns only after its trusted candidate commit. A later restriction must
   // not erase this already-persisted outcome; the executor owns the pre-save checks.

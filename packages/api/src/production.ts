@@ -203,6 +203,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         } }, idGenerator: () => `skv_${randomUUID()}`, clock: () => new Date() });
       const repository = new PostgresModelTaskRepository(restrictedPool);
       const tasks = new ModelTaskService({ settings, repository, contextReader: new StoryKnowledgeTaskContext(taskProjects),
+        storyAdmission: { workspaceIds: taskConfig.workspaceIds, providerIds: ["deepseek"] },
         generationPolicy: policy,
         idGenerator: () => `job_${randomUUID()}` });
       const executor = new StoryKnowledgeTaskExecutor({ tasks, projects: taskProjects, storyKnowledge: taskKnowledge,

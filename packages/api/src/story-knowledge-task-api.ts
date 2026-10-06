@@ -26,6 +26,11 @@ async function safely<T>(action: () => Promise<T>): Promise<T> {
 class StoryKnowledgeTaskController {
   private readonly tasks: ModelTaskService;
   constructor(tasks: ModelTaskService) { this.tasks = tasks; }
+  async availability(request: SessionRequest, projectId: string, chapterId: string, query: Record<string, unknown>) {
+    const chosen = selection(query);
+    const project = identifier(projectId), chapter = identifier(chapterId);
+    return safely(() => this.tasks.availability(request.actor, project, chapter, chosen));
+  }
   async list(request: SessionRequest, projectId: string, chapterId: string, query: Record<string, unknown>) {
     if (Object.keys(query).some(key => !["limit", "cursor"].includes(key))) throw new BadRequestException("分页参数无效");
     const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
@@ -55,9 +60,9 @@ class StoryKnowledgeTaskController {
 }
 class TaskFilter implements ExceptionFilter<ModelTaskError | ModelSettingsError> {
   catch(error: ModelTaskError | ModelSettingsError, host: ArgumentsHost) {
-    const status = ["TASK_QUEUE_FULL", "TASK_EXECUTION_FULL"].includes(error.code) ? 429 : error.code === "TASK_NOT_FOUND" ? 404 : ["FORBIDDEN", "POLICY_RESTRICTED"].includes(error.code) ? 403 :
+    const status = ["TASK_QUEUE_FULL", "TASK_EXECUTION_FULL"].includes(error.code) ? 429 : error.code === "TASK_NOT_FOUND" ? 404 : ["FORBIDDEN", "POLICY_RESTRICTED", "WORKSPACE_TASK_DISABLED"].includes(error.code) ? 403 :
       ["STATE_CONFLICT", "UPSTREAM_CHANGED", "VERSION_CONFLICT"].includes(error.code) ? 409 :
-      ["INVALID_CONTEXT", "INVALID_CONFIGURATION"].includes(error.code) ? 400 : 503;
+      ["INVALID_CONTEXT", "INVALID_CONFIGURATION", "TASK_PROVIDER_UNSUPPORTED"].includes(error.code) ? 400 : 503;
     host.switchToHttp().getResponse().status(status).json({ code: error.code, message: error.code });
   }
 }
@@ -65,12 +70,12 @@ Catch(ModelTaskError, ModelSettingsError)(TaskFilter);
 Controller()(StoryKnowledgeTaskController);
 UseGuards(SessionGuard)(StoryKnowledgeTaskController);
 Inject(TASKS)(StoryKnowledgeTaskController, undefined, 0);
-for (const [method, decorator] of [["list", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")]] as const) {
+for (const [method, decorator] of [["availability", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks/availability")], ["list", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(StoryKnowledgeTaskController.prototype, method)!;
   decorator(StoryKnowledgeTaskController.prototype, method, descriptor);
   Header("Cache-Control", "no-store")(StoryKnowledgeTaskController.prototype, method, descriptor);
   Req()(StoryKnowledgeTaskController.prototype, method, 0);
-  if (method === "submit" || method === "list") {
+  if (method === "submit" || method === "list" || method === "availability") {
     Param("projectId")(StoryKnowledgeTaskController.prototype, method, 1);
     Param("chapterId")(StoryKnowledgeTaskController.prototype, method, 2);
     if (method === "submit") Body()(StoryKnowledgeTaskController.prototype, method, 3);

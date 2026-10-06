@@ -96,6 +96,10 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 
 export class ApiClient {
+  storyTaskAvailability(projectId: string, chapterId: string, input: { configurationVersionId: string; modelId: string }) {
+    const query = new URLSearchParams(input);
+    return this.request<{ available: boolean; reason: "WORKSPACE_TASK_DISABLED" | "TASK_PROVIDER_UNSUPPORTED" | null }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge-tasks/availability?${query}`, { method: "GET", cache: "no-store" }, "session");
+  }
   submitStoryKnowledgeTask(projectId: string, chapterId: string, input: { configurationVersionId: string; modelId: string }) {
     return this.request<StoryKnowledgeTask>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge-tasks`, { method: "POST", body: JSON.stringify(input) }, "session");
   }

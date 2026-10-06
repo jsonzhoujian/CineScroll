@@ -36,10 +36,12 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   let releaseLate!: () => void;
   const lateSubmit = new Promise<void>(resolve => { releaseLate = resolve; });
   let tested = true, processingRegion = "mainland";
+  let admissionReason: string | null = "WORKSPACE_TASK_DISABLED";
   const task = { id: "first-task", projectId: "project-1", chapterId: "chapter-2", input: { stage: "story_knowledge", sourceVersionId: "version-1" }, state: "queued", reason: null, result: null };
   await page.route(`${apiOrigin}/workspace/model-settings`, route => route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify({ configuration: { id: "config", tested, processingRegion, availableModelIds: ["model"] } }) }));
   await page.route(`${apiOrigin}/projects/project-1/chapters/chapter-2/story-knowledge-tasks**`, async route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "POST,GET,OPTIONS" } });
+    if (new URL(route.request().url()).pathname.endsWith("/availability")) return route.fulfill({ headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify({ available: admissionReason === null, reason: admissionReason }) });
     if (route.request().method() === "POST") {
       if (queueFull) return route.fulfill({ status: 429, headers: { "access-control-allow-origin": "*" }, json: { code: "TASK_QUEUE_FULL" } });
       expect(route.request().postDataJSON()).toEqual({ configurationVersionId: "config", modelId: "model" }); expect(route.request().headers().authorization).toBe("Bearer session-token");
@@ -54,6 +56,12 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   const entry = page.getByRole("region", { name: "创建故事知识任务" });
   await entry.getByRole("button", { name: "读取可用模型" }).click();
   await expect(entry.getByRole("button", { name: "创建故事知识任务" })).toBeDisabled();
+  await entry.getByLabel("首次生成模型").selectOption("model");
+  await expect(entry.getByText(/工作室尚未启用故事知识生成/)).toBeVisible();
+  await expect(entry.getByRole("button", { name: "创建故事知识任务" })).toBeDisabled();
+  expect(attempts).toBe(0);
+  admissionReason = null;
+  await entry.getByRole("button", { name: "读取可用模型" }).click();
   await entry.getByLabel("首次生成模型").selectOption("model");
   await entry.getByRole("button", { name: "创建故事知识任务" }).click();
   await expect(entry.getByRole("status")).toContainText("原文、候选或模型配置已变化");

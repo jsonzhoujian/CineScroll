@@ -2,7 +2,7 @@
 
 `createProductionApi` 的 `storyTasks` 省略或 `{enabled:false}` 时不挂任务路由、不启动Worker。显式启用需BYOK开启、DeepSeek大陆授权、1～100个去重工作室ID，intervalMs可选100～60000。模型连接必须与业务连接指向同一主机/端口/数据库并使用同一TLS CA；允许不同登录账户，任务使用既有novel_app受限模型连接，不能用业务池权限执行。
 
-装配任务API、PostgresModelTaskRepository、PostgresGenerationPolicyReader、真实执行器/DeepSeek传输及生命周期模块。所有任务均以原始提交人重新鉴权，当前政策缺失默认拒绝。仅当前DeepSeek大陆凭据可生成，其他BYOK厂商尚未接入此任务适配器；白名单是Worker扫描范围，不改变项目成员鉴权。未配置白名单的工作室任务不会被扫描，不应向其开放本功能。
+装配任务API、PostgresModelTaskRepository、PostgresGenerationPolicyReader、真实执行器/DeepSeek传输及生命周期模块。所有任务均以原始提交人重新鉴权，当前政策缺失默认拒绝。仅当前DeepSeek大陆凭据可生成，其他BYOK厂商尚未接入此任务适配器；白名单同时用于Worker扫描与新提交准入，不改变项目成员鉴权。未配置白名单的工作室不能提交/重提交新任务，但已有任务仍可按权限查看。详见STORY_TASK_ADMISSION.md。
 
 onModuleInit在任何Worker bootstrap之前检查受限登录（复用BYOK门禁）、12项表的读取/写入最低权限与RLS/非所有者、任务列级更新、政策只读、状态/容量触发器启用、关键函数所有权不可被应用登录触达及执行身份/固定search_path、分页索引及政策原因迁移、租约/结果字段、每个白名单正数配额。projects/project_members保留既有非FORCE权限函数设计，其余要求FORCE RLS。缺失返回稳定STORY_TASK_DATABASE_NOT_READY；不执行迁移、不补政策或配额。检查是启动快照，后续管理员变化仍依赖运行时门禁，不证明任意被篡改的数据库函数或政策都安全。
 

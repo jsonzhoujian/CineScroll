@@ -17,6 +17,7 @@ async function setup(page: Page, reason: string | null = null, chapterContext = 
     else if (path === "/auth/phone/verify") body = { sessionToken: "session", actor: { userId: "u", workspaceId: "w" } };
     else {
       expect(request.headers().authorization).toBe("Bearer session");
+      if (path.endsWith("/story-knowledge-tasks/availability")) return route.fulfill({ headers, contentType: "application/json", body: JSON.stringify({ available: true, reason: null }) });
       if (path === "/projects/p/chapters/c/story-knowledge-tasks") {
         await route.fulfill({ headers, contentType: "application/json", body: JSON.stringify({ tasks: [{ id: "task", projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: "succeeded", reason: null, result: { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } }], nextCursor: null }) });
         return;
@@ -42,6 +43,21 @@ test("部分成功跳转准确候选，刷新后重新登录恢复任务", async
   await page.reload(); await login(page);
   await expect(panel.getByText("部分成功", { exact: true })).toBeVisible();
 });
+
+for (const reason of ["WORKSPACE_TASK_DISABLED", "TASK_PROVIDER_UNSUPPORTED"]) {
+  test(`生成不可用${reason}时禁止重提交但仍显示已有任务`, async ({ page }) => {
+    const posts = await setup(page, "VERSION_CONFLICT");
+    await page.route(`${origin}/projects/p/chapters/c/story-knowledge-tasks/availability?*`, route => route.fulfill({
+      headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: JSON.stringify({ available: false, reason }),
+    }));
+    await page.getByRole("button", { name: "刷新状态" }).click();
+    const panel = page.getByRole("region", { name: "故事知识任务" });
+    await expect(panel.getByText(reason === "WORKSPACE_TASK_DISABLED" ? /工作室尚未启用故事知识生成/ : /厂商尚未支持故事知识生成/)).toBeVisible();
+    await expect(panel.getByRole("button", { name: "使用所选模型重新提交" })).toBeDisabled();
+    await expect(panel.getByText(/任务 task · 原文 s/)).toBeVisible();
+    expect(posts()).toBe(0);
+  });
+}
 test("恢复章节上下文后通过列表选择任务，刷新后列表仍可找回", async ({ page }) => {
   await setup(page, null, true);
   await expect(page.getByRole("region", { name: "创建故事知识任务" })).toHaveCount(0);
