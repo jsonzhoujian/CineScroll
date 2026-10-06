@@ -19,8 +19,20 @@ async function exercise(repository: ModelTaskRepository, configure?: (workspaceI
   const tested = await settings.testConnection(actor, config.id);
   let context = { stage: "script" as const, sourceVersionId: "source1", upstreamConfirmedVersionIds: ["knowledge1", "plan1"],
     generationParameters: { targetDurationSeconds: 180 as const, aspectRatio: "9:16" as const, narrativeMode: "narration" as const } };
-  const service = new ModelTaskService({ settings, repository, contextReader: { read: async () => structuredClone(context) }, idGenerator: () => `job${++job}` });
+  let readGate: (() => Promise<void>) | null = null;
+  const service = new ModelTaskService({ settings, repository, contextReader: { read: async () => { await readGate?.(); return structuredClone(context); } }, idGenerator: () => `job${++job}` });
   const original = await service.submit(actor, { projectId: "p", chapterId: "c", configurationVersionId: tested.id, modelId: "m" });
+  let entered!: () => void, release!: () => void;
+  const reading = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  readGate = async () => { entered(); await gate; };
+  const controller = new AbortController();
+  const stoppedRun = service.run(actor, original.id, async () => { calls++; }, controller.signal);
+  const rejection = assert.rejects(stoppedRun, { code: "STATE_CONFLICT" });
+  await reading; controller.abort(); release(); await rejection;
+  readGate = null;
+  assert.equal((await service.get(actor, original.id)).state, "queued");
+  assert.equal(calls, 0);
   await assert.rejects(async () => repository.transition(actor.workspaceId, original.id, 0, "paused", null), { code: "STATE_CONFLICT" });
   const changed = await settings.configure(actor, { expectedVersionId: tested.id, providerId: "deepseek", apiKey: "fixture-new-key" });
   const newTested = await settings.testConnection(actor, changed.id);

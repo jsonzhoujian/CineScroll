@@ -1,6 +1,6 @@
 # 内部故事知识任务调度基础
 
-`StoryKnowledgeTaskDispatcher.tick(workspaceId, mode, page)` 是一次有界扫描与处理，不是HTTP接口或已启动Worker。调用方须提供服务端可信工作室白名单，分别保存run/recover游标、安排周期和限速；生产尚未装配。
+`StoryKnowledgeTaskDispatcher.tick(workspaceId, mode, page, signal?)` 是一次有界扫描与处理，不是HTTP接口或已启动Worker。调用方须提供服务端可信工作室白名单，分别保存run/recover游标、安排周期和限速；生产尚未装配。默认关闭的内部循环见 `STORY_TASK_WORKER.md`；signal 只控制后续领取，不取消在途模型。
 
 - `mode=run`：仅story_knowledge/queued。扫描不是抢占；逐项以持久化createdBy和workspaceId构建Actor，执行器复查项目权限、原文/参数、当前配置、订阅与区域，再使用queued→running revision CAS保证同一任务至多一个竞争者进入模型调用。
 - `mode=recover`：仅过期running（含历史null租约）或paused/EXECUTION_UNCERTAIN。数据库时钟筛选与恢复CAS最终校验；不会解密Key或调用模型。未发现候选转未知暂停；后续扫到同任务持久化候选可补终态，不重发。

@@ -24,7 +24,7 @@ export class StoryKnowledgeTaskExecutor {
       return { candidateVersionId: candidate.id, extractionStatus: candidate.extractionStatus };
     });
   }
-  async run(actor: Actor, id: string) {
+  async run(actor: Actor, id: string, signal?: AbortSignal) {
     const { tasks, projects, storyKnowledge, model } = this.#options;
     const task = await tasks.get(actor, id);
     if (task.input.stage !== "story_knowledge") throw new ModelTaskError("TASK_NOT_FOUND");
@@ -68,6 +68,6 @@ export class StoryKnowledgeTaskExecutor {
         if (error instanceof StoryKnowledgeError && error.code === "VERSION_CONFLICT") throw new TaskExecutionError("CANDIDATE_EXISTS");
         throw error;
       }
-    });
+    }, signal);
   }
 }

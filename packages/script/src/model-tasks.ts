@@ -106,9 +106,9 @@ export class ModelTaskService {
     validateTaskResult("succeeded", result);
     return this.#options.repository.recover(actor.workspaceId, id, task.revision, result);
   }
-  async run(actor: Actor, id: string, invoke: (input: { jobId: string; input: TaskInput; apiKey: string; providerId: string; modelId: string; processingRegion: "mainland" }) => Promise<TaskResult | void>) {
+  async run(actor: Actor, id: string, invoke: (input: { jobId: string; input: TaskInput; apiKey: string; providerId: string; modelId: string; processingRegion: "mainland" }) => Promise<TaskResult | void>, signal?: AbortSignal) {
     const task = await this.get(actor, id);
-    if (task.state !== "queued") throw new ModelTaskError("STATE_CONFLICT");
+    if (task.state !== "queued" || signal?.aborted) throw new ModelTaskError("STATE_CONFLICT");
     const running = await this.#options.repository.transition(actor.workspaceId, id, task.revision, "running", null);
     let state: TaskState = "succeeded", reason: TaskReason | null = null;
     let result: TaskResult | null = null;

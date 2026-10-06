@@ -11,6 +11,8 @@ import { StoryKnowledgeTaskContext } from "../src/story-knowledge-task-context.t
 import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts";
 import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor.ts";
 import { StoryKnowledgeTaskDispatcher } from "../src/story-knowledge-task-dispatcher.ts";
+import { StoryKnowledgeTaskWorker } from "../src/story-knowledge-task-worker.ts";
+import { PostgresModelTaskRepository } from "@novel-adaptation/script/postgres-model-tasks";
 import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
 test("故事知识任务从授权原文生成输入，不接受客户端版本；旧Key暂停后显式重提交", async () => {
@@ -83,9 +85,13 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
         return source ? { id: source.id, fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
       } }, idGenerator: () => `k${++version}`, clock: () => new Date("2026-10-05") });
     let dispatchCalls = 0;
+    let entered!: () => void, releaseWorker!: () => void;
+    const enteredModel = new Promise<void>(resolve => { entered = resolve; });
+    const modelGate = new Promise<void>(resolve => { releaseWorker = resolve; });
     const executor = new StoryKnowledgeTaskExecutor({ tasks, projects, storyKnowledge: knowledge,
       model: { async generate(input, credentials) {
         dispatchCalls++;
+        entered(); await modelGate;
         assert.equal(credentials.apiKey, "new-fixture");
         assert.deepEqual(input.input.sourceFragments, [{ id: "f", text: "雨落" }]);
         return { contractVersion: "0.1.0", jobId: input.jobId, stage: "storyKnowledge", projectId: "p", chapterId: "c", sourceVersionId: "source1",
@@ -95,8 +101,55 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
           ] };
       } } });
     const dispatcher = new StoryKnowledgeTaskDispatcher({ repository: taskRepository, executor });
-    const ticks = await Promise.all([dispatcher.tick("w", "run"), dispatcher.tick("w", "run")]);
-    assert.equal(ticks.flatMap(tick => tick.items).filter(item => item.outcome === "completed").length, 1);
+    const scans: { workspace: unknown; cursor: unknown; recover: boolean }[] = [];
+    const scanRepository = new PostgresModelTaskRepository({ async connect() {
+      return { release() {}, async query(sql, values) {
+        if (!sql.includes("from model_tasks")) return { rows: [] };
+        scans.push({ workspace: values?.[0], cursor: values?.[1], recover: sql.includes("EXECUTION_UNCERTAIN") });
+        return { rows: values?.[1] == null ? Array.from({ length: 21 }, (_, i) => ({
+          payload: { workspaceId: "w", id: `scan-${i.toString().padStart(2, "0")}`, createdBy: "outsider", input: { stage: "story_knowledge" } },
+          state: "queued", revision: 0, reason: null,
+        })) : [] };
+      } };
+    } });
+    const configuredIds = ["w"];
+    let rounds = 0;
+    const sweepWorker = new StoryKnowledgeTaskWorker({ dispatcher: new StoryKnowledgeTaskDispatcher({ repository: scanRepository, executor }),
+      enabled: true, workspaceIds: configuredIds, wait: async (_delay, signal) => { if (++rounds === 3) {
+        queueMicrotask(() => { void sweepWorker.stop(); });
+        await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      } } });
+    configuredIds.push("not-allowlisted");
+    await sweepWorker.start();
+    assert.deepEqual(scans, [
+      { workspace: "w", cursor: null, recover: false }, { workspace: "w", cursor: null, recover: true },
+      { workspace: "w", cursor: "scan-19", recover: false }, { workspace: "w", cursor: "scan-19", recover: true },
+      { workspace: "w", cursor: null, recover: false }, { workspace: "w", cursor: null, recover: true },
+    ]);
+    const delays: number[] = [];
+    const brokenRepository = new PostgresModelTaskRepository({ async connect() { throw new Error("private database error"); } });
+    const backoffWorker = new StoryKnowledgeTaskWorker({ dispatcher: new StoryKnowledgeTaskDispatcher({ repository: brokenRepository, executor }),
+      enabled: true, workspaceIds: ["w"], intervalMs: 100, maxBackoffMs: 400,
+      wait: async (delay, signal) => { delays.push(delay); if (delays.length === 3) {
+        queueMicrotask(() => { void backoffWorker.stop(); });
+        await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      } } });
+    await backoffWorker.start();
+    assert.deepEqual(delays, [200, 400, 400]);
+    assert.throws(() => new StoryKnowledgeTaskWorker({ dispatcher, enabled: true, workspaceIds: [] }), /INVALID_WORKER_CONFIG/);
+    assert.throws(() => new StoryKnowledgeTaskWorker({ dispatcher, workspaceIds: ["w", "w"] }), /INVALID_WORKER_CONFIG/);
+    await new StoryKnowledgeTaskWorker({ dispatcher, workspaceIds: ["w"] }).start();
+    assert.equal(dispatchCalls, 0);
+    const worker = new StoryKnowledgeTaskWorker({ dispatcher, enabled: true, workspaceIds: ["w"] });
+    const lifetime = worker.start();
+    await enteredModel;
+    await assert.rejects(() => worker.start(), /WORKER_ALREADY_RUNNING/);
+    const competingTick = await dispatcher.tick("w", "run");
+    assert.equal(competingTick.items.length, 0);
+    let stopped = false;
+    const stopping = worker.stop().then(() => { stopped = true; });
+    assert.equal(stopped, false);
+    releaseWorker(); await stopping; await lifetime;
     assert.equal(dispatchCalls, 1);
     const held = await tasks.submit(owner, { projectId: "p", chapterId: "c", configurationVersionId: next.id, modelId: "m" });
     await taskRepository.transition("w", held.id, 0, "running", null);
