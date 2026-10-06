@@ -8,6 +8,7 @@ import { InMemoryModelTaskRepository, ModelTaskService } from "@novel-adaptation
 import { EpisodePlanRunner, type EpisodePlanGenerationRequest } from "@novel-adaptation/script/episode-plan-runner";
 import { EpisodePlanUpstreamReader } from "../src/episode-plan-api.ts";
 import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "../src/episode-plan-task-executor.ts";
+import { EpisodePlanTaskDispatcher, EpisodePlanTaskWorker } from "../src/episode-plan-task-dispatcher.ts";
 
 async function fixture(planRepository: ScriptRepository = new InMemoryScriptRepository()) {
   const actor = { userId: "owner", workspaceId: "w" }, projects = new InMemoryProjectImportRepository();
@@ -132,4 +133,35 @@ test("数据库最终上游门禁冲突保存为暂停，而不是已有候选�
   const paused = await executor.run(f.actor,task.id);
   assert.equal(paused.state,"paused"); assert.equal(paused.reason,"UPSTREAM_CHANGED");
   await assert.rejects(() => f.script.getEpisodePlan(f.actor,"p","c"),{ code: "EPISODE_PLAN_NOT_FOUND" });
+});
+
+test("并发拆集调度只执行一次，过期任务仅恢复且普通剧本任务不会被扫描", async () => {
+  const f = await fixture(); await f.confirm(); const task = await f.submit(); let calls = 0;
+  const legacyInput = structuredClone(task.input); delete legacyInput.resultType;
+  await f.repository.insert({ ...task,id: "legacy-script",input: legacyInput });
+  const executor = new EpisodePlanTaskExecutor({ tasks: f.tasks, projects: f.projects, knowledge: f.knowledge, script: f.script, model: { async generate(r) { calls++; return response(r); } } });
+  const dispatcher = new EpisodePlanTaskDispatcher({ repository: f.repository,executor });
+  await Promise.all([dispatcher.tick("w","run"),dispatcher.tick("w","run")]);
+  assert.equal(calls,1); assert.equal((await f.tasks.get(f.actor,task.id)).state,"succeeded");
+  assert.equal((await f.repository.find("w","legacy-script"))?.state,"queued");
+  const abandoned = await f.submit(); await f.repository.transition("w",abandoned.id,0,"running",null); f.expire();
+  const recovered = await dispatcher.tick("w","recover");
+  assert.equal(recovered.items[0]?.reason,"EXECUTION_UNCERTAIN"); assert.equal(calls,1);
+  assert.deepEqual((await dispatcher.tick("w","run")).items,[]);
+});
+
+test("拆集 Worker 默认关闭，显式开启后处理任务且可安全停止", { timeout: 5000 }, async () => {
+  const f = await fixture(); await f.confirm(); const task = await f.submit(); let calls = 0;
+  const executor = new EpisodePlanTaskExecutor({ tasks: f.tasks, projects: f.projects, knowledge: f.knowledge, script: f.script, model: { async generate(r) { calls++; return response(r); } } });
+  const dispatcher = new EpisodePlanTaskDispatcher({ repository: f.repository,executor });
+  const disabled = new EpisodePlanTaskWorker({ dispatcher,workspaceIds: ["w"] });
+  await disabled.start(); assert.equal(disabled.status().state,"stopped"); assert.equal(calls,0);
+  let waiting!: () => void;
+  const ready = new Promise<void>(resolve => { waiting = resolve; });
+  const worker = new EpisodePlanTaskWorker({ dispatcher,enabled: true,workspaceIds: ["w"],wait: async (_ms,signal) => {
+    waiting(); await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener("abort",() => resolve(),{ once: true }); });
+  } });
+  const running = worker.start(); await ready;
+  assert.equal((await f.tasks.get(f.actor,task.id)).state,"succeeded"); assert.equal(calls,1);
+  await worker.stop(); await running; assert.equal(worker.status().state,"stopped");
 });

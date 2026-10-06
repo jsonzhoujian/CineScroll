@@ -81,6 +81,15 @@ async function exercise(repository: ModelTaskRepository, configure?: (workspaceI
   assert.deepEqual((await repository.scanStoryKnowledge(scanWorkspace, "run", { limit: 20, cursor: null })).tasks.map(task => task.id), ["scan-b"]);
   assert.deepEqual((await repository.scanStoryKnowledge(scanWorkspace, "recover", { limit: 20, cursor: null })).tasks, []);
   assert.deepEqual((await repository.scanStoryKnowledge("unrelated", "run", { limit: 20, cursor: null })).tasks, []);
+  for (const id of ["episode-a", "episode-b"]) await repository.insert({ ...original, workspaceId: scanWorkspace, id,
+    input: { ...original.input, stage: "script", resultType: "episodePlan", upstreamConfirmedVersionIds: ["knowledge1"] } });
+  const episodes = await repository.scanEpisodePlans(scanWorkspace,"run",{ limit: 1,cursor: null });
+  assert.deepEqual(episodes.tasks.map(t => t.id),["episode-a"]); assert.equal(episodes.nextCursor,"episode-a");
+  assert.deepEqual((await repository.scanEpisodePlans(scanWorkspace,"run",{ limit: 1,cursor: episodes.nextCursor })).tasks.map(t => t.id),["episode-b"]);
+  await repository.transition(scanWorkspace,"episode-a",0,"running",null);
+  assert.deepEqual((await repository.scanEpisodePlans(scanWorkspace,"recover",{ limit: 20,cursor: null })).tasks,[]);
+  assert.deepEqual((await repository.scanEpisodePlans(scanWorkspace,"run",{ limit: 20,cursor: null })).tasks.map(t => t.id),["episode-b"]);
+  assert.deepEqual((await repository.scanEpisodePlans("unrelated","run",{ limit: 20,cursor: null })).tasks,[]);
   return original;
 }
 
@@ -213,6 +222,7 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     await admin.query(await readFile(new URL("../migrations/0007_story_task_scan.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0008_generation_policy_reason.sql", import.meta.url), "utf8"));
     await admin.query(await readFile(new URL("../migrations/0009_workspace_task_limits.sql", import.meta.url), "utf8"));
+    await admin.query(await readFile(new URL("../migrations/0011_episode_task_scan.sql", import.meta.url), "utf8"));
     const configure = async (workspaceId: string) => { await admin.query("insert into workspace_task_limits values($1,100,100) on conflict do nothing", [workspaceId]); };
     const original = await exercise(new PostgresModelTaskRepository(app), configure);
     const limitWorkspace = randomUUID();
@@ -288,6 +298,14 @@ test("PostgreSQL任务持久化、暂停重提交与并发执行遵守相同契�
     assert.equal((await durable.transition(unknownWorkspace, "waiting", 0, "running", null)).state, "running");
     await assert.rejects(() => durable.insert({ ...original, workspaceId: "missing-limits", id: "missing-limits", parentTaskId: null }), { code: "TASK_LIMITS_UNAVAILABLE" });
     assert.equal((await durable.scanStoryKnowledge(original.workspaceId, "recover", { limit: 20, cursor: null })).tasks.length, 0);
+    const episodeCrashId = randomUUID();
+    await admin.query("insert into model_tasks(workspace_id,id,payload,state,revision,lease_expires_at) values($1,$2,$3::jsonb,'running',1,clock_timestamp()-interval '1 second')",
+      [original.workspaceId,episodeCrashId,JSON.stringify({ ...payload,id: episodeCrashId,parentTaskId: null,input: { ...original.input,stage: "script",resultType: "episodePlan",upstreamConfirmedVersionIds: ["knowledge1"] } })]);
+    assert.deepEqual((await durable.scanEpisodePlans(original.workspaceId,"recover",{ limit: 20,cursor: null })).tasks.map(t => t.id),[episodeCrashId]);
+    await durable.recover(original.workspaceId,episodeCrashId,1,null);
+    assert.deepEqual((await durable.scanEpisodePlans(original.workspaceId,"recover",{ limit: 20,cursor: null })).tasks.map(t => t.id),[episodeCrashId]);
+    await durable.recover(original.workspaceId,episodeCrashId,2,result);
+    assert.deepEqual((await durable.scanEpisodePlans(original.workspaceId,"recover",{ limit: 20,cursor: null })).tasks,[]);
     await assert.rejects(() => durable.transition(original.workspaceId, crashedId, 1, "succeeded", null, result), { code: "STATE_CONFLICT" });
     await assert.rejects(() => app.query("delete from model_tasks"));
     await assert.rejects(() => app.query("update model_tasks set payload='{}'::jsonb"));

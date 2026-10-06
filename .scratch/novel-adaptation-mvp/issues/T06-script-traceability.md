@@ -33,6 +33,11 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Verification: 11 executor integration tests pass; full Node regression 182 pass, 10 database tests skipped. Dedicated PostgreSQL operation-index/upstream-gate test passes; script/API TypeScript checks pass; dual review has no remaining blockers.
 - Still not delivered: vendor-native episode transport, independent scan/dispatch, authenticated task API, generation/status UI and production wiring. No real AI calls or production enablement. T06 remains in progress.
 
+## Incremental delivery — episode scanning and dispatch (2026-10-06)
+
+- Latest increment (2026-10-06): independent episode task scanning and internal dispatcher now match both script stage and episodePlan result type, use workspace-scoped bounded byte-ordered pagination, and discover only queued tasks or expired/uncertain recovery tasks. Executors reauthorize original submitters and claim through CAS. Default-off worker loop is reused through its public tick interface; no production registration or public execution route was added.
+- Verification: full Node suite 184 pass, 10 database tests skipped; dedicated real PostgreSQL task contract run 7 pass (including episode pagination, isolation and recovery); script/API TypeScript and Standards/Spec reviews pass. Added migration 0011 provides matching partial indexes, applied only to the isolated test database. Remaining: authenticated episode task API and review-page controls, vendor-native transport and production wiring.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.

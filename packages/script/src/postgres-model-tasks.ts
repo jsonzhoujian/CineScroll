@@ -5,11 +5,18 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   readonly #pool: ModelSettingsPool;
   constructor(pool: ModelSettingsPool) { this.#pool = pool; }
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) {
+    return this.#scan(workspaceId,mode,page,"story_knowledge");
+  }
+  scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) {
+    return this.#scan(workspaceId,mode,page,"episodePlan");
+  }
+  #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan") {
     validateTaskScan(mode, page);
     return this.#transaction(workspaceId, async client => {
       const eligibility = mode === "run" ? "state='queued'" : "((state='running' and (lease_expires_at is null or lease_expires_at<=clock_timestamp())) or (state='paused' and reason='EXECUTION_UNCERTAIN'))";
+      const taskKind = kind === "episodePlan" ? "payload->'input'->>'stage'='script' and payload->'input'->>'resultType'='episodePlan'" : "payload->'input'->>'stage'='story_knowledge'";
       const rows = (await client.query(`select payload,state,revision,reason,result_json,lease_expires_at from model_tasks
-        where workspace_id=$1 and payload->'input'->>'stage'='story_knowledge' and ${eligibility}
+        where workspace_id=$1 and ${taskKind} and ${eligibility}
           and ($2::text is null or id collate "C">$2::text collate "C") order by id collate "C" limit $3`,
         [workspaceId,page.cursor,page.limit+1])).rows;
       const tasks = rows.slice(0, page.limit).map(decode);

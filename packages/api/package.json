@@ -10,7 +10,8 @@
     "./story-knowledge-task-context": "./src/story-knowledge-task-context.ts",
     "./story-knowledge-task-executor": "./src/story-knowledge-task-executor.ts",
     "./episode-plans": "./src/episode-plan-api.ts",
-    "./episode-plan-task-executor": "./src/episode-plan-task-executor.ts"
+    "./episode-plan-task-executor": "./src/episode-plan-task-executor.ts",
+    "./episode-plan-task-dispatcher": "./src/episode-plan-task-dispatcher.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

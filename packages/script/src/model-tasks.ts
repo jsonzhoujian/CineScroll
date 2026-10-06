@@ -27,6 +27,7 @@ export class ModelTaskError extends Error {
 export interface ModelTaskRepository {
   /** Internal workspace-scoped discovery only; scanning is not a claim or authorization. */
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
+  scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   find(workspaceId: string, id: string): Promise<ModelTask | null>;
   insert(task: ModelTask): Promise<ModelTask>;
@@ -251,8 +252,15 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
     if (count >= (mode === "queued" ? limits.maxQueued : limits.maxExecuting)) throw new ModelTaskError(mode === "queued" ? "TASK_QUEUE_FULL" : "TASK_EXECUTION_FULL");
   }
   async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
+    return this.#scan(workspaceId,mode,page,"story_knowledge");
+  }
+  async scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
+    return this.#scan(workspaceId,mode,page,"episodePlan");
+  }
+  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan"): Promise<TaskPage> {
     validateTaskScan(mode, page);
-    const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.input.stage === "story_knowledge"
+    const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId
+      && (kind === "episodePlan" ? task.input.stage === "script" && task.input.resultType === "episodePlan" : task.input.stage === "story_knowledge")
       && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0)
       && (mode === "run" ? task.state === "queued" : task.state === "running" && (task.leaseExpiresAt === null || Date.parse(task.leaseExpiresAt) <= this.#clock())
         || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN"))

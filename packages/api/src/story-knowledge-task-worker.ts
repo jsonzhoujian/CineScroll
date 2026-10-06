@@ -3,7 +3,7 @@ import type { TaskScanMode } from "@novel-adaptation/script/model-tasks";
 import type { StoryKnowledgeTaskDispatcher } from "./story-knowledge-task-dispatcher.ts";
 
 export type StoryKnowledgeWorkerOptions = {
-  dispatcher: StoryKnowledgeTaskDispatcher;
+  dispatcher: Pick<StoryKnowledgeTaskDispatcher, "tick">;
   enabled?: boolean;
   workspaceIds: readonly string[];
   intervalMs?: number;
