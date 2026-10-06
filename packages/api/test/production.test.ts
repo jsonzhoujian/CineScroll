@@ -40,6 +40,7 @@ test("关闭BYOK不挂载路由；开启但数据库未就绪阻止应用初始�
   try {
     await app.listen(0, "127.0.0.1");
     await request(app.getHttpServer()).get("/workspace/model-settings").expect(404);
+    await request(app.getHttpServer()).post("/projects/p/chapters/c/story-knowledge-tasks").expect(404);
   } finally { await app.close(); await disabled.close(); }
   const enabled = createProductionApi({ ...base, modelSettings: {
     enabled: true, encryptionKeyBase64: Buffer.alloc(32, 7).toString("base64"),
@@ -49,4 +50,17 @@ test("关闭BYOK不挂载路由；开启但数据库未就绪阻止应用初始�
   const enabledApp = enabledRef.createNestApplication();
   try { await assert.rejects(() => enabledApp.init(), { message: "MODEL_DATABASE_NOT_READY" }); }
   finally { await enabledApp.close(); await enabled.close(); }
+});
+
+test("故事任务启用必须依赖BYOK、同库大陆路由和非空白名单", () => {
+  assert.throws(() => createProductionApi({ ...base, storyTasks: { enabled: true, workspaceIds: ["w"] } }), { message: "INVALID_STORY_TASK_CONFIG" });
+  const modelSettings = { enabled: true as const, encryptionKeyBase64: Buffer.alloc(32, 7).toString("base64"),
+    databaseUrl: "postgresql://model_app@localhost/fixture", databaseTlsCa: base.databaseTlsCa, routes: { deepseek: "mainland" as const } };
+  for (const workspaceIds of [[], ["w", "w"], ["bad\nid"]]) {
+    assert.throws(() => createProductionApi({ ...base, modelSettings, storyTasks: { enabled: true, workspaceIds } }), { message: "INVALID_STORY_TASK_CONFIG" });
+  }
+  assert.throws(() => createProductionApi({ ...base, modelSettings: { ...modelSettings, routes: { deepseek: "overseas" } },
+    storyTasks: { enabled: true, workspaceIds: ["w"] } }), { message: "INVALID_STORY_TASK_CONFIG" });
+  assert.throws(() => createProductionApi({ ...base, modelSettings: { ...modelSettings, databaseUrl: "postgresql://model_app@localhost/other" },
+    storyTasks: { enabled: true, workspaceIds: ["w"] } }), { message: "INVALID_STORY_TASK_CONFIG" });
 });

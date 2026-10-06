@@ -4,7 +4,9 @@ import { StoryKnowledgeTaskWorker, type StoryKnowledgeWorkerOptions } from "./st
 /** Opt-in server module; no public routes and no production entry-point mounting. */
 export class StoryKnowledgeWorkerModule {
   static register(options: StoryKnowledgeWorkerOptions): DynamicModule {
-    const worker = new StoryKnowledgeTaskWorker(options);
+    return this.forWorker(new StoryKnowledgeTaskWorker(options));
+  }
+  static forWorker(worker: StoryKnowledgeTaskWorker): DynamicModule {
     return { module: StoryKnowledgeWorkerModule, providers: [
       { provide: StoryKnowledgeTaskWorker, useValue: worker },
       { provide: "STORY_KNOWLEDGE_WORKER_LIFECYCLE", useValue: {
