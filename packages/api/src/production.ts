@@ -235,7 +235,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         model: new DeepSeekStoryKnowledgeModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       worker = new StoryKnowledgeTaskWorker({ dispatcher: new StoryKnowledgeTaskDispatcher({ repository, executor }),
         enabled: true, workspaceIds: taskConfig.workspaceIds, ...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
-      apiModule.imports!.push(StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks, retryPlanning }), StoryKnowledgeWorkerModule.forWorker(worker));
+      apiModule.imports!.push(StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks, retryPlanning,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }), StoryKnowledgeWorkerModule.forWorker(worker));
       apiModule.providers!.push({ provide: "STORY_TASK_DATABASE_STARTUP_CHECK", useValue: {
         onModuleInit: () => assertStoryTaskDatabase(restrictedPool, taskConfig.workspaceIds),
       } });
@@ -260,7 +260,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         model: new DeepSeekEpisodePlanModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       episodeWorker = new StoryKnowledgeTaskWorker({ dispatcher: new EpisodePlanTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
-      apiModule.imports!.push(EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks }),
+      apiModule.imports!.push(EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
         EpisodePlanApiModule.register({ sessionVerifier: sessions,script,projects,knowledge }),EpisodePlanWorkerModule.forWorker(episodeWorker));
       apiModule.providers!.push({ provide: "EPISODE_TASK_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertEpisodeTaskDatabase(restrictedPool,taskConfig.workspaceIds),

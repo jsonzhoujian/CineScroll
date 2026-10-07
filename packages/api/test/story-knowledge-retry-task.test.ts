@@ -11,6 +11,7 @@ import { ModelTaskService, InMemoryModelTaskRepository } from "@novel-adaptation
 import { StoryKnowledgeTaskContext } from "../src/story-knowledge-task-context.ts";
 import { StoryKnowledgeRetryPlanner } from "../src/story-knowledge-retry-planner.ts";
 import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts";
+import { availableRateLimiter } from "./rate-limit-fixture.ts";
 import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor.ts";
 
 test("认证局部重试持久化可信快照，重复提交返回同一任务且不能更换范围", async () => {
@@ -58,7 +59,7 @@ async function harness() {
   const tasks = new ModelTaskService({ settings, repository, contextReader: new StoryKnowledgeTaskContext(projects, planner),
     storyAdmission: { workspaceIds: ["w"], providerIds: ["deepseek"] }, generationPolicy: { isAllowed: async () => true }, idGenerator: () => `j${++seq}` });
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async userId => ({ userId, workspaceId: "w" }) });
-  const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks, retryPlanning: { projects, storyKnowledge: knowledge } })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks,rateLimiter: availableRateLimiter(), retryPlanning: { projects, storyKnowledge: knowledge } })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
   return { owner, projects, knowledge, candidate, config, tasks, repository, sessions, app, advance: () => { now += 600001; } };
 }

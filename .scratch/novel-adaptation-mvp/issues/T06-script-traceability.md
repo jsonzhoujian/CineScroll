@@ -68,6 +68,13 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Verification: full regression 196 passing and 10 skipped; API TypeScript passes. The extended TLS production test separately passes on a newly created disposable local PostgreSQL cluster with restricted login and simulated HTTP: knowledge confirmation → episode task → candidate → explicit confirmation → restart read, disabled-trigger rejection and dual Worker shutdown. Test server stopped afterward.
 - No deployed switch enabled or real Key/model/works used. Vendor residency, real semantic quality, HTTP abuse controls and AI credit settlement remain rollout work. T06 stays in progress. Plan: docs/plans/2026-10-07-episode-plan-production.md.
 
+## Incremental delivery — shared generation submission rate (2026-10-07)
+
+- Four authenticated task submission endpoints now share the workspace generate attempt budget (10 per 60-second database-time window). Session/body validation precedes consumption; downstream rejections and idempotent replays count. GET/review/edit/retry planning are unchanged.
+- Exhaustion returns TASK_RATE_LIMITED with 429 and Retry-After; missing limiter or storage failure returns sanitized 503 before task creation. No memory fallback, model credits or production switch changes.
+- Trusted-owner migration 0002 extends existing model-rate function/constraints without resetting counters or changing configure/test rules. Task startup performs read-only prerequisite checks and rejects missing migration or unsafe rate-function privileges/ownership.
+- Verification: 198 Node tests pass, 10 skip; API TypeScript passes. Isolated database rate tests and expanded TLS production chain separately pass, including two-instance concurrency, cross-stage shared HTTP quota, malformed/unauthenticated non-consumption and no task creation when exhausted. Test database stopped. Plan: docs/plans/2026-10-07-task-submission-rate.md. Credits/rollout and remaining T06 work are still outstanding.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.

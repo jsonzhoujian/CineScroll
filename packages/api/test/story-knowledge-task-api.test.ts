@@ -9,6 +9,7 @@ import { WorkspaceModelSettings, InMemoryModelSettingsRepository } from "@novel-
 import { ModelTaskService, InMemoryModelTaskRepository } from "@novel-adaptation/script/model-tasks";
 import { StoryKnowledgeTaskContext } from "../src/story-knowledge-task-context.ts";
 import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts";
+import { availableRateLimiter } from "./rate-limit-fixture.ts";
 import { StoryKnowledgeTaskExecutor } from "../src/story-knowledge-task-executor.ts";
 import { StoryKnowledgeTaskDispatcher } from "../src/story-knowledge-task-dispatcher.ts";
 import { StoryKnowledgeTaskWorker } from "../src/story-knowledge-task-worker.ts";
@@ -36,7 +37,7 @@ test("故事知识任务从授权原文生成输入，不接受客户端版本�
   let policyAllowed = true;
   const tasks = new ModelTaskService({ settings, repository: taskRepository, storyAdmission: { workspaceIds: ["w"], providerIds: ["deepseek"] }, generationPolicy: { isAllowed: async () => policyAllowed }, contextReader: new StoryKnowledgeTaskContext(projects), idGenerator: () => `j${++job}` });
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef", resolveActor: async userId => ({ userId, workspaceId: "w" }) });
-  const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions, tasks,rateLimiter: availableRateLimiter() })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0, "127.0.0.1");
   try {
     const http = request(app.getHttpServer()), bearer = `Bearer ${await sessions.issue("owner", "w")}`;

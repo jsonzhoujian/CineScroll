@@ -81,7 +81,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../migrations/0001_model_rate_limits.sql"]) {
+      "../../script/migrations/0012_episode_task_list.sql", "../migrations/0001_model_rate_limits.sql",
+      "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
     // Identifiers are generated locally from hex UUIDs, not supplied by users.
@@ -109,6 +110,10 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await assert.rejects(() => start(ca, true), { message: "STORY_TASK_DATABASE_NOT_READY" });
     assert.equal(modelCalls, 0);
     await admin.query("insert into workspace_task_limits values($1,10,1)", [workspaceId]);
+    await admin.query("alter table model_rate_limits drop constraint model_rate_limits_action_check");
+    await admin.query("alter table model_rate_limits add constraint model_rate_limits_action_check check(action in ('configure','test')) not valid");
+    try { await assert.rejects(async () => { const bad = await start(ca,true); await bad.close(); }, { message: "STORY_TASK_DATABASE_NOT_READY" }); }
+    finally { await admin.query(await readFile(new URL("../migrations/0002_generation_rate_limits.sql",import.meta.url),"utf8")); }
     await admin.query("alter table model_tasks disable trigger model_task_capacity");
     try { await assert.rejects(async () => { const unexpected = await start(ca, true); await unexpected.close(); }, { message: "STORY_TASK_DATABASE_NOT_READY" }); }
     finally { await admin.query("alter table model_tasks enable trigger model_task_capacity"); }
@@ -185,11 +190,27 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(both.worker!.status().state,"stopped");
       assert.equal(both.episodeWorker!.status().state,"stopped");
     }
-    const episodeRestart = await start(ca,false,true);
+    const episodeRestart = await start(ca,true,true);
     try {
       const plan = await episodeRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/episode-plan`).set("authorization",bearer).expect(200);
       assert.equal(plan.body.plan.status,"confirmed");
       await episodeRestart.http.get(`/episode-plan-tasks/${episodeTaskId!}`).set("authorization",bearer).expect(200);
+      assert.equal(modelCalls,2);
+      // Administrator moves only this fixture's window; application cannot reset it.
+      await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
+      const selection = { configurationVersionId: version!,modelId: "m" };
+      const episodePath = `/projects/${projectId}/chapters/${chapterId}/episode-plan-tasks`;
+      await episodeRestart.http.post(episodePath).send({ ...selection,requestId: "fixture-episode" }).expect(401);
+      await episodeRestart.http.post(episodePath).set("authorization",bearer).send({ ...selection,unexpected: true }).expect(400);
+      for (let i = 0; i < 9; i++) {
+        await episodeRestart.http.post("/story-knowledge-tasks/missing/resubmit").set("authorization",bearer).send(selection).expect(404);
+      }
+      await episodeRestart.http.post(episodePath).set("authorization",bearer).send({ ...selection,requestId: "fixture-episode" }).expect(201);
+      const limited = await episodeRestart.http.post(episodePath).set("authorization",bearer).send({ ...selection,requestId: "blocked-episode" }).expect(429);
+      assert.equal(limited.body.code,"TASK_RATE_LIMITED");
+      assert.ok(Number(limited.headers["retry-after"]) >= 1);
+      const listed = await episodeRestart.http.get(episodePath).set("authorization",bearer).expect(200);
+      assert.equal(listed.body.tasks.length,1);
       assert.equal(modelCalls,2);
     } finally { await episodeRestart.close(); }
     const second = await start();

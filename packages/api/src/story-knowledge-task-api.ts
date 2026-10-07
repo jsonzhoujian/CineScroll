@@ -6,9 +6,12 @@ import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
 import { ModelTaskError, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 import { StoryKnowledgeRetryPlanner, type RetryPlanningOptions } from "./story-knowledge-retry-planner.ts";
+import type { ModelRateLimiter } from "./model-rate-limit.ts";
+import { enforceTaskSubmissionRate, type TaskSubmissionRequest } from "./task-submission-rate.ts";
 
 const TASKS = Symbol("STORY_KNOWLEDGE_TASKS");
 const RETRY_PLANNER = Symbol("STORY_KNOWLEDGE_RETRY_PLANNER");
+const RATE = Symbol("STORY_KNOWLEDGE_TASK_RATE");
 type SessionRequest = { actor: Actor };
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n]/.test(value)) throw new BadRequestException("任务参数无效");
@@ -28,7 +31,8 @@ async function safely<T>(action: () => Promise<T>): Promise<T> {
 class StoryKnowledgeTaskController {
   private readonly tasks: ModelTaskService;
   private readonly retryPlanner: StoryKnowledgeRetryPlanner | null;
-  constructor(tasks: ModelTaskService, retryPlanner: StoryKnowledgeRetryPlanner | null) { this.tasks = tasks; this.retryPlanner = retryPlanner; }
+  private readonly rate: ModelRateLimiter | null;
+  constructor(tasks: ModelTaskService, retryPlanner: StoryKnowledgeRetryPlanner | null, rate: ModelRateLimiter | null) { this.tasks = tasks; this.retryPlanner = retryPlanner; this.rate = rate; }
   async retryPlan(request: SessionRequest, projectId: string, chapterId: string, body: unknown) {
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["expectedActiveVersionId", "scopeKeys"].includes(key))) throw new BadRequestException("重试参数无效");
     const value = body as Record<string, unknown>;
@@ -38,12 +42,13 @@ class StoryKnowledgeTaskController {
     if (!this.retryPlanner) throw new ModelTaskError("TASK_NOT_FOUND");
     return safely(() => this.retryPlanner!.plan(request.actor, project, chapter, selection));
   }
-  async submitRetry(request: SessionRequest, projectId: string, chapterId: string, body: unknown) {
+  async submitRetry(request: TaskSubmissionRequest, projectId: string, chapterId: string, body: unknown) {
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["expectedActiveVersionId", "scopeKeys", "configurationVersionId", "modelId", "requestId"].includes(key))) throw new BadRequestException("重试参数无效");
     const value = body as Record<string, unknown>;
     if (!Array.isArray(value.scopeKeys) || !value.scopeKeys.length || value.scopeKeys.length > 100 || new Set(value.scopeKeys).size !== value.scopeKeys.length) throw new BadRequestException("重试参数无效");
     const input = { projectId: identifier(projectId), chapterId: identifier(chapterId), expectedActiveVersionId: identifier(value.expectedActiveVersionId), scopeKeys: value.scopeKeys.map(identifier),
       configurationVersionId: identifier(value.configurationVersionId), modelId: identifier(value.modelId), requestId: identifier(value.requestId) };
+    await enforceTaskSubmissionRate(this.rate,request);
     return safely(() => this.tasks.submitRetry(request.actor, input));
   }
   async availability(request: SessionRequest, projectId: string, chapterId: string, query: Record<string, unknown>) {
@@ -59,9 +64,10 @@ class StoryKnowledgeTaskController {
     const project = identifier(projectId), chapter = identifier(chapterId);
     return safely(() => this.tasks.listStoryKnowledge(request.actor, project, chapter, { limit, cursor }));
   }
-  async submit(request: SessionRequest, projectId: string, chapterId: string, body: unknown) {
+  async submit(request: TaskSubmissionRequest, projectId: string, chapterId: string, body: unknown) {
     const chosen = selection(body);
     const input = { projectId: identifier(projectId), chapterId: identifier(chapterId), ...chosen };
+    await enforceTaskSubmissionRate(this.rate,request);
     return safely(() => this.tasks.submit(request.actor, input));
   }
   async get(request: SessionRequest, id: string) {
@@ -72,8 +78,10 @@ class StoryKnowledgeTaskController {
       return task;
     });
   }
-  async resubmit(request: SessionRequest, id: string, body: unknown) {
+  async resubmit(request: TaskSubmissionRequest, id: string, body: unknown) {
     const chosen = selection(body);
+    id = identifier(id);
+    await enforceTaskSubmissionRate(this.rate,request);
     await this.get(request, id);
     return safely(() => this.tasks.resubmit(request.actor, id, chosen));
   }
@@ -91,6 +99,7 @@ Controller()(StoryKnowledgeTaskController);
 UseGuards(SessionGuard)(StoryKnowledgeTaskController);
 Inject(TASKS)(StoryKnowledgeTaskController, undefined, 0);
 Inject(RETRY_PLANNER)(StoryKnowledgeTaskController, undefined, 1);
+Inject(RATE)(StoryKnowledgeTaskController,undefined,2);
 const retryDescriptor = Object.getOwnPropertyDescriptor(StoryKnowledgeTaskController.prototype, "retryPlan")!;
 Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks/retry-plan")(StoryKnowledgeTaskController.prototype, "retryPlan", retryDescriptor);
 Header("Cache-Control", "no-store")(StoryKnowledgeTaskController.prototype, "retryPlan", retryDescriptor);
@@ -122,9 +131,9 @@ for (const [method, decorator] of [["availability", Get("projects/:projectId/cha
 }
 /** Opt-in only. Supply a service using StoryKnowledgeTaskContext; no dispatcher or public run route. */
 export class StoryKnowledgeTaskApiModule {
-  static register(services: { sessionVerifier: SessionVerifier; tasks: ModelTaskService; retryPlanning?: RetryPlanningOptions }): DynamicModule {
+  static register(services: { sessionVerifier: SessionVerifier; tasks: ModelTaskService; retryPlanning?: RetryPlanningOptions; rateLimiter?: ModelRateLimiter }): DynamicModule {
     return { module: StoryKnowledgeTaskApiModule, providers: [{ provide: SESSION_VERIFIER, useValue: services.sessionVerifier }, { provide: TASKS, useValue: services.tasks },
-      { provide: RETRY_PLANNER, useValue: services.retryPlanning ? new StoryKnowledgeRetryPlanner(services.retryPlanning) : null }] };
+      { provide: RETRY_PLANNER, useValue: services.retryPlanning ? new StoryKnowledgeRetryPlanner(services.retryPlanning) : null },{ provide: RATE,useValue: services.rateLimiter ?? null }] };
   }
 }
 Module({ controllers: [StoryKnowledgeTaskController], providers: [SessionGuard, { provide: APP_FILTER, useClass: TaskFilter }] })(StoryKnowledgeTaskApiModule);

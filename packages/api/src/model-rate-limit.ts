@@ -2,14 +2,14 @@ import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
 import type { ModelSettingsPool, ModelSettingsClient } from "@novel-adaptation/script/postgres-model-settings";
 
 export interface ModelRateLimiter {
-  consume(workspaceId: string, action: "configure" | "test"): Promise<{ allowed: boolean; retryAfterSeconds: number }>;
+  consume(workspaceId: string, action: "configure" | "test" | "generate"): Promise<{ allowed: boolean; retryAfterSeconds: number }>;
 }
 
 /** Shared database-time window; no in-memory fallback. */
 export class PostgresModelRateLimiter implements ModelRateLimiter {
   readonly #pool: ModelSettingsPool;
   constructor(pool: ModelSettingsPool) { this.#pool = pool; }
-  async consume(workspaceId: string, action: "configure" | "test") {
+  async consume(workspaceId: string, action: "configure" | "test" | "generate") {
     let client: ModelSettingsClient | undefined;
     try {
       client = await this.#pool.connect();

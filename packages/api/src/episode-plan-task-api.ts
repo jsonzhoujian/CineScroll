@@ -4,8 +4,11 @@ import type { Actor, SessionVerifier } from "@novel-adaptation/identity";
 import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
 import { ModelTaskError, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
+import type { ModelRateLimiter } from "./model-rate-limit.ts";
+import { enforceTaskSubmissionRate, type TaskSubmissionRequest } from "./task-submission-rate.ts";
 
 const TASKS = Symbol("EPISODE_PLAN_TASKS");
+const RATE = Symbol("EPISODE_PLAN_TASK_RATE");
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n]/.test(value)) throw new BadRequestException("拆集任务参数无效");
   return value;
@@ -23,9 +26,11 @@ async function safely<T>(action: () => Promise<T>) {
 }
 class EpisodePlanTaskController {
   readonly #tasks: ModelTaskService;
-  constructor(tasks: ModelTaskService) { this.#tasks = tasks; }
-  submit(request: { actor: Actor }, p: string, c: string, body: unknown) {
+  readonly #rate: ModelRateLimiter | null;
+  constructor(tasks: ModelTaskService, rate: ModelRateLimiter | null) { this.#tasks = tasks; this.#rate = rate; }
+  async submit(request: TaskSubmissionRequest, p: string, c: string, body: unknown) {
     const chosen = selection(body,true), projectId = identifier(p),chapterId = identifier(c);
+    await enforceTaskSubmissionRate(this.#rate,request);
     return safely(() => this.#tasks.submitEpisodePlan(request.actor,{ projectId,chapterId,configurationVersionId: chosen.configurationVersionId,modelId: chosen.modelId,requestId: chosen.requestId! }));
   }
   availability(request: { actor: Actor }, p: string, c: string, query: unknown) {
@@ -59,6 +64,7 @@ class EpisodeTaskFilter implements ExceptionFilter<ModelTaskError | ModelSetting
 }
 Catch(ModelTaskError,ModelSettingsError)(EpisodeTaskFilter);
 Controller()(EpisodePlanTaskController); UseGuards(SessionGuard)(EpisodePlanTaskController); Inject(TASKS)(EpisodePlanTaskController,undefined,0);
+Inject(RATE)(EpisodePlanTaskController,undefined,1);
 for (const [method,decorator] of [["submit",Post("projects/:projectId/chapters/:chapterId/episode-plan-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/episode-plan-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/episode-plan-tasks/availability")], ["get",Get("episode-plan-tasks/:id")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(EpisodePlanTaskController.prototype,method)!;
   decorator(EpisodePlanTaskController.prototype,method,descriptor); Header("Cache-Control","no-store")(EpisodePlanTaskController.prototype,method,descriptor); Req()(EpisodePlanTaskController.prototype,method,0);
@@ -70,8 +76,8 @@ for (const [method,decorator] of [["submit",Post("projects/:projectId/chapters/:
 }
 /** Optional authenticated boundary only; requires EpisodePlanTaskContext and never exposes a run endpoint. */
 export class EpisodePlanTaskApiModule {
-  static register(services: { sessionVerifier: SessionVerifier; tasks: ModelTaskService }): DynamicModule {
-    return { module: EpisodePlanTaskApiModule,providers: [{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier },{ provide: TASKS,useValue: services.tasks }] };
+  static register(services: { sessionVerifier: SessionVerifier; tasks: ModelTaskService; rateLimiter?: ModelRateLimiter }): DynamicModule {
+    return { module: EpisodePlanTaskApiModule,providers: [{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier },{ provide: TASKS,useValue: services.tasks },{ provide: RATE,useValue: services.rateLimiter ?? null }] };
   }
 }
 Module({ controllers: [EpisodePlanTaskController],providers: [SessionGuard,{ provide: APP_FILTER,useClass: EpisodeTaskFilter }] })(EpisodePlanTaskApiModule);

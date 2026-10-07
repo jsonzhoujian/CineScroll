@@ -35,7 +35,14 @@ export async function assertStoryTaskDatabase(pool: Pool, workspaceIds: readonly
       and (select count(*)=3 from pg_index where indrelid='public.model_tasks'::regclass and indisvalid
         and indexrelid in (to_regclass('public.model_tasks_story_chapter_idx'),to_regclass('public.model_tasks_story_queued_scan_idx'),to_regclass('public.model_tasks_story_recovery_scan_idx')))
       and exists(select 1 from pg_constraint where conrelid='public.model_tasks'::regclass
-        and conname='model_task_reason_valid' and pg_get_constraintdef(oid) like '%POLICY_RESTRICTED%') as ready`);
+        and conname='model_task_reason_valid' and pg_get_constraintdef(oid) like '%POLICY_RESTRICTED%')
+      and exists(select 1 from pg_constraint where conrelid='public.model_rate_limits'::regclass
+        and conname='model_rate_limits_action_check' and pg_get_constraintdef(oid) like '%generate%')
+      and exists(select 1 from pg_proc p where p.oid='public.consume_model_rate(text,text)'::regprocedure
+        and p.prosecdef and p.proconfig @> array['search_path=pg_catalog']::text[]
+        and not pg_has_role(session_user,p.proowner,'MEMBER') and pg_get_functiondef(p.oid) like '%generate%')
+      and has_function_privilege(current_user,'public.consume_model_rate(text,text)','EXECUTE')
+      and not has_table_privilege(current_user,'public.model_rate_limits','SELECT,INSERT,UPDATE,DELETE') as ready`);
     if (!guards.rows[0]?.ready) throw new Error();
     const functions = await client.query(`select count(*)=3 and bool_and(
       not pg_has_role(session_user,p.proowner,'MEMBER')

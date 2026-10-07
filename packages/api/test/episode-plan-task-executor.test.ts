@@ -15,6 +15,10 @@ import { EpisodePlanRunner, type EpisodePlanGenerationRequest } from "@novel-ada
 import { EpisodePlanUpstreamReader } from "../src/episode-plan-api.ts";
 import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "../src/episode-plan-task-executor.ts";
 import { EpisodePlanTaskDispatcher, EpisodePlanTaskWorker } from "../src/episode-plan-task-dispatcher.ts";
+import { PostgresModelRateLimiter } from "../src/model-rate-limit.ts";
+import { availableRateLimiter } from "./rate-limit-fixture.ts";
+import { StoryKnowledgeTaskApiModule } from "../src/story-knowledge-task-api.ts";
+import { StoryKnowledgeTaskContext } from "../src/story-knowledge-task-context.ts";
 
 async function fixture(planRepository: ScriptRepository = new InMemoryScriptRepository(), providerIds: readonly string[] = ["deepseek"]) {
   const actor = { userId: "owner", workspaceId: "w" }, projects = new InMemoryProjectImportRepository();
@@ -37,13 +41,54 @@ async function fixture(planRepository: ScriptRepository = new InMemoryScriptRepo
     return knowledge.confirmStage(actor,"p","c",{ expectedActiveVersionId: reviewed.id, reason: "完成" });
   };
   const submit = () => tasks.submitEpisodePlan(actor, { projectId: "p", chapterId: "c", configurationVersionId: config.id, modelId: "m", requestId: `request${++id}` });
-  return { actor, projects, project, knowledge, script, context, tasks, repository, confirm, submit,
+  return { actor, projects, project, knowledge, script, context, tasks, repository, confirm, submit,settings,
     settingsSelection: async () => ({ configurationVersionId: config.id,modelId: "m" }),
     expire: () => { now += 600_001; }, block: () => { allowed = false; } };
 }
 function response(r: EpisodePlanGenerationRequest) {
   return { contractVersion: "0.1.0", jobId: r.jobId, stage: "script", resultType: "episodePlan", projectId: "p", chapterId: "c", sourceVersionId: "s", upstreamConfirmedVersionIds: [...r.upstreamConfirmedVersionIds], status: "succeeded", recommendationRationale: "保留事件", episodes: [{ id: "e", ordinal: 1, title: "雨落", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }], majorAdaptationProposals: [] };
 }
+test("拆集提交限流超额或存储故障不创建任务，缺失限流也拒绝", async () => {
+  const f = await fixture(); await f.confirm();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async () => f.actor });
+  const bearer = `Bearer ${await sessions.issue(f.actor.userId,f.actor.workspaceId)}`;
+  const selection = { ...await f.settingsSelection(),requestId: "rate-fixture" };
+  const denied = new PostgresModelRateLimiter({ connect: async () => ({ query: async () => ({ rows: [{ allowed: false,retry_after: 42 }] }),release() {} }) });
+  const broken = new PostgresModelRateLimiter({ connect: async () => { throw new Error("private-db"); } });
+  for (const [rateLimiter,expected] of [[denied,429],[broken,503],[undefined,503]] as const) {
+    const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,...(rateLimiter ? { rateLimiter } : {}) })] }).compile();
+    const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+    try {
+      const http = request(app.getHttpServer()),path = "/projects/p/chapters/c/episode-plan-tasks";
+      await http.post(path).send(selection).expect(401);
+      await http.post(path).set("authorization",bearer).send({ ...selection,unexpected: true }).expect(400);
+      const result = await http.post(path).set("authorization",bearer).send(selection).expect(expected);
+      if (expected === 429) assert.equal(result.headers["retry-after"],"42");
+      assert.ok(!JSON.stringify(result.body).includes("private-db"));
+      assert.deepEqual((await http.get(path).set("authorization",bearer).expect(200)).body.tasks,[]);
+    } finally { await app.close(); }
+  }
+});
+test("故事生成、局部重试、重新提交均受同一生成预算保护", async () => {
+  const f = await fixture();
+  const tasks = new ModelTaskService({ settings: f.settings,repository: new InMemoryModelTaskRepository(() => 0,() => ({ maxQueued: 10,maxExecuting: 10 })),
+    contextReader: new StoryKnowledgeTaskContext(f.projects),storyAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },
+    generationPolicy: { isAllowed: async () => true },idGenerator: () => "limited-task" });
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async () => f.actor });
+  const rateLimiter = new PostgresModelRateLimiter({ connect: async () => ({ query: async () => ({ rows: [{ allowed: false,retry_after: 30 }] }),release() {} }) });
+  const ref = await Test.createTestingModule({ imports: [StoryKnowledgeTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),bearer = `Bearer ${await sessions.issue(f.actor.userId,f.actor.workspaceId)}`;
+    const selected = await f.settingsSelection(),path = "/projects/p/chapters/c/story-knowledge-tasks";
+    for (const [url,body] of [[path,selected],[`${path}/retries`,{ ...selected,expectedActiveVersionId: "k",scopeKeys: ["event"],requestId: "r" }],["/story-knowledge-tasks/t/resubmit",selected]]) {
+      const result = await http.post(String(url)).set("authorization",bearer).send(body).expect(429);
+      assert.equal(result.headers["retry-after"],"30");
+      assert.equal(result.body.code,"TASK_RATE_LIMITED");
+    }
+    assert.deepEqual((await http.get(path).set("authorization",bearer).expect(200)).body.tasks,[]);
+  } finally { await app.close(); }
+});
 test("拆集执行从已确认知识和原文生成可信请求，保存可读取候选但不确认", async () => {
   const f = await fixture();
   assert.equal(await f.context.read(f.actor,"p","c"), null);
@@ -177,7 +222,7 @@ test("拆集 Worker 默认关闭，显式开启后处理任务且可安全停止
 test("认证拆集任务 API 只接收模型选择与请求标识，幂等提交并隔离历史类型", async () => {
   const f = await fixture();
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
-  const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
   try {
     const http = request(app.getHttpServer()), base = "/projects/p/chapters/c/episode-plan-tasks";
@@ -215,7 +260,7 @@ test("认证拆集任务 API 只接收模型选择与请求标识，幂等提交
 test("拆集厂商白名单拒绝返回403且可用性说明限制", async () => {
   const f = await fixture(new InMemoryScriptRepository(),[]); await f.confirm();
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
-  const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() })] }).compile();
   const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
   try {
     const http = request(app.getHttpServer()),base = "/projects/p/chapters/c/episode-plan-tasks",auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },selection = await f.settingsSelection();
