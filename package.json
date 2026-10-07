@@ -8,12 +8,13 @@
     "test:postgres": "node --test packages/project-import/test/postgres-repository.test.ts",
     "test:story-knowledge-postgres": "node --test packages/story-knowledge/test/postgres-repository.test.ts",
     "test:script": "node --test packages/script/test/*.test.ts",
+    "test:billing": "node --test packages/billing/test/*.test.ts",
     "test:identity-postgres": "node --test packages/identity/test/postgres-adapters.test.ts",
     "test:api": "node --test packages/api/test/*.test.ts",
     "test:web": "node --test packages/web/test/*.test.ts",
     "setup:web:e2e": "pnpm --filter @novel-adaptation/web install:e2e-browser",
     "test:web:e2e": "pnpm --filter @novel-adaptation/web test:e2e",
     "web": "pnpm --filter @novel-adaptation/web dev",
-    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck && pnpm --filter @novel-adaptation/story-knowledge typecheck && pnpm --filter @novel-adaptation/script typecheck && pnpm --filter @novel-adaptation/api typecheck && pnpm --filter @novel-adaptation/web typecheck"
+    "typecheck": "pnpm --filter @novel-adaptation/project-import typecheck && pnpm --filter @novel-adaptation/identity typecheck && pnpm --filter @novel-adaptation/story-knowledge typecheck && pnpm --filter @novel-adaptation/script typecheck && pnpm --filter @novel-adaptation/billing typecheck && pnpm --filter @novel-adaptation/api typecheck && pnpm --filter @novel-adaptation/web typecheck"
   }
 }
