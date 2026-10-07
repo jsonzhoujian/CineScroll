@@ -52,6 +52,10 @@ createVerifiedSettlementEvidenceReader注入可信EvidenceMaterialSource及服�
 
 EvidenceMaterialRepository及内存实现支持append/get/read，工作室+证据ID隔离；规范化指纹确保同内容幂等、冲突不覆盖，复制输入和输出。补证追加并绑定同工作室既存前序，固定快照/执行ID一致。公开接口测试覆盖并发重放及保存→读取→投影链路。schema验证不证明来源，尚无持久化、写权限或生产接线。下一步受限PostgreSQL仓储设计。
 
+## 增量：受限PostgreSQL证据仓储
+
+PostgresEvidenceMaterialRepository与0002迁移提供workspace+ID唯一不可变资料、并发重放/冲突、前序FK及绑定/快照/执行守卫；forced RLS、novel_evidence只读/追加、历史改删触发器。读取重验规范化指纹与资料，错误脱敏。隔离测试库验证持久化重启、双池并发、补证回滚、RLS/权限及投影链路；不自动迁移业务库、不接收费。单资料2MB，总容量/留存未定；来源真实性与写授权未交付。下一步只读启动预检。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
