@@ -6,7 +6,7 @@
 
 - 必须注入 BillingAccess，按可信服务身份、工作室和操作决定权限。serviceId本身不是认证凭证，不得直接由HTTP请求构造Actor。`./internal-access`提供createInternalBillingAccess：由服务器装配单个serviceId与显式workspaceId/operations列表，无通配符、未知操作默认拒绝，非法配置净化失败；配置复制后外部修改不生效，更新须重新装配。不同服务分别注入适配器，禁止根据请求的serviceId选择授权器。它仅在可信同进程内提供授权，不认证调用者，不支持跨进程凭证、动态撤销或公开成员授权；实际生产装配仍未交付。
 - grant固定grantId和来源；reserve固定报价、源版本、责任和最多100个唯一单元。平台单元预留正整数，BYOK单元预留0且不写零金额积分流水。
-- settle只接受证据ID，通过可信SettlementEvidenceReader读取严格结构，校验工作室/任务/单元/源版本、结果指针及规则版本。这个校验不证明外部生成结果真实或质量合格；实际证据服务尚未交付。
+- settle只接受证据ID，通过SettlementEvidenceReader读取严格结构，校验工作室/任务/单元/源版本、结果指针及规则版本。只读证据适配与独立装配已交付，但该校验不证明外部生成结果真实或质量合格；真实来源生产与写服务尚未交付。
 - 固定eventId + 字段顺序无关的规范化内容指纹用于重放。不同内容拒绝；相同grantId/taskId和不同事件不能再次授予/冻结；证据ID不得变更内容或通过新事件重复应用。每个单元最多关闭一次。
 - 成功消费预留内积分并同次更新释放差额；明确失败释放；未知/超报价维持冻结并返回reconciling原因。异常通知和运营裁决尚未交付。终态冲突拒绝STATE_CONFLICT，调用方未来须接异常对账，不能当作允许自动补扣。
 - 单元全部变更、流水及事件回执通过一次仓储CAS保存。流水汇总余额，无成员余额setter；查询和输入使用副本隔离。金额只用安全整数，累计超出Number.MAX_SAFE_INTEGER拒绝。
@@ -39,13 +39,15 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 `./postgres-evidence`提供PostgresEvidenceMaterialRepository：工作室+ID唯一键下并发幂等保存不可变JSON资料，读取再次核验结构及规范化指纹。同工作室前序FK及触发器核验绑定/固定快照/执行ID，forced RLS及独立novel_evidence角色只允许SELECT/INSERT，触发器拒绝UPDATE/DELETE。应用和数据库单资料上限2MB，数据库JSON格式化可能更早触达；超限拒绝。每次事务5秒语句超时，固定pg_catalog搜索路径和本地app.evidence_workspace_id上下文，Pool生命周期归宿主。错误脱敏为INVALID_MATERIAL/CONFLICT/PREDECESSOR_NOT_FOUND/STORAGE_UNAVAILABLE。
 
-可信管理员手动应用0002_evidence_material.sql，运行时不迁移。角色上下文不是身份认证；禁止用户直连、控制上下文或仓储写入。部署仍需受限非owner登录、校验TLS/池配置与专门启动预检。数据库不重现全部资料/质量/价格校验或来源真实性；合法形状的SQL资料仍不当然可信。真实写服务、跨证据原始结果唯一性、生产接线、恢复扫描、备份/留存和总容量策略均未交付。
+可信管理员手动应用0002_evidence_material.sql，运行时不迁移。角色上下文不是身份认证；禁止用户直连、控制上下文或仓储写入。专门只读启动预检已交付，部署仍需受限非owner登录、校验TLS/池配置并使用受检装配。数据库不重现全部资料/质量/价格校验或来源真实性；合法形状的SQL资料仍不当然可信。真实写服务、跨证据原始结果唯一性、生产接线、恢复扫描、备份/留存和总容量策略均未交付。
 
 实库证据验证使用TEST_EVIDENCE_DATABASE_URL，只能指向可丢弃管理员测试库：`node --test packages/billing/test/postgres-evidence.test.ts`。创建/删除随机受限登录，临时DDL/授权仅测试用途，不用于部署。与其他DDL测试一起运行须`--test-concurrency=1`。验证持久化重启、双池并发、冲突回滚、补证及RLS/只追加权限/历史触发器和投影。
 
 `./evidence-material-repository`定义可信服务器低层EvidenceMaterialRepository与内存实现。append/get/read按工作室+证据ID保存资料副本和SHA256规范化指纹（对象键顺序忽略、数组顺序保留、前序关系参与）；同内容幂等，不同内容冲突。补证必须指向同工作室既存记录，保持绑定、计费快照和执行ID，不自引用、不覆盖历史。append复用只读适配器检查结构/判据，内部放行只用于schema验证，绝非来源认证或写权限授权。禁止客户端直连。没有持久化、跨进程并发、跨证据结果唯一性、写权限、容量/留存策略或生产接线；不能作为已可信的生产来源。
 
-`./verified-evidence`提供createVerifiedSettlementEvidenceReader，注入BillingAccess及EvidenceMaterialSource。source必须是服务器拥有的一致、唯一、不可变资料源，不是客户端或模型响应；适配器核验formatVersion=1资料包的固定绑定、执行关闭/未知、原始持久化结果和版本化校验/计价，再输出严格九字段。FORBIDDEN/NOT_FOUND/UNAVAILABLE/CONFLICT不泄露源错误；账本调用仍统一INVALID_EVIDENCE。支持成功/明确失败/未知，不截断超报价金额。资料源真实性、质量/计价规则批准、证据写入幂等/指纹及持久化仍未实现；不存在生产默认可信来源。本轮仅授权测试夹具与内存账本验证。
+`./verified-evidence`提供createVerifiedSettlementEvidenceReader，注入BillingAccess及EvidenceMaterialSource。source必须是服务器拥有的一致、唯一、不可变资料源，不是客户端或模型响应；适配器核验formatVersion=1资料包的固定绑定、执行关闭/未知、原始持久化结果和版本化校验/计价，再输出严格九字段。FORBIDDEN/NOT_FOUND/UNAVAILABLE/CONFLICT不泄露源错误；账本调用仍统一INVALID_EVIDENCE。支持成功/明确失败/未知，不截断超报价金额。资料仓储的幂等/指纹及持久化已交付，但资料源真实性、质量/计价规则批准、写请求身份/审计及生产可信来源仍未实现。验证使用测试夹具，不冒充真实业务证据。
+
+写服务专用授权及来源核验的未来契约见[EVIDENCE_WRITE_AUTHORITY](../../docs/contracts/EVIDENCE_WRITE_AUTHORITY.md)，仅文档，尚无公开或生产写服务。
 
 `./server-assembly`提供createServerCreditLedger：先校验内部授权和依赖，再以受检工厂初始化PostgreSQL仓储，返回固定serviceId的冻结窄接口（工作室+领域命令/查询），不暴露仓储或授权器。策略在异步前复制，Pool.connect及证据read方法绑定固定，但依赖自身内部状态仍由可信宿主管理。失败不返回服务，Pool生命周期归宿主。独立装配不代表已经挂载生产入口，不验证成员身份/TLS，不迁移、不读取环境变量、不接真实扣费。
 

@@ -64,6 +64,10 @@ assertEvidenceMaterialDatabase/createCheckedEvidenceMaterialRepository检查logi
 
 createServerSettlementEvidenceReader校验复制内部授权策略并执行数据库预检，固定serviceId，仅返回冻结read(workspaceId,evidenceId)投影；无原始资料/仓储或追加接口暴露。读取使用settle权限，缺失/拒绝/异常保留净化错误。Pool宿主管理，隔离测试验证启动期间修改外部配置/连接方法仍不改变身份和连接。无HTTP/生产挂载/真实收费；下一步写服务授权与来源核验契约。
 
+## 增量：写服务授权与来源契约（仅文档）
+
+EVIDENCE_WRITE_AUTHORITY定义未来publish/supplement专用服务权限、来源引用请求、可信来源重读及一致性/唯一性核验、请求幂等和原子审计前置，附15项未来验收。客户端不能提交金额/成功结论；来源缺失/冲突/异常拒绝写入，不伪造失败或未知。清理证据契约/README中过时进度。未实现写服务/迁移/真实扣费；下一步测试夹具驱动的专用授权与来源端口。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
