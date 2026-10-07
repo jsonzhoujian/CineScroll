@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./evidence-publication-v2`提供prepareV2PublicationIdentity(serviceId,command)及V2PublicationCommand/Identity类型，仅严格准备身份、请求指纹及evidenceId/auditId。serviceId来自宿主参数，命令夹带身份/资料/金额/未知字段拒绝；必填定位字段、嵌套引用、封存期望和前序规则校验，先拒绝非JSON对象/访问器/符号字段再复制输入。V2PublicationProtocolError仅暴露INVALID_PUBLICATION。固定向量、字段乱序、封存字段变化、输入输出副本隔离及v1旧ID有测试。
+
+该函数不验证工作室成员/服务授权、来源真实性、seal是否当前、前序是否存在或协议版本，也不生成发布回执或登记共享请求键。不同封存指纹但相同请求得到相同ID，由未来仓储裁定冲突；不能仅凭ID/指纹宣称发布或跨版防双发。完整来源包校验、共同事务与读取门禁尚未实现。算法规范见[v2契约](../../docs/contracts/EVIDENCE_PUBLICATION_V2.md)。v1模块不改，不接HTTP/真实模型/数据库/收费。
+
 `./evidence-source-seal`提供EvidenceSourceSealRepository四个接口及InMemoryEvidenceSourceSealRepository规则夹具。集合通过构造器预置固定绑定，不从空查询隐式创建。登记版本幂等，observation后新资料推进代；旧清单不可变可历史读取，requireCurrentSeal拒绝用于新请求的旧代。final仅接受关闭无结果失败或唯一结果且有效校验/计价齐全的成功；新事实进入独立内存隔离集合，同版本异内容也保留，不加入原final或改账本。隔离重放保持原代，无裁决/读取/持久化接口。
 
 每实例最多64个集合，每集合来源与隔离资料共256项，超限拒绝而非截断；调用方须保留未登记资料。登记/封存同步变更后返回Promise，测试仅证明同进程调用顺序，不证明数据库锁或跨进程并发。来源与关闭状态是测试调用方声明，无生产身份/真实性/关闭证明。requireCurrentSeal不跨调用持锁，绝不能直接串接现有发布作为事务屏障；生产接口/Writer/发布与读取门禁尚待实施，S01～S14不视为全部验收。细节见[内存规则实施计划](../../docs/plans/2026-10-07-evidence-source-seal-memory.md)。

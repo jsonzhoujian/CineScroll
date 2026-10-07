@@ -96,6 +96,10 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 用户确认独立evidence-publication-v2、期望封存纳入指纹、v1历史不改写、跨版本共用请求键并冲突拒绝；ADR0005/EVIDENCE_PUBLICATION_V2明确算法向量、四测试边界与受控授权/前序/重放行为。尚无v2运行时/共同登记/事务仓储，V01～V10未来验收未执行。下一步协议基础与完整来源包规则TDD，不接数据库或收费。
 
+## 增量：v2协议身份准备
+
+用户确认prepareV2PublicationIdentity(serviceId,command)，严格验证身份/封存期望/嵌套引用及前序，注入宿主身份、返回规范指纹与evidenceId/auditId，固定向量/乱序/副本及拒绝测试。v1源码不变。尚无来源包校验、发布回执/共享键/共同事务/HTTP/数据库/收费；下一步完整来源包校验夹具。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
