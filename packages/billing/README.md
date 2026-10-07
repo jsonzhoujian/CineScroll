@@ -31,6 +31,8 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+未来请求幂等与原子发布规则见[EVIDENCE_ATOMIC_PUBLICATION](../../docs/contracts/EVIDENCE_ATOMIC_PUBLICATION.md)：工作室+请求身份、固定指纹/最终证据ID、请求映射/资料/审计/回执共同事务及来源一致性屏障。仅契约，当前预核验草稿/append/只读资料服务不提供该发布能力或生产读取门禁。
+
 `./evidence-write-preflight`提供createEvidenceWritePreflight：固定服务器身份和工作室publish/supplement专用权限，verifyPublish/verifySupplement仅接受requestId及版本化来源引用（补证含predecessorId）。返回核验资料草稿，不append、分配持久化发布身份或提供回执。读取来源前拒绝越权/夹带资料和金额；校验实际引用、complete=true、任务/执行/结果/计价标识、既有判据及前序快照，末尾isCurrent复查snapshotToken。配置/依赖方法固定，输入和输出副本隔离，错误脱敏。
 
 EvidenceWriteSource.load必须来自可信宿主：负责验证来源服务身份/记录版本、全量原始结果、固定规则与资料关联，返回一致不可变资料包；complete和token只是此受控端口的证明约定，不接受客户端/模型自报。当前只交付接口和测试夹具，不证明真实来源。草稿不是可直接公开写入的凭证，未来发布仍须原子核验/保存请求映射与审计；核验后到发布间的来源变化不能用本层点时检查替代事务保证。无生产写服务、HTTP、DB迁移或收费。

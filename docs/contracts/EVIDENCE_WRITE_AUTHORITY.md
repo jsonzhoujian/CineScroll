@@ -68,6 +68,6 @@ publish请求仅包含工作室、固定请求身份以及可信来源记录引�
 
 ## 6. 下一阶段
 
-增量已实现createEvidenceWritePreflight及EvidenceWritePolicy/EvidenceWriteSource接口，只用夹具验证专用权限、严格引用、来源/快照判据与补证前序，返回草稿不调用append。真实source负责来源身份/版本、一致快照及全结果完整性；本层complete/token不是外部自报可信证明。请求幂等、审计、持久化发布、生产来源及W01～W15完整验收仍未全部交付。下一步明确请求身份与审计原子保存接口，再接持久化发布；点时草稿不免除发布时的一致性保证。
+请求身份、最终证据ID、四项原子保存与来源一致性屏障的未来协议见[EVIDENCE_ATOMIC_PUBLICATION](EVIDENCE_ATOMIC_PUBLICATION.md)。协议仅文档，现有requestId/草稿不具备发布幂等或提交证明；下一步建议实现协议基础与内存原子规则夹具。
 
-建议实现独立写服务接口、专用权限适配器与可信来源读取端口，以测试夹具验证W01～W09/W12的规则。首轮不接真实任务、远程认证、报价、生产收费或数据库审计升级。明确请求身份/原子审计方案后，再实现持久化发布；不能只给append加一个公开入口就宣称可信写入已完成。
+已实现createEvidenceWritePreflight及EvidenceWritePolicy/EvidenceWriteSource接口，只用夹具验证专用权限、严格引用、来源/快照判据与补证前序，返回草稿不调用append。真实source负责来源身份/版本、一致快照及全结果完整性；本层complete/token不是外部自报可信证明。请求幂等、审计、持久化发布、生产来源及W01～W15完整验收仍未全部交付。后续依上方原子发布契约实施协议基础与内存规则夹具，再推进来源屏障及持久化事务；不接真实任务、远程认证、报价或生产收费，不能只给append加公开入口就宣称可信写入完成。

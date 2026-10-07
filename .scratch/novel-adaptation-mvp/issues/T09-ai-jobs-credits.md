@@ -72,6 +72,10 @@ EVIDENCE_WRITE_AUTHORITY定义未来publish/supplement专用服务权限、来�
 
 createEvidenceWritePreflight固定服务/工作室publish与supplement专用权限，严格引用请求，复用资料判据，核验实际引用、完整结果和token一致性，补证检查前序绑定/快照/执行ID。只返回资料草稿，不append；配置/依赖/调用副本及错误脱敏已测试。source真实性/来源身份版本由未来受控提供者保证，当前仅夹具。请求映射、审计和发布原子性/生产收费未交付。下一步请求身份与审计原子保存契约。
 
+## 增量：请求幂等与证据原子发布契约（仅文档）
+
+EVIDENCE_ATOMIC_PUBLICATION定义workspace+requestId共享命名空间、规范化指纹、确定性最终ID、授权重放与四项原子保存（请求/资料/审计/回执），含14项未来验收。来源必须有事务屏障或不可变封存证明，点时isCurrent不够；裸资料不自动published，生产读取门禁需后续升级。未改代码/DB，不启用收费。下一步协议基础/原子仓储接口及内存规则夹具。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
