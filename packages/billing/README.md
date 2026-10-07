@@ -21,7 +21,9 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 可信迁移管理员手动应用 migrations/0001_credit_ledger.sql，运行时不迁移。两个表强制RLS，独立novel_billing角色只能SELECT/INSERT及更新指针列，无版本UPDATE/DELETE、表DELETE或DDL。版本防改触发器、指针顺序及历史守卫作为数据库防线，不代替服务的授权/完整输入和证据校验。
 
-部署必须使用单独受限非owner登录、获准承担novel_billing角色，并验证无superuser/create-role/create-database/bypass-RLS或额外危险成员资格，配置校验TLS和连接池。适配器接受服务器拥有的结构化Pool接口，不自动建立连接/验证部署配置。app.billing_workspace_id通过每次事务本地设置；该上下文由可信服务器控制，不是不可伪造的身份认证。禁止用户直连数据库、选择workspace参数或设置上下文。尚未提供生产启动预检/装配，不能仅因迁移存在就宣称安全上线。
+部署必须使用单独受限非owner登录、获准承担novel_billing角色，配置校验TLS和连接池。适配器接受服务器拥有的结构化Pool接口，不自动建立连接。app.billing_workspace_id通过每次事务本地设置；该上下文由可信服务器控制，不是不可伪造的身份认证。禁止用户直连数据库、选择workspace参数或设置上下文。
+
+`./database-readiness`提供只读`assertCreditLedgerDatabase(pool)`和受检工厂`createCheckedCreditLedgerRepository(pool)`。PostgreSQL 16下校验受限登录/角色、表和列权限、强制RLS及严格策略、列/主键/约束定义、历史守卫事件及函数源指纹；失败只返回BILLING_DATABASE_NOT_READY，不修复或写入业务数据。生产装配必须使用受检工厂；低层构造器仍未预检。指纹与当前迁移绑定，迁移变更须同步审核更新。预检仅为当时状态，不验证TLS、真实服务身份或管理员后续DDL；生产装配仍未交付，不能仅据预检宣称安全上线。
 
 尚无任务/冻结/Outbox共同事务、真实扣费、自动恢复/运营裁决、部署备份/保留和容量迁移。这些独立快照不会使现有AI任务成为已计费任务。
 
@@ -32,3 +34,5 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 `node --test packages/billing/test/*.test.ts`，`pnpm --filter @novel-adaptation/billing typecheck`。测试固定积分示例不代表产品价格；授权与证据读取器使用测试夹具，不冒充生产身份/证据验证。
 
 实库测试使用 TEST_BILLING_DATABASE_URL（仅可丢弃管理员测试库）：`node --test packages/billing/test/postgres-ledger.test.ts`。未配置时显式跳过；隔离运行并要求临时测试库允许随机受限登录无密码连接，绝不能把此测试策略应用于部署。测试手动应用迁移，创建/删除随机登录角色，保留随机工作室夹具，模型/真实Key/业务库完全不参与。验证包含关闭并重建连接池后读回、双池并发、RLS/最小权限、回滚、历史保护及SQL非法单元拒绝。
+
+预检实库测试使用TEST_BILLING_READINESS_DATABASE_URL，仅限相同可丢弃管理员测试库。它临时改变并恢复DDL/权限，必须单独运行，或全套使用`--test-concurrency=1`，不能与其他DDL测试并行。
