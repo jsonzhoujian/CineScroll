@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./evidence-write-preflight`提供createEvidenceWritePreflight：固定服务器身份和工作室publish/supplement专用权限，verifyPublish/verifySupplement仅接受requestId及版本化来源引用（补证含predecessorId）。返回核验资料草稿，不append、分配持久化发布身份或提供回执。读取来源前拒绝越权/夹带资料和金额；校验实际引用、complete=true、任务/执行/结果/计价标识、既有判据及前序快照，末尾isCurrent复查snapshotToken。配置/依赖方法固定，输入和输出副本隔离，错误脱敏。
+
+EvidenceWriteSource.load必须来自可信宿主：负责验证来源服务身份/记录版本、全量原始结果、固定规则与资料关联，返回一致不可变资料包；complete和token只是此受控端口的证明约定，不接受客户端/模型自报。当前只交付接口和测试夹具，不证明真实来源。草稿不是可直接公开写入的凭证，未来发布仍须原子核验/保存请求映射与审计；核验后到发布间的来源变化不能用本层点时检查替代事务保证。无生产写服务、HTTP、DB迁移或收费。
+
 `./evidence-reader-assembly`提供createServerSettlementEvidenceReader，服务器注入Pool和InternalBillingPolicy。先复制/校验策略，再用受检工厂初始化仓储，返回冻结的`read(workspaceId,evidenceId)`九字段投影接口，服务身份固定，不暴露原始资料/仓储/追加入口。证据读取沿用settle权限，只有read权限不放行。Pool由宿主管理；未知工作室拒绝，缺失证据NOT_FOUND，源异常净化。独立装配不是HTTP、成员认证或生产接线，数据库通过预检也不证明来源真实性。后续写服务认证及真实资料生产仍待实现。
 
 `./evidence-database-readiness`提供assertEvidenceMaterialDatabase及createCheckedEvidenceMaterialRepository。PG16只读事务检查实际登录/novel_evidence角色及继承、表/列权限与schema创建权、非owner、强制RLS/单一严格策略、五列及有效主键/必要约束定义、guard事件/函数源/语言/搜索路径/执行权。失败统一EVIDENCE_DATABASE_NOT_READY，不返回受检仓储，不迁移/授权/修复/写业务资料。受检工厂先绑定Pool.connect，Pool仍由宿主管理；低层构造器不预检，未来受控装配须使用受检入口。指纹与0002迁移/PG16绑定，更新迁移须同步审核预检常量；仅检查当时状态，不证明TLS、真实性、写服务身份或管理员后续DDL。

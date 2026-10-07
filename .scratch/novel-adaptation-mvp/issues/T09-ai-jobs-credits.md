@@ -68,6 +68,10 @@ createServerSettlementEvidenceReader校验复制内部授权策略并执行数�
 
 EVIDENCE_WRITE_AUTHORITY定义未来publish/supplement专用服务权限、来源引用请求、可信来源重读及一致性/唯一性核验、请求幂等和原子审计前置，附15项未来验收。客户端不能提交金额/成功结论；来源缺失/冲突/异常拒绝写入，不伪造失败或未知。清理证据契约/README中过时进度。未实现写服务/迁移/真实扣费；下一步测试夹具驱动的专用授权与来源端口。
 
+## 增量：写入前来源核验
+
+createEvidenceWritePreflight固定服务/工作室publish与supplement专用权限，严格引用请求，复用资料判据，核验实际引用、完整结果和token一致性，补证检查前序绑定/快照/执行ID。只返回资料草稿，不append；配置/依赖/调用副本及错误脱敏已测试。source真实性/来源身份版本由未来受控提供者保证，当前仅夹具。请求映射、审计和发布原子性/生产收费未交付。下一步请求身份与审计原子保存契约。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
