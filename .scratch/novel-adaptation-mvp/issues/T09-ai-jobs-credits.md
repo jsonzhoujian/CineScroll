@@ -88,6 +88,10 @@ evidencePublicationId/指纹、EvidencePublicationRepository及内存复合记�
 
 用户选择A，EVIDENCE_SOURCE_SEAL/ADR0004明确集合头/不可变来源清单、observation与final、迟到结果新代或异常隔离、所有Writer共同屏障、四项发布事务及关联读取门禁，附14项未来验收。未写代码/迁移，不接真实来源收费。下一步来源封存接口与内存规则。
 
+## 增量：可信来源与共同事务契约（仅文档）
+
+EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段、受控发送/入集合关闭证明、共同事务publishFromSeal与发布关联读取语义，含15项未来验收。现有任务终态/租约不证明执行关闭；v2含期望封存身份的请求指纹方案待确认，v1历史不改写。本轮仅文档，未接真实来源/数据库/收费；下一步确认新协议版本与接口测试边界。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
