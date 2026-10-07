@@ -60,6 +60,10 @@ PostgresEvidenceMaterialRepository与0002迁移提供workspace+ID唯一不可变
 
 assertEvidenceMaterialDatabase/createCheckedEvidenceMaterialRepository检查login/effective role危险属性/成员资格、最小表列权限、强制RLS/单一scope策略、列/主键/约束及guard函数定义。失败EVIDENCE_DATABASE_NOT_READY，不返回仓储，不授权/修复/写资料。隔离PG16漂移测试逐项恢复，不修改业务库。指纹绑定0002/PG16，TLS/真实性/生产装配仍延期；下一步受检仓储与投影受控装配。
 
+## 增量：只读证据服务受控装配
+
+createServerSettlementEvidenceReader校验复制内部授权策略并执行数据库预检，固定serviceId，仅返回冻结read(workspaceId,evidenceId)投影；无原始资料/仓储或追加接口暴露。读取使用settle权限，缺失/拒绝/异常保留净化错误。Pool宿主管理，隔离测试验证启动期间修改外部配置/连接方法仍不改变身份和连接。无HTTP/生产挂载/真实收费；下一步写服务授权与来源核验契约。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.

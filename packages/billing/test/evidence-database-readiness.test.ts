@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { assertEvidenceMaterialDatabase, createCheckedEvidenceMaterialRepository } from "../src/evidence-database-readiness.ts";
+import { createServerSettlementEvidenceReader } from "../src/evidence-reader-assembly.ts";
 
 test("证据数据库初始化故障脱敏且不返回仓储", async () => {
   await assert.rejects(() => createCheckedEvidenceMaterialRepository({ connect: async () => { throw new Error("private-secret"); } }), { message: "EVIDENCE_DATABASE_NOT_READY" });
@@ -25,6 +26,29 @@ test("证据只读预检放行受限登录并拒绝漂移且不自行修复", { 
     } };
     const repository = await createCheckedEvidenceMaterialRepository(hostPool);
     assert.equal(await repository.read(`unused_${suffix}`, "evidence"), null);
+    const workspace = `assembly_${suffix}`;
+    const binding = { workspaceId: workspace, taskId: "task", unitId: "unit", projectId: "project", chapterId: "chapter", sourceVersionId: "source", upstreamVersionIds: [] };
+    await repository.append(workspace, { id: "evidence", formatVersion: 1, binding, ruleVersion: "v1",
+      snapshot: { binding, responsibility: "platform", quoteId: "quote", priceVersion: "price", reserved: 60 },
+      execution: { binding, id: "execution", state: "unknown", closed: false }, results: [], pricing: null });
+    const policy = { serviceId: "reader", grants: [{ workspaceId: workspace, operations: ["settle"] as const }] };
+    const readerPool = { connect: async () => {
+      policy.serviceId = "changed"; policy.grants[0]!.workspaceId = "changed";
+      readerPool.connect = async () => { throw new Error("changed-pool"); };
+      return pool.connect();
+    } };
+    const service = await createServerSettlementEvidenceReader({ pool: readerPool, policy });
+    const expected = { id: "evidence", workspaceId: workspace, taskId: "task", unitId: "unit", sourceVersionId: "source", outcome: "unknown", amount: null, resultVersionId: null, ruleVersion: "v1" };
+    assert.deepEqual(await service.read(workspace, "evidence"), expected);
+    const result = await service.read(workspace, "evidence") as { ruleVersion: string };
+    result.ruleVersion = "tampered";
+    assert.deepEqual(await service.read(workspace, "evidence"), expected);
+    await assert.rejects(() => service.read("changed", "evidence"), { code: "FORBIDDEN" });
+    await assert.rejects(() => service.read(workspace, "missing"), { code: "NOT_FOUND" });
+    assert.deepEqual(Object.keys(service), ["read"]); assert.equal(Object.isFrozen(service), true);
+    const readOnlyPolicy = { serviceId: "reader", grants: [{ workspaceId: workspace, operations: ["read"] as const }] };
+    const unauthorized = await createServerSettlementEvidenceReader({ pool, policy: readOnlyPolicy });
+    await assert.rejects(() => unauthorized.read(workspace, "evidence"), { code: "FORBIDDEN" });
     await assert.rejects(() => assertEvidenceMaterialDatabase(admin), { message: "EVIDENCE_DATABASE_NOT_READY" });
     const broken = async (change: string, restore: string) => {
       await admin.query(change);
