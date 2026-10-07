@@ -53,7 +53,7 @@
 
 建议publishFromSeal(command)为唯一提交边界，服务器装配仓储内部管理连接与事务，调用方不获得transaction client，不接受外部material/prepare草稿或任意Pool作为提交权威。命令包含protocolVersion、workspaceId、requestId、operation、固定来源引用、expectedSealId/generation/manifestFingerprint及predecessorId；serviceId来自固定装配。前置读取仅用于展示，最终资料在事务内从可信来源构造。
 
-新请求指纹必须包含期望封存身份/代/指纹，改变任何一项不能绕过同请求冲突。现有evidence-publication-v1没有这些字段：建议为新边界定义v2，而非改写v1函数和历史指纹。此版本方案待下一实施前确认并记录ADR；本轮不指定最终v2序列化或ID算法。历史v1记录仍按原规则读取/重放，不自动变为生产published；跨版本同(workspaceId,requestId)不得重复发布或降级，需要显式迁移/冲突规则。
+新请求指纹必须包含期望封存身份/代/指纹，改变任何一项不能绕过同请求冲突。现有evidence-publication-v1没有这些字段：用户已确认新边界定义独立v2，不改写v1函数和历史指纹，见[ADR0005](../adr/0005-evidence-publication-v2.md)及[v2规范](EVIDENCE_PUBLICATION_V2.md)。历史v1记录仍按原规则读取/重放，不自动变为生产published；跨版本共用(workspaceId,requestId)，另一版本占用即冲突，不自动升级或降级。共同登记和历史迁移尚未实现。
 
 逻辑读取接口为lookupPublished(workspaceId,requestIdentity)及readPublishedEvidence(workspaceId,evidenceId)，每次先授权；恢复查询只返回完整已提交关联。相同命令重放已有回执不依赖当前来源头，历史读仍核验其不可变清单；不同指纹冲突。新请求要求期望seal仍是当前头且版本成员/栅栏证明完整。unknown前序补证核验同binding/快照/executionId；不自动裁决账本终态冲突。
 
@@ -89,4 +89,4 @@
 | C14 | 清单/隔离超限或隔离保存失败 | 不截断/丢事实；显式失败并要求可靠保留 |
 | C15 | v1/v2同requestId竞争/迁移历史裸资料 | 不双发、不静默升级，需要批准规则 |
 
-下一步先确认新协议版本与接口测试边界，再实现完整可信来源包校验和共同事务规则夹具；之后独立批准PostgreSQL迁移及所有Writer接线，实库验收不能用内存测试替代。
+新协议版本与四个测试边界已确认，下一步按v2规范TDD实现协议基础与完整可信来源包校验，再实现共同事务规则夹具；之后独立批准PostgreSQL迁移及所有Writer接线，实库验收不能用内存测试替代。

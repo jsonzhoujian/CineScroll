@@ -74,7 +74,7 @@
 
 ## 7. 下一实施边界
 
-用户已选择同数据库路线A，来源集合、observation/final封存、迟到结果、共同锁序与发布读取门禁设计见[EVIDENCE_SOURCE_SEAL](EVIDENCE_SOURCE_SEAL.md)。来源封存内存规则夹具已交付，真实Writer屏障和PostgreSQL共同发布事务尚未实现。完整来源、关闭证明及适配接口新增设计见[EVIDENCE_TRUSTED_SOURCE_TRANSACTION](EVIDENCE_TRUSTED_SOURCE_TRANSACTION.md)，新协议版本仍待确认，不改写既有v1指纹。
+用户已选择同数据库路线A，来源集合、observation/final封存、迟到结果、共同锁序与发布读取门禁设计见[EVIDENCE_SOURCE_SEAL](EVIDENCE_SOURCE_SEAL.md)。来源封存内存规则夹具已交付，真实Writer屏障和PostgreSQL共同发布事务尚未实现。完整来源、关闭证明及适配接口见[EVIDENCE_TRUSTED_SOURCE_TRANSACTION](EVIDENCE_TRUSTED_SOURCE_TRANSACTION.md)，独立[v2协议与四测试边界](EVIDENCE_PUBLICATION_V2.md)已确认但未实现，不改写既有v1指纹。
 
 增量已交付协议ID/请求指纹、原子发布仓储接口、内存复合记录和授权服务规则夹具。复合记录包含请求/资料/审计/回执，提交前完整校验、一次保存，无独立append；记录查询及重放仍经专用授权。只使用可信封存资料夹具，sourceSealId不构成生产证明，没有真实来源屏障、持久化事务或发布读取门禁；P01～P14不视为已全部验收，不能将内存发布回执用于真实扣费。
 

@@ -92,6 +92,10 @@ evidencePublicationId/指纹、EvidencePublicationRepository及内存复合记�
 
 EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段、受控发送/入集合关闭证明、共同事务publishFromSeal与发布关联读取语义，含15项未来验收。现有任务终态/租约不证明执行关闭；v2含期望封存身份的请求指纹方案待确认，v1历史不改写。本轮仅文档，未接真实来源/数据库/收费；下一步确认新协议版本与接口测试边界。
 
+## 增量：v2协议与公开测试边界（仅文档）
+
+用户确认独立evidence-publication-v2、期望封存纳入指纹、v1历史不改写、跨版本共用请求键并冲突拒绝；ADR0005/EVIDENCE_PUBLICATION_V2明确算法向量、四测试边界与受控授权/前序/重放行为。尚无v2运行时/共同登记/事务仓储，V01～V10未来验收未执行。下一步协议基础与完整来源包规则TDD，不接数据库或收费。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.

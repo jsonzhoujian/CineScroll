@@ -2,7 +2,7 @@
 
 目标：落实[EVIDENCE_TRUSTED_SOURCE_TRANSACTION](../contracts/EVIDENCE_TRUSTED_SOURCE_TRANSACTION.md)，不将点时草稿或内存封存冒称生产凭证。本轮仅设计，无测试/迁移执行。
 
-1. 确认v2协议/固定ID/指纹测试向量、v1兼容与跨版本共享请求键；记录批准ADR。冻结公开测试边界：完整来源包校验、publishFromSeal、lookupPublished、readPublishedEvidence。不改既有v1历史函数。
+1. 用户已确认独立v2与四边界，批准方向记录于[ADR0005](../adr/0005-evidence-publication-v2.md)。具体ID/指纹测试向量、v1兼容与跨版本共享键规则见[v2契约](../contracts/EVIDENCE_PUBLICATION_V2.md)，尚未实现。不改既有v1历史函数。
 2. 先以授权可信来源夹具验证完整binding、不可变版本关联、全原始结果、关闭证明、判据及额度；逐项红—绿。拒绝原始ModelTask直接作为来源及客户端资料。当前SourceVersion仅内存规则字段，不直接升级生产接口。
 3. 建立共同事务规则夹具：来源头/请求身份/四对象共享提交边界，测试旧seal新请求拒绝与历史重放、失败不留半份发布、同请求冲突；不得将requireCurrentSeal后独立commit作为实现。
 4. 单独审批生产数据设计：来源头/版本/关闭栅栏/清单/隔离/发布关联、索引/容量/保留、受限角色/RLS/所有Writer约束与只读启动预检。此阶段才制定SQL，不自动迁移业务库。
