@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./v2-publication-transaction`提供InMemoryV2PublicationTransactionFixture的publishFromSeal/lookupPublished。固定服务器身份、专用授权、v1预置共享键占用、v2同键重放冲突、完整来源包核验、补证前序和复合四对象一次保存有规则测试。最终同步来源包比较至Map保存无await/回调，旧请求重放不读取变化后的来源；已发布seal不可变，历史成员不能被新包隐藏。故障模拟区分保存前无残留与保存后响应丢失可查询。
+
+仅128项/2MiB有界内存夹具，无数据库事务/头锁/真实Writer/来源认证/生产读取门禁。同步source端口不得接异步网络；原v1仓储未接入，只模拟其请求占用，不能宣称生产跨版并发已保护。详细依赖、故障和边界见[事务夹具说明](../../docs/plans/2026-10-07-v2-publication-transaction-fixture.md)。无模型/Key/HTTP/收费接线。
+
 `./v2-source-bundle`提供validateV2SourceBundle(serviceId,command,bundle)：规则夹具核验固定绑定、来源版本前序、完整manifest/指纹、关闭栅栏与资料、全部原始结果、校验/计价匹配，并用最终v2 ID重验资料。输出仅准备结果，无发布回执；未知、未发送失败、非法响应、校验失败和BYOK判据分别保留，BYOK计价必须0。
 
 严格JSON副本隔离与有界容量详见[来源包夹具说明](../../docs/plans/2026-10-07-v2-source-bundle-fixture.md)。不认证生产服务、核验真实业务行/当前来源头或前序发布关联；完整清单仅在该可信测试输入范围内验证。调用者自报一致指纹不证明真实来源，不可直接串接append/commit或用于收费。所有异常净化INVALID_SOURCE_BUNDLE，无真实模型/DB/HTTP接线。

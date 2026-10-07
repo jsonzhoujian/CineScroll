@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalEvidenceValue, prepareEvidenceMaterial } from "./evidence-material-repository.ts";
 import { prepareV2PublicationIdentity, type PreparedV2PublicationIdentity } from "./evidence-publication-v2.ts";
+import { copySourceFixtureJson } from "./v2-source-fixture-copy.ts";
 
 type PreparedMaterial = { id: string; pricing: Record<string, unknown> | null; [key: string]: unknown };
 export type PreparedV2SourceBundle = { identity: PreparedV2PublicationIdentity; material: PreparedMaterial;
@@ -34,29 +35,6 @@ const payloadKeys: Record<string, string[]> = {
   fence: ["binding", "executionId", "generation", "state", "dispatchAuthorized"],
   closure: ["binding", "executionId", "fenceId", "fenceVersion", "fenceFingerprint", "predecessorExecutionVersion", "reason", "dispatchClosed", "resultRegistrationClosed"],
 };
-function copyJson(input: unknown): unknown {
-  let nodes = 0;
-  function check(value: unknown, depth: number): void {
-    if (++nodes > 60_000 || depth > 24) throw new Error();
-    if (value === null || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)) return;
-    if (typeof value === "string") { if (value.length > 4096) throw new Error(); return; }
-    if (!value || typeof value !== "object") throw new Error();
-    const array = Array.isArray(value), keys = Reflect.ownKeys(value);
-    if (Object.getPrototypeOf(value) !== (array ? Array.prototype : Object.prototype)
-      || (array ? value.length > 1024 || keys.length !== value.length + 1 : keys.length > 64)) throw new Error();
-    for (const key of keys) {
-      if (array && key === "length") continue;
-      if (typeof key !== "string" || key.length > 256 || array && !/^(0|[1-9]\d*)$/.test(key)) throw new Error();
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) throw new Error();
-      check(descriptor.value, depth + 1);
-    }
-  }
-  check(input, 0);
-  const copy = structuredClone(input);
-  if (Buffer.byteLength(JSON.stringify(copy), "utf8") > 2 * 1024 * 1024) throw new Error();
-  return copy;
-}
 function validateHistoricalAssociations(records: SourceRecord[], material: Record<string, unknown>): void {
   const snapshot = material.snapshot as Record<string, unknown>;
   const linked = (kind: string, recordId: unknown, version?: unknown) => {
@@ -99,7 +77,7 @@ function validateHistoricalAssociations(records: SourceRecord[], material: Recor
 export async function validateV2SourceBundle(serviceId: string, command: unknown, input: unknown): Promise<PreparedV2SourceBundle> {
   try {
     const identity = prepareV2PublicationIdentity(serviceId, command);
-    const bundle = object(copyJson(input), ["formatVersion", "material", "records", "seal"]);
+    const bundle = object(copySourceFixtureJson(input), ["formatVersion", "material", "records", "seal"]);
     if (bundle.formatVersion !== 1 || !Array.isArray(bundle.records) || bundle.records.length === 0 || bundle.records.length > 256) throw new Error();
     const records = bundle.records.map(value => object(value, recordKeys) as SourceRecord);
     const seal = object(bundle.seal, ["formatVersion", "sealId", "binding", "generation", "kind", "ruleVersion", "producerServiceId", "sealedAt", "references", "unresolved", "members", "fingerprint"]);

@@ -104,6 +104,10 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 用户确认validateV2SourceBundle，固定binding/报价、来源前序、全成员清单、关闭资料/栅栏、原始结果/校验/计价及BYOK零额度规则有测试；复制前严格JSON校验、有界容量、净化错误。历史validation/pricing/closure逐版本核验，不能用新版隐藏旧非法引用/金额/关闭关系；固定报价下矛盾计价拒绝。返回准备结果，不认证来源/查业务行/核验当前头或前序存在性，不接DB/发布/收费。下一步共同事务规则与共享请求登记。
 
+## 增量：v2共同事务内存夹具
+
+增量共同事务夹具：用户确认publishFromSeal/lookupPublished，内存共享登记纳入v1预置占用，专用授权、v2同键冲突/并发重放、来源等待后最终同步核验、前序/历史成员和四对象一次Map保存有测试。组装失败无残留，保存后响应故障可原请求恢复；固定seal身份不可变，有界容量。原v1写路径未接，未提供真实DB/来源/Writer/生产读取门禁/收费；下一步已发布证据读取门禁。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
