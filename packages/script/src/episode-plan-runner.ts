@@ -85,17 +85,18 @@ export class EpisodePlanRunner {
     request: unknown,
     expectedActiveVersionId: string | null,
   ): Promise<EpisodePlanVersion> {
-    assertGenerationRequest(request);
+    assertEpisodePlanGenerationRequest(request);
     const trustedSnapshot = deepFreeze(structuredClone(request));
     let rawResponse: unknown;
     try {
       rawResponse = await this.#model.generate(trustedSnapshot);
-    } catch {
+    } catch (error) {
+      if (error instanceof EpisodePlanModelError) {
+        throw new EpisodePlanModelError(error.code, error.code);
+      }
       throw new EpisodePlanModelError("PROVIDER_UNAVAILABLE", "拆集建议服务暂时不可用，请稍后重试");
     }
-    const response = parseRecommendation(rawResponse);
-    assertMatchingEnvelope(trustedSnapshot, response);
-    assertRecommendationEvidence(trustedSnapshot, response);
+    const response = validateEpisodePlanRecommendation(trustedSnapshot,rawResponse);
     try {
       return await this.#script.recordEpisodePlan(actor, {
         expectedActiveVersionId,
@@ -118,7 +119,7 @@ export class EpisodePlanRunner {
   }
 }
 
-function assertGenerationRequest(request: unknown): asserts request is EpisodePlanGenerationRequest {
+export function assertEpisodePlanGenerationRequest(request: unknown): asserts request is EpisodePlanGenerationRequest {
   if (!isRecord(request)
     || !hasOnlyKeys(request, ["contractVersion", "jobId", "stage", "projectId", "chapterId",
       "sourceVersionId", "upstreamConfirmedVersionIds", "scopeKeys", "generationParameters", "input"])
@@ -131,6 +132,20 @@ function assertGenerationRequest(request: unknown): asserts request is EpisodePl
     || !isGenerationInput(request.input)) {
     throw new EpisodePlanModelError("INVALID_REQUEST", "拆集建议模型输入快照不符合运行时契约");
   }
+}
+
+/** Shared response quarantine: transport and runner use identical task/evidence checks. */
+export function validateEpisodePlanRecommendation(request: EpisodePlanGenerationRequest,value: unknown) {
+  assertEpisodePlanGenerationRequest(request);
+  const response = parseRecommendation(value);
+  if (response.episodes.some((episode,index) => episode.ordinal !== index + 1)
+    || new Set(response.episodes.map(episode => episode.id)).size !== response.episodes.length
+    || new Set(response.majorAdaptationProposals.map(proposal => proposal.id)).size !== response.majorAdaptationProposals.length) {
+    throw new EpisodePlanModelError("INVALID_RESPONSE", "拆集建议的集序号或条目标识无效");
+  }
+  assertMatchingEnvelope(request,response);
+  assertRecommendationEvidence(request,response);
+  return response;
 }
 
 function parseRecommendation(value: unknown): EpisodePlanRecommendation {

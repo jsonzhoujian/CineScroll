@@ -54,6 +54,13 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Verification: full Node suite 186 pass, 10 database tests skipped; 31 browser tests pass (six new cases cover success, uncertainty, stale result, expired-session recovery, mobile and disabled service); web TypeScript and Standards/Spec reviews pass. Frontend design skill retained the paper/jade editorial workbench; screenshot inspected locally.
 - Still not delivered: vendor-native episode model transport, production module/worker registration, shared production limits/billing and live model validation. No actual model calls or production enablement; script正文 is not generated. T06 remains in progress.
 
+## Incremental delivery — trusted native episode transport (2026-10-07)
+
+- Added a DeepSeek credentialed episode-plan adapter using a fixed HTTPS endpoint, no redirects or automatic retries, separated system instructions and untrusted source data, immutable input snapshots, bounded payloads and a deadline covering the response body.
+- Shared recommendation quarantine validates task identity, source/fact references, core-event coverage and unique episode/proposal identifiers. Controlled model error codes survive the runner boundary with sanitized messages; malformed recommendations remain INVALID_RESPONSE rather than provider failures.
+- Verification: full Node regression 194 passing, 10 skipped; API and script TypeScript checks pass. Transport tests use simulated HTTP, and real domain executor tests cover candidate persistence and invalid-envelope rejection.
+- No real credentials were read, works sent externally, or production transport enabled. Mainland routing labels do not prove vendor data residency. Production assembly, billing/limits and authorized live-quality verification remain outstanding; T06 stays in progress. Plan: `docs/plans/2026-10-07-episode-plan-transport.md`.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.

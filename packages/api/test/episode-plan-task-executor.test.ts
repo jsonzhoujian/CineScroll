@@ -5,6 +5,7 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { HmacSessionManager } from "@novel-adaptation/identity";
 import { EpisodePlanTaskApiModule } from "../src/episode-plan-task-api.ts";
+import { DeepSeekEpisodePlanModel } from "../src/deepseek-episode-model.ts";
 import { InMemoryProjectImportRepository } from "@novel-adaptation/project-import";
 import { InMemoryStoryKnowledgeRepository, StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 import { InMemoryScriptRepository, ScriptService, ScriptUpstreamChangedError, type ScriptRepository } from "@novel-adaptation/script";
@@ -223,4 +224,29 @@ test("拆集厂商白名单拒绝返回403且可用性说明限制", async () =>
     const availability = await http.get(`${base}/availability`).set(auth).query(selection).expect(200);
     assert.deepEqual(availability.body,{ available: false,reason: "TASK_PROVIDER_UNSUPPORTED" });
   } finally { await app.close(); }
+});
+
+test("DeepSeek原生拆集传输通过真实任务执行器保存可追溯候选",async () => {
+  const f = await fixture(); await f.confirm(); const task = await f.submit();
+  const model = new DeepSeekEpisodePlanModel({ fetch: async (_url,init) => {
+    assert.equal(new Headers(init?.headers).get("authorization"),"Bearer fixture-key");
+    const sent = JSON.parse(String(init?.body)); const snapshot: EpisodePlanGenerationRequest = JSON.parse(sent.messages[1].content);
+    return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(response(snapshot)) } }] });
+  } });
+  const executor = new EpisodePlanTaskExecutor({ tasks: f.tasks,projects: f.projects,knowledge: f.knowledge,script: f.script,model });
+  const done = await executor.run(f.actor,task.id),candidate = await f.script.getEpisodePlan(f.actor,"p","c");
+  assert.equal(done.state,"succeeded"); assert.equal(done.result?.candidateVersionId,candidate.id);
+  assert.equal(candidate.generationJobId,task.id); assert.equal(candidate.status,"candidate"); assert.deepEqual(candidate.episodes[0]?.coreEventFactIds,["event"]);
+});
+
+test("DeepSeek非法拆集信封通过执行器仍记录INVALID_RESPONSE，不误报厂商故障",async () => {
+  const f = await fixture(); await f.confirm(); const task = await f.submit();
+  const model = new DeepSeekEpisodePlanModel({ fetch: async (_url,init) => {
+    const sent = JSON.parse(String(init?.body)); const snapshot: EpisodePlanGenerationRequest = JSON.parse(sent.messages[1].content);
+    return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify({ ...response(snapshot),sourceVersionId: "forged" }) } }] });
+  } });
+  const executor = new EpisodePlanTaskExecutor({ tasks: f.tasks,projects: f.projects,knowledge: f.knowledge,script: f.script,model });
+  const failed = await executor.run(f.actor,task.id);
+  assert.equal(failed.state,"failed"); assert.equal(failed.reason,"INVALID_RESPONSE");
+  await assert.rejects(() => f.script.getEpisodePlan(f.actor,"p","c"),{ code: "EPISODE_PLAN_NOT_FOUND" });
 });

@@ -12,7 +12,8 @@
     "./episode-plans": "./src/episode-plan-api.ts",
     "./episode-plan-task-executor": "./src/episode-plan-task-executor.ts",
     "./episode-plan-task-dispatcher": "./src/episode-plan-task-dispatcher.ts",
-    "./episode-plan-tasks": "./src/episode-plan-task-api.ts"
+    "./episode-plan-tasks": "./src/episode-plan-task-api.ts",
+    "./deepseek-episode-model": "./src/deepseek-episode-model.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
