@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type EpisodePlanView } from "../lib/api";
+import { EpisodePlanTaskPanel } from "./episode-plan-task";
 
 export function EpisodePlanWorkbench({ api, projectId, chapterId, sourceVersionId, knowledgeVersionId }: { api: ApiClient; projectId: string; chapterId: string; sourceVersionId: string; knowledgeVersionId: string }) {
   const [view, setView] = useState<EpisodePlanView | null>(null), [selected, setSelected] = useState("");
-  const [reasons, setReasons] = useState<Record<string,string>>({}), [busy, setBusy] = useState(false), [notice, setNotice] = useState("故事知识已确认，可读取后台保存的拆集方案；不会自动生成或确认。");
+  const [reasons, setReasons] = useState<Record<string,string>>({}), [ownBusy, setBusy] = useState(false), [taskBusy,setTaskBusy] = useState(false), [notice, setNotice] = useState("故事知识已确认，可读取后台保存的拆集方案；不会自动生成或确认。");
+  const busy = ownBusy || taskBusy;
   const alive = useRef(true), locked = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   async function read() {
@@ -29,6 +31,8 @@ export function EpisodePlanWorkbench({ api, projectId, chapterId, sourceVersionI
   return <section className="episode-plan-panel task-panel" aria-label="拆集方案审核">
     <header><div><span className="eyebrow">剧本前置 · 拆集方案</span><h2>先定每集，再落笔成戏</h2></div><button type="button" className="button secondary" disabled={busy} onClick={() => void act()}>读取拆集方案</button></header>
     <p role="status">{notice}</p>
+    <EpisodePlanTaskPanel api={api} projectId={projectId} chapterId={chapterId} sourceVersionId={sourceVersionId} knowledgeVersionId={knowledgeVersionId} disabled={ownBusy} hasPlan={!!plan}
+      onBusy={next => { locked.current = next; setTaskBusy(next); }} onLoaded={next => { setView(next); setSelected(next.plan.episodes[0]?.id ?? ""); setReasons({}); }} />
     {plan && <>
       <p>{plan.targetDurationSeconds / 60} 分钟 / 集</p><small>方案 {plan.id} · 原文 {plan.sourceVersionId} · 知识 {plan.storyBibleVersionId}</small>
       {!current && <p className="task-notice">上游或活动方案已变化，本方案只读，不能裁决或确认。</p>}

@@ -46,6 +46,14 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Verification: full Node regression 186 pass, 10 database tests skipped; independent real PostgreSQL task contract run 7 pass; script/API TypeScript checks pass; Standards and Spec reviews have no remaining blockers. Security review drove strict session/input/secret boundaries; PostgreSQL best-practices review drove the list index. No real AI calls or production registration.
 - Next: review-page model selection, submission, progress and explicit result loading. Shared production limits/billing, native vendor transport and production enablement remain deferred. T06 stays in progress.
 
+## Incremental delivery — episode generation review controls (2026-10-07)
+
+- Confirmed-knowledge review now offers explicit tested-mainland model selection/admission, idempotent episode submission, manual status refresh and chapter task history. Generation actions are desktop-only; mobile users can inspect task state and review results.
+- Unknown submission preserves the original request/config/model identifiers, including after 401 and reload/relogin; only explicit reconciliation resubmits the same request intent. URL metadata contains no Key, Session or manuscript. Initial definitive rejection may release the request, but later errors cannot release unknown execution intent.
+- Completed tasks do not automatically load or confirm plans. Explicit loading checks result pointer, generation job, current source/knowledge and active plan; stale results cannot replace review content. Shared busy gates and full source/project/chapter/knowledge keys isolate asynchronous responses.
+- Verification: full Node suite 186 pass, 10 database tests skipped; 31 browser tests pass (six new cases cover success, uncertainty, stale result, expired-session recovery, mobile and disabled service); web TypeScript and Standards/Spec reviews pass. Frontend design skill retained the paper/jade editorial workbench; screenshot inspected locally.
+- Still not delivered: vendor-native episode model transport, production module/worker registration, shared production limits/billing and live model validation. No actual model calls or production enablement; script正文 is not generated. T06 remains in progress.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.

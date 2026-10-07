@@ -1,5 +1,52 @@
 import { expect, test, type Page } from "@playwright/test";
 const origin = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
+for (const mode of ["success","uncertain","stale","expired","mobile","disabled"]) test(`拆集任务生成并明确载入：${mode}`, async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  const task = { id: "episode-task",projectId: "p",chapterId: "c",input: { stage: "script",resultType: "episodePlan",sourceVersionId: "s",upstreamConfirmedVersionIds: ["candidate"] },state: "queued",reason: null,result: null as unknown };
+  let posts = 0, requestId = "";
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan-tasks**`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    if (r.request().method() === "POST") {
+      posts++; const b = r.request().postDataJSON(); expect(Object.keys(b).sort()).toEqual(["configurationVersionId","modelId","requestId"]);
+      expect(b.modelId).toBe("model"); if (requestId) expect(b.requestId).toBe(requestId); else requestId = b.requestId;
+      if (["uncertain","expired"].includes(mode) && posts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+      if (mode === "expired" && posts === 2) return r.fulfill({ headers,status: 401,json: { code: "UNAUTHORIZED" } });
+      return r.fulfill({ headers,json: task });
+    }
+    return r.fulfill({ headers,json: r.request().url().includes("availability") ? { available: mode !== "disabled",reason: mode === "disabled" ? "WORKSPACE_TASK_DISABLED" : null } : { tasks: [],nextCursor: null } });
+  });
+  await page.route(`${origin}/episode-plan-tasks/episode-task`,r => r.fulfill({ headers,json: { ...task,state: "succeeded",result: { candidateVersionId: "plan",extractionStatus: "succeeded" } } }));
+  const plan = { id: mode === "stale" ? "newer-plan" : "plan",generationJobId: task.id,projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "candidate",targetDurationSeconds: 180,episodes: [{ id: "e",ordinal: 1,title: "风雨将至",sourceFragmentIds: ["f"],coreEventFactIds: ["event"] }],majorAdaptationProposals: [] };
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { plan,current: true,canReview: true,sourceFragments: [{ id: "f",text: "雨落" }],coreEvents: [{ id: "event",statement: "下雨" }] } }));
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "拆集生成任务" }),desk = page.getByRole("region",{ name: "拆集方案审核" });
+  await panel.getByRole("button",{ name: "读取拆集模型" }).click(); await panel.getByLabel("拆集模型").selectOption("model");
+  if (mode === "disabled") { await expect(panel.getByRole("button",{ name: "生成拆集候选",exact: true })).toBeDisabled(); expect(posts).toBe(0); return; }
+  await expect(panel.getByRole("button",{ name: "生成拆集候选",exact: true })).toBeEnabled(); await panel.getByRole("button",{ name: "生成拆集候选",exact: true }).click();
+  if (["uncertain","expired"].includes(mode)) { await expect(panel.getByLabel("拆集模型")).toBeDisabled(); await panel.getByRole("button",{ name: "核对拆集原提交" }).click(); }
+  if (mode === "expired") {
+    await expect(panel.getByRole("button",{ name: "核对拆集原提交" })).toBeEnabled();
+    await page.reload(); await login(page);
+    const storyTask = page.getByRole("region",{ name: "故事知识任务" });
+    await storyTask.getByLabel("任务编号").fill("task"); await storyTask.getByRole("button",{ name: "读取任务",exact: true }).click();
+    await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+    await panel.getByRole("button",{ name: "核对拆集原提交" }).click();
+  }
+  await panel.getByRole("button",{ name: "刷新拆集状态" }).click();
+  if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 }); await expect(panel.getByRole("button",{ name: "生成拆集候选",exact: true })).toBeHidden(); await expect(panel.getByText(/候选已生成/)).toBeVisible(); }
+  await expect(panel.getByRole("button",{ name: "载入拆集候选" })).toBeEnabled();
+  await expect(desk.getByRole("button",{ name: "确认拆集方案",exact: true })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "载入拆集候选" }).click();
+  if (mode === "stale") { await expect(panel.getByText(/活动方案已变化/)).toBeVisible(); await expect(desk.getByRole("button",{ name: "确认拆集方案",exact: true })).toHaveCount(0); }
+  else await expect(desk.getByRole("button",{ name: "确认拆集方案",exact: true })).toBeEnabled();
+  if (mode === "success") { await panel.scrollIntoViewIfNeeded(); await page.screenshot({ path: "/private/tmp/episode-task-panel.png" }); }
+  expect(posts).toBe(mode === "expired" ? 3 : mode === "uncertain" ? 2 : 1);
+});
 for (const mode of ["owner", "editor", "stale", "empty"]) test(`已确认知识后拆集审核：${mode}`, async ({ page }) => {
   await setup(page);
   const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,POST,OPTIONS" };

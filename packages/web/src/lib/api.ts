@@ -89,7 +89,7 @@ export type StoryKnowledgeVersion = {
 
 type CredentialMode = "none" | "device" | "session";
 export type EpisodePlanView = {
-  plan: { id: string; projectId: string; chapterId: string; sourceVersionId: string; storyBibleVersionId: string; status: "candidate" | "confirmed"; targetDurationSeconds: number; recommendationRationale?: string;
+  plan: { id: string; generationJobId?: string; projectId: string; chapterId: string; sourceVersionId: string; storyBibleVersionId: string; status: "candidate" | "confirmed"; targetDurationSeconds: number; recommendationRationale?: string;
     episodes: Array<{ id: string; ordinal: number; title: string; sourceFragmentIds: string[]; coreEventFactIds: string[] }>;
     majorAdaptationProposals: Array<{ id: string; summary: string; rationale: string; affectedFactIds: string[]; decision?: { outcome: "approved" | "rejected"; reason?: string } }> };
   current: boolean; canReview: boolean; sourceFragments: Array<{ id: string; text: string }>; coreEvents: Array<{ id: string; statement: string }>;
@@ -100,8 +100,16 @@ export type ModelCapabilities = { advanced: boolean; canManage: boolean; provide
 export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: string;
   input: { stage: string; sourceVersionId: string }; state: string; reason: string | null;
   result: { candidateVersionId: string; extractionStatus: string } | null };
+export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  submitEpisodeTask(p: string,c: string,input: { configurationVersionId: string; modelId: string; requestId: string }) { return this.request<EpisodeTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/episode-plan-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  getEpisodeTask(id: string) { return this.request<EpisodeTask>(`/episode-plan-tasks/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
+  listEpisodeTasks(p: string,c: string,cursor: string | null = null) {
+    const query = new URLSearchParams({ limit: "20" }); if (cursor) query.set("cursor",cursor);
+    return this.request<{ tasks: EpisodeTask[]; nextCursor: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/episode-plan-tasks?${query}`,{ method: "GET",cache: "no-store" },"session");
+  }
+  episodeAvailability(p: string,c: string,input: { configurationVersionId: string; modelId: string }) { return this.request<{ available: boolean; reason: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/episode-plan-tasks/availability?${new URLSearchParams(input)}`,{ method: "GET",cache: "no-store" },"session"); }
   getEpisodePlan(projectId: string, chapterId: string) { return this.request<EpisodePlanView>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan`, { method: "GET", cache: "no-store" }, "session"); }
   decideEpisodeAdaptation(projectId: string, chapterId: string, proposalId: string, input: { expectedActiveVersionId: string; decision: "approved" | "rejected"; reason: string }) {
     return this.request<EpisodePlanView["plan"]>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan/proposals/${encodeURIComponent(proposalId)}/decision`, { method: "POST", body: JSON.stringify(input) }, "session");

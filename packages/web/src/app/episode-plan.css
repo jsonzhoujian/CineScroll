@@ -10,4 +10,7 @@
 .episode-proposal{margin:14px 0;padding:18px;border:1px solid var(--line);background:rgba(255,255,255,.45)}
 .episode-proposal label{display:block;margin:14px 0;font-size:12px}.episode-proposal input{display:block;width:100%;margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--sheet)}
 .episode-proposal button+button{margin-left:10px}
+.episode-task{margin:20px 0;padding:18px;border:1px solid var(--line);border-left:3px solid var(--jade);background:rgba(255,255,255,.35)}
+.episode-task label{display:block;margin:12px 0;font-size:12px}.episode-task select{display:block;margin-top:8px;padding:10px;width:100%;max-width:360px;background:var(--sheet);border:1px solid var(--line)}
+.episode-task .text-button{margin-right:14px}.episode-task p{overflow-wrap:anywhere}.episode-task .button{margin:10px 12px 10px 0}
 @media(max-width:720px){.episode-plan-panel{padding:16px}.episode-plan-panel>header{align-items:start;flex-direction:column}.episode-plan-evidence{grid-template-columns:1fr}.episode-plan-evidence section+section{border-left:0;border-top:1px solid var(--line)}}
