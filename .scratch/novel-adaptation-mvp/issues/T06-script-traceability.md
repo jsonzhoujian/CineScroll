@@ -61,6 +61,13 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - Verification: full Node regression 194 passing, 10 skipped; API and script TypeScript checks pass. Transport tests use simulated HTTP, and real domain executor tests cover candidate persistence and invalid-envelope rejection.
 - No real credentials were read, works sent externally, or production transport enabled. Mainland routing labels do not prove vendor data residency. Production assembly, billing/limits and authorized live-quality verification remain outstanding; T06 stays in progress. Plan: `docs/plans/2026-10-07-episode-plan-transport.md`.
 
+## Incremental delivery — controlled episode production composition (2026-10-07)
+
+- Added independent default-off episodeTasks configuration, BYOK/same-database TLS/trusted route/workspace allowlist checks, authenticated task and review modules, native transport and isolated Worker registration.
+- Read-only startup preflight requires shared task capacity/policy guards plus episode table forced RLS, write privileges, immutable/confirmation triggers and scan indexes. No migrations or grants run during application startup. Both Workers finish stopping before database pools close.
+- Verification: full regression 196 passing and 10 skipped; API TypeScript passes. The extended TLS production test separately passes on a newly created disposable local PostgreSQL cluster with restricted login and simulated HTTP: knowledge confirmation → episode task → candidate → explicit confirmation → restart read, disabled-trigger rejection and dual Worker shutdown. Test server stopped afterward.
+- No deployed switch enabled or real Key/model/works used. Vendor residency, real semantic quality, HTTP abuse controls and AI credit settlement remain rollout work. T06 stays in progress. Plan: docs/plans/2026-10-07-episode-plan-production.md.
+
 ## Acceptance criteria
 
 - Users select 1/3/5 minutes and confirm AI-recommended episode splits with source ranges and core events.

@@ -19,6 +19,15 @@ import { StoryKnowledgeWorkerModule } from "./story-knowledge-worker-module.ts";
 import { StoryKnowledgeTaskApiModule } from "./story-knowledge-task-api.ts";
 import { DeepSeekStoryKnowledgeModel } from "./deepseek-story-model.ts";
 import { assertStoryTaskDatabase } from "./story-task-database-readiness.ts";
+import { ScriptService } from "@novel-adaptation/script";
+import { PostgresScriptRepository } from "@novel-adaptation/script/postgres-episode-plan";
+import { EpisodePlanApiModule, EpisodePlanUpstreamReader } from "./episode-plan-api.ts";
+import { EpisodePlanTaskApiModule } from "./episode-plan-task-api.ts";
+import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "./episode-plan-task-executor.ts";
+import { EpisodePlanTaskDispatcher } from "./episode-plan-task-dispatcher.ts";
+import { EpisodePlanWorkerModule } from "./episode-plan-worker-module.ts";
+import { DeepSeekEpisodePlanModel } from "./deepseek-episode-model.ts";
+import { assertEpisodeTaskDatabase } from "./episode-task-database-readiness.ts";
 
 import { HmacSessionManager, IdentityService } from "@novel-adaptation/identity";
 import {
@@ -39,6 +48,7 @@ import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModu
 export interface ProductionApiConfig {
   modelSettings?: ProductionModelSettingsConfig;
   storyTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
+  episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   databaseUrl: string;
   databaseTlsCa: string;
   sessionSecret: string;
@@ -83,6 +93,18 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   config = structuredClone(config);
   assertProductionConfig(config);
   const modelKey = validateModelConfig(config);
+  if (config.episodeTasks !== undefined && config.episodeTasks.enabled !== false) {
+    try {
+      const tasks = config.episodeTasks, models = config.modelSettings;
+      if (tasks.enabled !== true || models?.enabled !== true || models.routes.deepseek !== "mainland" ||
+          !Array.isArray(tasks.workspaceIds) || tasks.workspaceIds.length === 0 || tasks.workspaceIds.length > 100 ||
+          tasks.workspaceIds.some(id => typeof id !== "string" || !id.trim() || id.length > 256 || /[\r\n]/.test(id)) ||
+          new Set(tasks.workspaceIds).size !== tasks.workspaceIds.length ||
+          (tasks.intervalMs !== undefined && (!Number.isInteger(tasks.intervalMs) || tasks.intervalMs < 100 || tasks.intervalMs > 60000))) throw new Error();
+      const main = new URL(config.databaseUrl), model = new URL(models.databaseUrl);
+      if (main.hostname !== model.hostname || (main.port || "5432") !== (model.port || "5432") || main.pathname !== model.pathname || config.databaseTlsCa !== models.databaseTlsCa) throw new Error();
+    } catch { throw new Error("INVALID_EPISODE_TASK_CONFIG"); }
+  }
   if (config.storyTasks !== undefined && config.storyTasks.enabled !== false) {
     try {
       const tasks = config.storyTasks, models = config.modelSettings;
@@ -155,6 +177,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
     });
   let modelPool: Pool | undefined;
   let worker: StoryKnowledgeTaskWorker | undefined;
+  let episodeWorker: StoryKnowledgeTaskWorker | undefined;
   let apiModule: DynamicModule = projectModule;
   if (modelKey && config.modelSettings?.enabled === true) {
     const value = config.modelSettings;
@@ -217,12 +240,38 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         onModuleInit: () => assertStoryTaskDatabase(restrictedPool, taskConfig.workspaceIds),
       } });
     }
+    if (config.episodeTasks?.enabled === true) {
+      const taskConfig = config.episodeTasks;
+      const projects = new PostgresProjectImportRepository(restrictedPool);
+      const knowledge = new StoryKnowledgeService({ repository: new PostgresStoryKnowledgeRepository(restrictedPool), projectAccessReader: projects,
+        sourceReader: { async findSourceVersion(actor, projectId, chapterId, sourceVersionId) {
+          const chapter = await projects.findChapter(actor,projectId,chapterId);
+          const source = chapter?.versions.find(version => version.id === sourceVersionId);
+          return source ? { id: source.id,fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
+        } },idGenerator: () => `skv_${randomUUID()}`,clock: () => new Date() });
+      const script = new ScriptService({ repository: new PostgresScriptRepository(restrictedPool),
+        upstreamReader: new EpisodePlanUpstreamReader(projects,knowledge),accessReader: projects,
+        idGenerator: () => `epv_${randomUUID()}`,clock: () => new Date() });
+      const repository = new PostgresModelTaskRepository(restrictedPool);
+      const tasks = new ModelTaskService({ settings,repository,contextReader: new EpisodePlanTaskContext(projects,knowledge),
+        episodeAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
+        generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `job_${randomUUID()}` });
+      const executor = new EpisodePlanTaskExecutor({ tasks,projects,knowledge,script,
+        model: new DeepSeekEpisodePlanModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
+      episodeWorker = new StoryKnowledgeTaskWorker({ dispatcher: new EpisodePlanTaskDispatcher({ repository,executor }),
+        enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
+      apiModule.imports!.push(EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks }),
+        EpisodePlanApiModule.register({ sessionVerifier: sessions,script,projects,knowledge }),EpisodePlanWorkerModule.forWorker(episodeWorker));
+      apiModule.providers!.push({ provide: "EPISODE_TASK_DATABASE_STARTUP_CHECK",useValue: {
+        onModuleInit: () => assertEpisodeTaskDatabase(restrictedPool,taskConfig.workspaceIds),
+      } });
+    }
   }
   let closing: Promise<void> | undefined;
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await worker?.stop(); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop()]); }
       finally { await Promise.all([pool.end(), modelPool?.end()]); }
     })(),
   };
