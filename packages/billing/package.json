@@ -2,7 +2,7 @@
   "name": "@novel-adaptation/billing",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts", "./postgres-ledger": "./src/postgres-ledger.ts", "./database-readiness": "./src/database-readiness.ts", "./internal-access": "./src/internal-access.ts", "./server-assembly": "./src/server-assembly.ts", "./verified-evidence": "./src/verified-evidence.ts" },
+  "exports": { ".": "./src/index.ts", "./postgres-ledger": "./src/postgres-ledger.ts", "./database-readiness": "./src/database-readiness.ts", "./internal-access": "./src/internal-access.ts", "./server-assembly": "./src/server-assembly.ts", "./verified-evidence": "./src/verified-evidence.ts", "./evidence-material-repository": "./src/evidence-material-repository.ts" },
   "scripts": { "test": "node --test test/*.test.ts", "typecheck": "tsc --project tsconfig.json" },
   "devDependencies": { "@types/node": "^26.6.2", "@types/pg": "^8.23.1", "pg": "^8.23.0", "typescript": "^7.0.2" }
 }

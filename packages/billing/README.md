@@ -31,6 +31,8 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./evidence-material-repository`定义可信服务器低层EvidenceMaterialRepository与内存实现。append/get/read按工作室+证据ID保存资料副本和SHA256规范化指纹（对象键顺序忽略、数组顺序保留、前序关系参与）；同内容幂等，不同内容冲突。补证必须指向同工作室既存记录，保持绑定、计费快照和执行ID，不自引用、不覆盖历史。append复用只读适配器检查结构/判据，内部放行只用于schema验证，绝非来源认证或写权限授权。禁止客户端直连。没有持久化、跨进程并发、跨证据结果唯一性、写权限、容量/留存策略或生产接线；不能作为已可信的生产来源。
+
 `./verified-evidence`提供createVerifiedSettlementEvidenceReader，注入BillingAccess及EvidenceMaterialSource。source必须是服务器拥有的一致、唯一、不可变资料源，不是客户端或模型响应；适配器核验formatVersion=1资料包的固定绑定、执行关闭/未知、原始持久化结果和版本化校验/计价，再输出严格九字段。FORBIDDEN/NOT_FOUND/UNAVAILABLE/CONFLICT不泄露源错误；账本调用仍统一INVALID_EVIDENCE。支持成功/明确失败/未知，不截断超报价金额。资料源真实性、质量/计价规则批准、证据写入幂等/指纹及持久化仍未实现；不存在生产默认可信来源。本轮仅授权测试夹具与内存账本验证。
 
 `./server-assembly`提供createServerCreditLedger：先校验内部授权和依赖，再以受检工厂初始化PostgreSQL仓储，返回固定serviceId的冻结窄接口（工作室+领域命令/查询），不暴露仓储或授权器。策略在异步前复制，Pool.connect及证据read方法绑定固定，但依赖自身内部状态仍由可信宿主管理。失败不返回服务，Pool生命周期归宿主。独立装配不代表已经挂载生产入口，不验证成员身份/TLS，不迁移、不读取环境变量、不接真实扣费。
