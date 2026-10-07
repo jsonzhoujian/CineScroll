@@ -4,7 +4,7 @@
 
 ## 使用边界
 
-- 必须注入 BillingAccess，按可信服务身份、工作室和操作决定权限。serviceId本身不是认证凭证，不得直接由HTTP请求构造Actor；真实身份/权限适配器尚未交付。
+- 必须注入 BillingAccess，按可信服务身份、工作室和操作决定权限。serviceId本身不是认证凭证，不得直接由HTTP请求构造Actor。`./internal-access`提供createInternalBillingAccess：由服务器装配单个serviceId与显式workspaceId/operations列表，无通配符、未知操作默认拒绝，非法配置净化失败；配置复制后外部修改不生效，更新须重新装配。不同服务分别注入适配器，禁止根据请求的serviceId选择授权器。它仅在可信同进程内提供授权，不认证调用者，不支持跨进程凭证、动态撤销或公开成员授权；实际生产装配仍未交付。
 - grant固定grantId和来源；reserve固定报价、源版本、责任和最多100个唯一单元。平台单元预留正整数，BYOK单元预留0且不写零金额积分流水。
 - settle只接受证据ID，通过可信SettlementEvidenceReader读取严格结构，校验工作室/任务/单元/源版本、结果指针及规则版本。这个校验不证明外部生成结果真实或质量合格；实际证据服务尚未交付。
 - 固定eventId + 字段顺序无关的规范化内容指纹用于重放。不同内容拒绝；相同grantId/taskId和不同事件不能再次授予/冻结；证据ID不得变更内容或通过新事件重复应用。每个单元最多关闭一次。
