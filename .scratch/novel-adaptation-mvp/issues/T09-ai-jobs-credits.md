@@ -80,6 +80,10 @@ EVIDENCE_ATOMIC_PUBLICATION定义workspace+requestId共享命名空间、规范�
 
 evidencePublicationId/指纹、EvidencePublicationRepository及内存复合记录、EvidencePublicationService支持固定服务专用授权、同请求重放/冲突、补证关联、最终ID重验与四项一次保存。非法资料/审计无残留，权限撤销拒绝重放查询，输出副本隔离；明确prepare为封存来源测试夹具。无真实屏障/Postgres发布/生产门禁/收费。下一步来源屏障与事务接口设计。
 
+## 增量：来源封存接口与内存规则
+
+用户确认registerSource/sealCollection/requireCurrentSeal/readSeal。内存夹具预置固定集合，版本幂等/冲突、observation新代、旧代当前断言拒绝、历史读取及final异常隔离有测试；有界容量且超限不截断。final仅保守结论子集，输入是来源测试声明，隔离无持久化或裁决；点时断言不组成发布事务。未接真实任务/模型/数据库/收费，下一步可信来源与共同事务适配接口设计。
+
 ## 增量：同数据库封存设计（仅文档）
 
 用户选择A，EVIDENCE_SOURCE_SEAL/ADR0004明确集合头/不可变来源清单、observation与final、迟到结果新代或异常隔离、所有Writer共同屏障、四项发布事务及关联读取门禁，附14项未来验收。未写代码/迁移，不接真实来源收费。下一步来源封存接口与内存规则。

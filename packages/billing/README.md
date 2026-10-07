@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./evidence-source-seal`提供EvidenceSourceSealRepository四个接口及InMemoryEvidenceSourceSealRepository规则夹具。集合通过构造器预置固定绑定，不从空查询隐式创建。登记版本幂等，observation后新资料推进代；旧清单不可变可历史读取，requireCurrentSeal拒绝用于新请求的旧代。final仅接受关闭无结果失败或唯一结果且有效校验/计价齐全的成功；新事实进入独立内存隔离集合，同版本异内容也保留，不加入原final或改账本。隔离重放保持原代，无裁决/读取/持久化接口。
+
+每实例最多64个集合，每集合来源与隔离资料共256项，超限拒绝而非截断；调用方须保留未登记资料。登记/封存同步变更后返回Promise，测试仅证明同进程调用顺序，不证明数据库锁或跨进程并发。来源与关闭状态是测试调用方声明，无生产身份/真实性/关闭证明。requireCurrentSeal不跨调用持锁，绝不能直接串接现有发布作为事务屏障；生产接口/Writer/发布与读取门禁尚待实施，S01～S14不视为全部验收。细节见[内存规则实施计划](../../docs/plans/2026-10-07-evidence-source-seal-memory.md)。
+
 `./evidence-publication`提供协议ID/指纹函数、EvidencePublicationRepository接口及内存复合记录实现，EvidencePublicationService固定服务身份并在发布/补证/查询/重放前检查专用权限。请求映射、最终ID重验资料、审计和回执一次Map.set共同保存；并发同内容返回原回执，引用/操作/服务冲突拒绝，补证前序同工作室/快照/执行。输入/返回副本隔离，异常脱敏。低层仓储只供可信服务器夹具，不提供成员授权。
 
 这只是内存规则实现，不持久化、不跨进程、不支持生产来源屏障/发布读取门禁/Outbox或扣费。prepare端口是明确的已封存来源测试夹具，不能接收HTTP资料或直接接点时preflight草稿；sourceSealId字符串不证明真实封存。服务授权端口仍由宿主提供，跨进程身份/授权策略装配未交付。lookup仅允许同固定serviceId和指定操作的记录；生产审计留存/总容量/来源证明仍待实现。
