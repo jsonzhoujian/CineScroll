@@ -44,6 +44,10 @@ createServerCreditLedger组合内部授权、受检PostgreSQL仓储及账本服�
 
 SETTLEMENT_EVIDENCE.md定义可信任务/计费快照/执行记录/原始结果/版本化校验与计价来源，明确成功、失败、未知依据及18项未来验收。现有SettlementEvidenceReader仍为严格九字段投影，不把额外审计资料直接传给账本。unknown补证追加新证据/事件，终态冲突不改流水；客户端状态、供应商成本、超时或缺候选均不能直接用于消费/释放。未实现证据适配器、迁移或真实扣费；计价/质量/单元规则仍需批准。
 
+## 增量：只读证据验证与投影
+
+createVerifiedSettlementEvidenceReader注入可信EvidenceMaterialSource及服务授权，核验工作室/任务/单元/原文/上游、执行记录、唯一原始结果及报价版本，输出严格九字段。明确失败需关闭执行路径，unknown不得由读取故障伪造；超报价保留金额，错误分类脱敏。只用测试夹具与内存账本，不接数据库证据源、现有任务或真实扣费；来源真实性/一致性/不可变性及已批准质量/价格规则仍由未来source保证。下一步不可变资料仓储边界。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.

@@ -31,6 +31,8 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./verified-evidence`提供createVerifiedSettlementEvidenceReader，注入BillingAccess及EvidenceMaterialSource。source必须是服务器拥有的一致、唯一、不可变资料源，不是客户端或模型响应；适配器核验formatVersion=1资料包的固定绑定、执行关闭/未知、原始持久化结果和版本化校验/计价，再输出严格九字段。FORBIDDEN/NOT_FOUND/UNAVAILABLE/CONFLICT不泄露源错误；账本调用仍统一INVALID_EVIDENCE。支持成功/明确失败/未知，不截断超报价金额。资料源真实性、质量/计价规则批准、证据写入幂等/指纹及持久化仍未实现；不存在生产默认可信来源。本轮仅授权测试夹具与内存账本验证。
+
 `./server-assembly`提供createServerCreditLedger：先校验内部授权和依赖，再以受检工厂初始化PostgreSQL仓储，返回固定serviceId的冻结窄接口（工作室+领域命令/查询），不暴露仓储或授权器。策略在异步前复制，Pool.connect及证据read方法绑定固定，但依赖自身内部状态仍由可信宿主管理。失败不返回服务，Pool生命周期归宿主。独立装配不代表已经挂载生产入口，不验证成员身份/TLS，不迁移、不读取环境变量、不接真实扣费。
 
 `node --test packages/billing/test/*.test.ts`，`pnpm --filter @novel-adaptation/billing typecheck`。测试固定积分示例不代表产品价格；授权与证据读取器使用测试夹具，不冒充生产身份/证据验证。
