@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./v2-source-bundle`提供validateV2SourceBundle(serviceId,command,bundle)：规则夹具核验固定绑定、来源版本前序、完整manifest/指纹、关闭栅栏与资料、全部原始结果、校验/计价匹配，并用最终v2 ID重验资料。输出仅准备结果，无发布回执；未知、未发送失败、非法响应、校验失败和BYOK判据分别保留，BYOK计价必须0。
+
+严格JSON副本隔离与有界容量详见[来源包夹具说明](../../docs/plans/2026-10-07-v2-source-bundle-fixture.md)。不认证生产服务、核验真实业务行/当前来源头或前序发布关联；完整清单仅在该可信测试输入范围内验证。调用者自报一致指纹不证明真实来源，不可直接串接append/commit或用于收费。所有异常净化INVALID_SOURCE_BUNDLE，无真实模型/DB/HTTP接线。
+
 `./evidence-publication-v2`提供prepareV2PublicationIdentity(serviceId,command)及V2PublicationCommand/Identity类型，仅严格准备身份、请求指纹及evidenceId/auditId。serviceId来自宿主参数，命令夹带身份/资料/金额/未知字段拒绝；必填定位字段、嵌套引用、封存期望和前序规则校验，先拒绝非JSON对象/访问器/符号字段再复制输入。V2PublicationProtocolError仅暴露INVALID_PUBLICATION。固定向量、字段乱序、封存字段变化、输入输出副本隔离及v1旧ID有测试。
 
 该函数不验证工作室成员/服务授权、来源真实性、seal是否当前、前序是否存在或协议版本，也不生成发布回执或登记共享请求键。不同封存指纹但相同请求得到相同ID，由未来仓储裁定冲突；不能仅凭ID/指纹宣称发布或跨版防双发。完整来源包校验、共同事务与读取门禁尚未实现。算法规范见[v2契约](../../docs/contracts/EVIDENCE_PUBLICATION_V2.md)。v1模块不改，不接HTTP/真实模型/数据库/收费。

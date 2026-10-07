@@ -100,6 +100,10 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 用户确认prepareV2PublicationIdentity(serviceId,command)，严格验证身份/封存期望/嵌套引用及前序，注入宿主身份、返回规范指纹与evidenceId/auditId，固定向量/乱序/副本及拒绝测试。v1源码不变。尚无来源包校验、发布回执/共享键/共同事务/HTTP/数据库/收费；下一步完整来源包校验夹具。
 
+## 增量：v2来源包规则夹具
+
+用户确认validateV2SourceBundle，固定binding/报价、来源前序、全成员清单、关闭资料/栅栏、原始结果/校验/计价及BYOK零额度规则有测试；复制前严格JSON校验、有界容量、净化错误。历史validation/pricing/closure逐版本核验，不能用新版隐藏旧非法引用/金额/关闭关系；固定报价下矛盾计价拒绝。返回准备结果，不认证来源/查业务行/核验当前头或前序存在性，不接DB/发布/收费。下一步共同事务规则与共享请求登记。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
