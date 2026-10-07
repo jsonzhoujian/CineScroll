@@ -56,6 +56,10 @@ EvidenceMaterialRepository及内存实现支持append/get/read，工作室+证�
 
 PostgresEvidenceMaterialRepository与0002迁移提供workspace+ID唯一不可变资料、并发重放/冲突、前序FK及绑定/快照/执行守卫；forced RLS、novel_evidence只读/追加、历史改删触发器。读取重验规范化指纹与资料，错误脱敏。隔离测试库验证持久化重启、双池并发、补证回滚、RLS/权限及投影链路；不自动迁移业务库、不接收费。单资料2MB，总容量/留存未定；来源真实性与写授权未交付。下一步只读启动预检。
 
+## 增量：证据数据库只读预检
+
+assertEvidenceMaterialDatabase/createCheckedEvidenceMaterialRepository检查login/effective role危险属性/成员资格、最小表列权限、强制RLS/单一scope策略、列/主键/约束及guard函数定义。失败EVIDENCE_DATABASE_NOT_READY，不返回仓储，不授权/修复/写资料。隔离PG16漂移测试逐项恢复，不修改业务库。指纹绑定0002/PG16，TLS/真实性/生产装配仍延期；下一步受检仓储与投影受控装配。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.

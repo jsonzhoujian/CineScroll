@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./evidence-database-readiness`提供assertEvidenceMaterialDatabase及createCheckedEvidenceMaterialRepository。PG16只读事务检查实际登录/novel_evidence角色及继承、表/列权限与schema创建权、非owner、强制RLS/单一严格策略、五列及有效主键/必要约束定义、guard事件/函数源/语言/搜索路径/执行权。失败统一EVIDENCE_DATABASE_NOT_READY，不返回受检仓储，不迁移/授权/修复/写业务资料。受检工厂先绑定Pool.connect，Pool仍由宿主管理；低层构造器不预检，未来受控装配须使用受检入口。指纹与0002迁移/PG16绑定，更新迁移须同步审核预检常量；仅检查当时状态，不证明TLS、真实性、写服务身份或管理员后续DDL。
+
+预检测试使用TEST_EVIDENCE_READINESS_DATABASE_URL，仅可丢弃管理员测试库；独立运行或全套`--test-concurrency=1`，不与DDL测试并行。暂时漂移均由测试管理员恢复，应用预检不修复。
+
 `./postgres-evidence`提供PostgresEvidenceMaterialRepository：工作室+ID唯一键下并发幂等保存不可变JSON资料，读取再次核验结构及规范化指纹。同工作室前序FK及触发器核验绑定/固定快照/执行ID，forced RLS及独立novel_evidence角色只允许SELECT/INSERT，触发器拒绝UPDATE/DELETE。应用和数据库单资料上限2MB，数据库JSON格式化可能更早触达；超限拒绝。每次事务5秒语句超时，固定pg_catalog搜索路径和本地app.evidence_workspace_id上下文，Pool生命周期归宿主。错误脱敏为INVALID_MATERIAL/CONFLICT/PREDECESSOR_NOT_FOUND/STORAGE_UNAVAILABLE。
 
 可信管理员手动应用0002_evidence_material.sql，运行时不迁移。角色上下文不是身份认证；禁止用户直连、控制上下文或仓储写入。部署仍需受限非owner登录、校验TLS/池配置与专门启动预检。数据库不重现全部资料/质量/价格校验或来源真实性；合法形状的SQL资料仍不当然可信。真实写服务、跨证据原始结果唯一性、生产接线、恢复扫描、备份/留存和总容量策略均未交付。
