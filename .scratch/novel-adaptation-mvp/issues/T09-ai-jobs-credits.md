@@ -76,6 +76,10 @@ createEvidenceWritePreflight固定服务/工作室publish与supplement专用权�
 
 EVIDENCE_ATOMIC_PUBLICATION定义workspace+requestId共享命名空间、规范化指纹、确定性最终ID、授权重放与四项原子保存（请求/资料/审计/回执），含14项未来验收。来源必须有事务屏障或不可变封存证明，点时isCurrent不够；裸资料不自动published，生产读取门禁需后续升级。未改代码/DB，不启用收费。下一步协议基础/原子仓储接口及内存规则夹具。
 
+## 增量：发布协议与内存原子规则
+
+evidencePublicationId/指纹、EvidencePublicationRepository及内存复合记录、EvidencePublicationService支持固定服务专用授权、同请求重放/冲突、补证关联、最终ID重验与四项一次保存。非法资料/审计无残留，权限撤销拒绝重放查询，输出副本隔离；明确prepare为封存来源测试夹具。无真实屏障/Postgres发布/生产门禁/收费。下一步来源屏障与事务接口设计。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.

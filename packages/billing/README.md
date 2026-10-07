@@ -31,6 +31,10 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./evidence-publication`提供协议ID/指纹函数、EvidencePublicationRepository接口及内存复合记录实现，EvidencePublicationService固定服务身份并在发布/补证/查询/重放前检查专用权限。请求映射、最终ID重验资料、审计和回执一次Map.set共同保存；并发同内容返回原回执，引用/操作/服务冲突拒绝，补证前序同工作室/快照/执行。输入/返回副本隔离，异常脱敏。低层仓储只供可信服务器夹具，不提供成员授权。
+
+这只是内存规则实现，不持久化、不跨进程、不支持生产来源屏障/发布读取门禁/Outbox或扣费。prepare端口是明确的已封存来源测试夹具，不能接收HTTP资料或直接接点时preflight草稿；sourceSealId字符串不证明真实封存。服务授权端口仍由宿主提供，跨进程身份/授权策略装配未交付。lookup仅允许同固定serviceId和指定操作的记录；生产审计留存/总容量/来源证明仍待实现。
+
 未来请求幂等与原子发布规则见[EVIDENCE_ATOMIC_PUBLICATION](../../docs/contracts/EVIDENCE_ATOMIC_PUBLICATION.md)：工作室+请求身份、固定指纹/最终证据ID、请求映射/资料/审计/回执共同事务及来源一致性屏障。仅契约，当前预核验草稿/append/只读资料服务不提供该发布能力或生产读取门禁。
 
 `./evidence-write-preflight`提供createEvidenceWritePreflight：固定服务器身份和工作室publish/supplement专用权限，verifyPublish/verifySupplement仅接受requestId及版本化来源引用（补证含predecessorId）。返回核验资料草稿，不append、分配持久化发布身份或提供回执。读取来源前拒绝越权/夹带资料和金额；校验实际引用、complete=true、任务/执行/结果/计价标识、既有判据及前序快照，末尾isCurrent复查snapshotToken。配置/依赖方法固定，输入和输出副本隔离，错误脱敏。

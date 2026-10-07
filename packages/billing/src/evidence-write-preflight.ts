@@ -23,7 +23,7 @@ function keys(value: unknown, expected: string[]): value is Record<string, unkno
   return !!value && typeof value === "object" && !Array.isArray(value) && Reflect.ownKeys(value).length===expected.length
     && expected.every(key => Object.hasOwn(value,key));
 }
-function validReferences(value: unknown): value is EvidenceSourceReferences {
+export function isEvidenceSourceReferences(value: unknown): value is EvidenceSourceReferences {
   if (!keys(value,["task","snapshot","execution","result","validation","pricing"])) return false;
   return ["task","snapshot","execution","result","validation","pricing"].every(key => {
     const ref = value[key];
@@ -52,7 +52,7 @@ export function createEvidenceWritePreflight(options: { policy: EvidenceWritePol
     try {
       request=structuredClone(input);
       if (!keys(request,operation==="publish" ? ["requestId","references"] : ["requestId","references","predecessorId"])
-        || !validId(request.requestId) || !validReferences(request.references)
+        || !validId(request.requestId) || !isEvidenceSourceReferences(request.references)
         || operation==="supplement" && !validId(request.predecessorId)) throw new Error();
     } catch { throw new EvidenceWritePreflightError("INVALID_REQUEST"); }
     let raw: unknown;
@@ -62,7 +62,7 @@ export function createEvidenceWritePreflight(options: { policy: EvidenceWritePol
     let material: Record<string, unknown>, token: string;
     try {
       if (!keys(raw,["material","references","snapshotToken","complete"]) || raw.complete!==true || !validId(raw.snapshotToken)
-        || !validReferences(raw.references) || canonicalEvidenceValue(raw.references)!==canonicalEvidenceValue(request.references)) throw new Error();
+        || !isEvidenceSourceReferences(raw.references) || canonicalEvidenceValue(raw.references)!==canonicalEvidenceValue(request.references)) throw new Error();
       material=(await prepareEvidenceMaterial(workspaceId,raw.material,null)).material as Record<string,unknown>;
       token=raw.snapshotToken;
       const binding=material.binding as Record<string,unknown>, execution=material.execution as Record<string,unknown>;
