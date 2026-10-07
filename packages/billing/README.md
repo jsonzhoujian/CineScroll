@@ -31,6 +31,8 @@ InMemoryCreditLedgerRepository仅为规则验证与测试使用，不持久化�
 
 ## 验证
 
+`./server-assembly`提供createServerCreditLedger：先校验内部授权和依赖，再以受检工厂初始化PostgreSQL仓储，返回固定serviceId的冻结窄接口（工作室+领域命令/查询），不暴露仓储或授权器。策略在异步前复制，Pool.connect及证据read方法绑定固定，但依赖自身内部状态仍由可信宿主管理。失败不返回服务，Pool生命周期归宿主。独立装配不代表已经挂载生产入口，不验证成员身份/TLS，不迁移、不读取环境变量、不接真实扣费。
+
 `node --test packages/billing/test/*.test.ts`，`pnpm --filter @novel-adaptation/billing typecheck`。测试固定积分示例不代表产品价格；授权与证据读取器使用测试夹具，不冒充生产身份/证据验证。
 
 实库测试使用 TEST_BILLING_DATABASE_URL（仅可丢弃管理员测试库）：`node --test packages/billing/test/postgres-ledger.test.ts`。未配置时显式跳过；隔离运行并要求临时测试库允许随机受限登录无密码连接，绝不能把此测试策略应用于部署。测试手动应用迁移，创建/删除随机登录角色，保留随机工作室夹具，模型/真实Key/业务库完全不参与。验证包含关闭并重建连接池后读回、双池并发、RLS/最小权限、回滚、历史保护及SQL非法单元拒绝。

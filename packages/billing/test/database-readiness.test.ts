@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { assertCreditLedgerDatabase, createCheckedCreditLedgerRepository } from "../src/database-readiness.ts";
+import { createServerCreditLedger } from "../src/server-assembly.ts";
 
 test("账本初始化连接故障拒绝且不泄露数据库信息", async () => {
   const pool = { connect: async () => { throw new Error("private-connection-secret"); } };
@@ -25,6 +26,34 @@ test("账本只读预检放行健康受限登录并拒绝迁移/权限漂移，�
     await admin.query(`create role ${extra} nologin`);
     const repository = await createCheckedCreditLedgerRepository(pool);
     assert.deepEqual(await repository.read(`unused_${suffix}`),{ revision: 0,entries: [],tasks: [],events: [],evidence: [] });
+    const workspace = `assembly_${suffix}`;
+    const policy = { serviceId: "assembly", grants: [{ workspaceId: workspace, operations: ["read", "grant", "reserve", "settle"] as const }] };
+    const evidenceReader = { read: async () => ({ id: "evidence", workspaceId: workspace, taskId: "task", unitId: "unit", sourceVersionId: "source",
+      outcome: "succeeded", amount: 50, resultVersionId: "result", ruleVersion: "v1" }) };
+    const hostPool = { connect: async () => {
+      policy.serviceId = "changed"; policy.grants[0]!.workspaceId = "changed";
+      hostPool.connect = async () => { throw new Error("changed-pool"); };
+      evidenceReader.read = async () => { throw new Error("changed-evidence"); };
+      return pool.connect();
+    } };
+    const ledger = await createServerCreditLedger({
+      pool: hostPool,
+      policy, evidenceReader, clock: () => new Date("2026-10-07T00:00:00Z"),
+    });
+    const grant = { eventId: "g1", grantId: "g", amount: 100, source: "fixture" };
+    await ledger.grant(workspace, grant);
+    await ledger.grant(workspace, grant);
+    await ledger.reserve(workspace, { eventId: "r1", taskId: "task", projectId: "project", chapterId: "chapter", sourceVersionId: "source",
+      quoteId: "quote", priceVersion: "v1", responsibility: "platform", units: [{ id: "unit", reserved: 60 }] });
+    assert.deepEqual(await ledger.balance(workspace), { available: 40, reserved: 60, consumed: 0, granted: 100 });
+    assert.equal((await ledger.task(workspace, "task")).units[0]!.state, "reserved");
+    assert.deepEqual((await ledger.entries(workspace)).map(entry => entry.serviceId), ["assembly", "assembly"]);
+    await assert.rejects(() => ledger.grant("changed", grant), { code: "FORBIDDEN" });
+    await assert.rejects(() => ledger.settle("changed", { eventId: "s1", taskId: "task", unitId: "unit", evidenceId: "evidence" }), { code: "FORBIDDEN" });
+    assert.deepEqual(await ledger.balance(workspace), { available: 40, reserved: 60, consumed: 0, granted: 100 });
+    await ledger.settle(workspace, { eventId: "s1", taskId: "task", unitId: "unit", evidenceId: "evidence" });
+    assert.deepEqual(await ledger.balance(workspace), { available: 50, reserved: 0, consumed: 50, granted: 100 });
+    assert.equal(Object.isFrozen(ledger), true);
     await assert.rejects(() => assertCreditLedgerDatabase(admin),{ message: "BILLING_DATABASE_NOT_READY" });
     const broken = async (change: string,restore: string) => {
       await admin.query(change);

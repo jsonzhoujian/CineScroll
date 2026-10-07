@@ -36,6 +36,10 @@ Operate every AI stage reliably with resumable background work, transparent cred
 
 用户批准方案A，createInternalBillingAccess绑定单个可信服务器配置serviceId，以明确工作室/操作列表默认拒绝。配置严格校验和复制，错误净化；公开授权边界及账本集成测试验证冒充其他服务、越权操作不会变更余额/流水。不新增HTTP、远程凭证或真实扣费。同进程装配是信任根，不得由请求选择授权器；跨进程认证仍未交付。下一步受控装配受检仓储与内部授权。
 
+## 增量：受控服务器装配
+
+createServerCreditLedger组合内部授权、受检PostgreSQL仓储及账本服务。配置失败/预检失败不返回服务，固定服务身份，仅提供工作室+命令/查询接口；Pool.connect/证据read在异步前绑定。隔离PG16验证重放、冻结、权限隔离及配置/依赖方法修改。宿主管理Pool；无HTTP、生产挂载或真实扣费。下一步明确可信结算证据适配边界，任务共同事务仍待交付。
+
 ## Acceptance criteria (original scope, unchanged)
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
