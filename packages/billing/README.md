@@ -90,4 +90,4 @@ EvidenceWriteSource.load必须来自可信宿主：负责验证来源服务身�
 
 `./evidence-source-database-readiness` 导出 `assertEvidenceSourceDatabase(pool)`，返回void或净化的 `EVIDENCE_SOURCE_DATABASE_NOT_READY`。仅PG16封闭草稿目录：角色/权限、四表精确形状、RLS默认拒绝、约束/索引、保护函数/触发器。不会返回读写仓储、检查业务资料或运行迁移。宿主须提供pg兼容Pool，失败调用绑定的`release(true)`销毁会话；宿主管理池/TLS/登录生命周期。目录查询使用只读事务、5秒语句时限，未实现整体/池等待期限。
 
-独立[SQL草稿](../../docs/sql-drafts/evidence-source-d1a.sql)不在migrations目录，未执行；无数据读写授权/写函数/业务身份映射。模拟目录结果仅验证拒绝流程，真实SQL/目录表达式/权限需另批隔离库核实。[边界说明](../../docs/plans/2026-10-08-evidence-source-d1a.md)。
+独立[SQL草稿](../../docs/sql-drafts/evidence-source-d1a.sql)不在migrations目录；已另批在新建隔离PG16.14验证，但未部署。无数据读写授权/写函数/业务身份映射。[边界说明](../../docs/plans/2026-10-08-evidence-source-d1a.md)及[实库记录](../../docs/plans/2026-10-08-evidence-source-d1a-postgres-validation.md)。实库入口`test/evidence-source-database-readiness-postgres.test.ts`需TEST_SOURCE_D1A_DATABASE_URL，仅接受新建`/private/tmp/source-d1a.XXXXXX`目录、相同data_directory、无TCP监听的可丢弃实例；会安装草稿、创建/删除随机库和角色并临时改权限/DDL，必须独占实例串行执行。不配置时跳过，严禁业务库URL；实例启动/停止由宿主负责。

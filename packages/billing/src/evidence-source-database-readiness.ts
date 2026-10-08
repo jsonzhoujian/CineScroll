@@ -59,7 +59,7 @@ export async function assertEvidenceSourceDatabase(pool: LedgerDatabasePool): Pr
       and (select count(*)=jsonb_array_length($1::jsonb) from pg_attribute a join pg_class c on c.oid=a.attrelid
         join pg_namespace n on n.oid=c.relnamespace where n.nspname='evidence_source_draft' and c.relkind='r' and a.attnum>0 and not a.attisdropped)
       and (select count(*)=jsonb_array_length($2::jsonb) and bool_and(c.contype::text=e.type and c.convalidated
-        and not c.condeferrable and not c.condeferred and c.conislocal and c.coninhcount=0 and not c.connoinherit
+        and not c.condeferrable and not c.condeferred and c.conislocal and c.coninhcount=0 and c.connoinherit=(e.type<>'c')
         and (case when e.type='c' then pg_get_constraintdef(c.oid)=e.definition else
           array(select a.attname::text from unnest(c.conkey) with ordinality k(num,ord)
             join pg_attribute a on a.attrelid=c.conrelid and a.attnum=k.num order by k.ord)=e.keys end)
