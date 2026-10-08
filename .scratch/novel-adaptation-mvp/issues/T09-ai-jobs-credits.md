@@ -182,6 +182,10 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 用户方案 A：单一临时 URI 创建自有 inspector/管理员池，每次读取先重新验收冻结目录，再调用精确完整性读取；门禁失败不进入读取。不接受双 Pool/第二地址，配置及引用同步固定，close 幂等。详见 `docs/plans/2026-10-08-source-business-fixture-assembly.md`。仅地址级绑定，不声明检查/读取之间原子 DDL 防护或生产许可；来源初始化与运行服务授权仍待后续。
 
+## D1b 运行 initialize 事务设计增量（2026-10-08）
+
+用户方案 A 仅文档：普通 LOGIN/受控 SQL 入口，同连接 READ COMMITTED 锁真实授权→预算→unit/head→核验业务→共同来源/关联/回执；管理员只读副本不作写权限权威。新增 `docs/plans/2026-10-08-source-initialize-runtime-design.md`、Proposed ADR0008、R01～R12未来验收，明确编码/回执预算/权限矩阵需分段冻结。本轮不改代码、不执行 SQL/GRANT/数据库，不开放运行仓储。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

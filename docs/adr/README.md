@@ -7,5 +7,6 @@
 - [ADR-0005：v2绑定封存身份与跨版本共享请求键](./0005-evidence-publication-v2.md)
 - [ADR-0006：先以隔离测试业务记录验证来源登记](./0006-source-ingest-isolated-fixture.md)
 - [ADR-0007：隔离D1b授权与预算锁序（仅草稿范围接受）](./0007-source-ingest-fixture-lock-order.md)
+- [ADR-0008：运行初始化的受控同连接事务边界（Proposed）](./0008-source-initialize-runtime-boundary.md)
 
 ADR 在产品负责人评审前保持 `Proposed`；接受后更新状态，不通过覆盖旧记录隐藏历史决定。
