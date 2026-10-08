@@ -1,6 +1,6 @@
 # 隔离D1b采用授权共享锁与工作室预算外层串行点
 
-Status: Proposed（仅设计候选；用户本轮批准文档，不等同批准具体锁、参数、SQL或执行）。
+Status: Accepted for isolated draft（用户后续确认该锁序、受控锁定helper及实验容量，用于独立SQL草稿；未批准数据库执行、运行仓储或生产启用）。
 
 ## Context
 

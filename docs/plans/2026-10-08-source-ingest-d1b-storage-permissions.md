@@ -2,6 +2,8 @@
 
 日期：2026-10-08。状态：设计候选；用户批准本轮文档，不批准可执行SQL、授权、代码或数据库执行。依据[隔离测试来源](2026-10-08-source-ingest-fixture-design.md)、[D1b契约](../contracts/EVIDENCE_SOURCE_D1B_INGEST.md)、[ADR0004](../adr/0004-evidence-source-seal.md)。不覆盖D1a、不接生产Writer、发布或收费。
 
+后续增量：用户已确认独立SQL草稿阶段，选择受控锁定helper与本文实验容量/锁序。见[草稿交付记录](2026-10-08-source-ingest-d1b-sql-draft.md)；本篇下文保留提出候选时的设计记录，SQL执行/运行仓储仍未批准。
+
 ## 1. 目标与选择
 
 在独立PG16/UTF8实验配置内，用四类已提交不可变测试资料核验task/snapshot登记，保留共同workspace/ingest键、完整关联、原子回执和当前授权。所有名称为逻辑候选，不是迁移或可调用函数。

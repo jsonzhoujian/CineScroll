@@ -142,6 +142,12 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 Standards/Spec无阻断，按建议补共享锁所需权限/helper与防授权修改前置验收；ADR0007为Proposed。本地引用、P01～P12及diff检查通过，文档-only未重跑代码/数据库测试。
 
+## 增量：D1b独立SQL草稿
+
+用户确认锁序/受控锁定helper/实验容量，新增docs/sql-drafts/evidence-source-d1b.sql与交付记录。包含13表、类型FK、共享回执键、范围约束及内部授权共享锁，所有数据写保持封闭，没有login/装载/写仓储。ADR0007仅草稿范围接受。预算累计、完整规范编码/跨行投影、恢复读RLS及撤权管理尚未实现；未执行SQL或数据库操作，静态检查不能替代实库验收。
+
+Standards/Spec静态审查无阻断，检查13表/5角色/6函数/4策略、美元引号配对、文档引用及diff通过。无SQL解析器且未执行PG，列级锁权限、同值UPDATE拒绝及owner转移后ACL均留作明确实库用例；未重跑代码测试。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
