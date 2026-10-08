@@ -85,3 +85,9 @@ EvidenceWriteSource.load必须来自可信宿主：负责验证来源服务身�
 ## v2发布读取增量
 
 `InMemoryV2PublicationTransactionFixture.readPublishedEvidence(workspaceId,evidenceId)` 经独立 `settlementAccess` 的 `settle` 权限返回既有九字段证据，缺省拒绝。读取保存的历史完整来源包，重验请求、资料、审计、回执及封存关联；不读取当前来源头。`storedPublicationFixture` 是仅测试的同步故障注入存储端口，不能作为真实来源证明或生产仓储。未升级v1读取、数据库接线或真实收费。详见[读取设计](../../docs/plans/2026-10-08-v2-published-evidence-reader.md)。
+
+## D1a只读来源目录预检
+
+`./evidence-source-database-readiness` 导出 `assertEvidenceSourceDatabase(pool)`，返回void或净化的 `EVIDENCE_SOURCE_DATABASE_NOT_READY`。仅PG16封闭草稿目录：角色/权限、四表精确形状、RLS默认拒绝、约束/索引、保护函数/触发器。不会返回读写仓储、检查业务资料或运行迁移。宿主须提供pg兼容Pool，失败调用绑定的`release(true)`销毁会话；宿主管理池/TLS/登录生命周期。目录查询使用只读事务、5秒语句时限，未实现整体/池等待期限。
+
+独立[SQL草稿](../../docs/sql-drafts/evidence-source-d1a.sql)不在migrations目录，未执行；无数据读写授权/写函数/业务身份映射。模拟目录结果仅验证拒绝流程，真实SQL/目录表达式/权限需另批隔离库核实。[边界说明](../../docs/plans/2026-10-08-evidence-source-d1a.md)。
