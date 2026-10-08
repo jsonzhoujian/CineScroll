@@ -1,4 +1,6 @@
 export { prepareSourceIngestIdentity, SourceIngestProtocolError } from "./evidence-source-ingest.ts";
+export { prepareSourceBusinessFixture, SourceBusinessFixtureError } from "./source-business-fixture.ts";
+export type { SourceBusinessFixture, FixtureTaskRevision, FixtureSnapshot, FixtureExecutionIdentity, FixtureQuote, PreparedFixtureRecord } from "./source-business-fixture.ts";
 export { assertSourceIngestDraftDatabase } from "./evidence-source-d1b-readiness.ts";
 export type { SourceIngestReference, InitializeSourceCommand, RegisterSourceCommand, SourceIngestIdentity, PreparedSourceIngestIdentity } from "./evidence-source-ingest.ts";
 

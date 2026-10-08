@@ -162,6 +162,10 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 新增独立测试 SQL：固定登录/service/workspace 映射准备、revision 校验的 workspace 授权启停、保留 session_user 的只读锁探针。真实行验证两种读取/撤权顺序；重复准备不复活已撤权行。原封闭目录预检仍拒绝此扩展，业务十一表继续关闭。详见 `docs/plans/2026-10-08-source-ingest-d1b-auth-fixture.md`。不包含生产授权 API、principal 撤权、业务资料装载或登记写入。
 
+## D1b 业务资料纯校验增量（2026-10-08）
+
+用户批准方案 A：先严格资料校验，再接数据库原子装载。本轮新增 `prepareSourceBusinessFixture`，验证四类精确资料、完整固定引用、报价一致性与任务链，输出独立业务文档、规范内容和指纹。详见 `docs/plans/2026-10-08-source-business-fixture-validation.md`。仅证明内部一致性；装载授权、已存冲突、不可变持久化和预算累计尚未实现。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
