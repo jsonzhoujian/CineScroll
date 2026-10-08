@@ -128,6 +128,10 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 用户确认initializeSourceCollection/registerSourceFromBusiness/readIngestReceipt设计。契约补固定业务引用、两初始来源原子保存、共享workspace+ingest键、完整回执关联、历史重放、HEAD冲突停自动改写、固定服务/工作室/kind/生产者权限及I01～I16未来验收。首切片仅task/snapshot，执行/发送/关闭/隔离/封存及真实Writer延期；D1a仍封闭，未修改运行时代码/SQL/角色/数据库。下一步确认运行时seam、指纹向量、业务证明定位及权限/限额后实施规则切片。
 
+## 增量：D1b登记身份与指纹纯函数
+
+2026-10-08用户确认prepareSourceIngestIdentity(serviceId, operation, command)公开测试接口。实现initialize/register严格校验、完整身份规范化UTF8 SHA256、workspace/ingest共享键与副本隔离，根包导出；两条OpenSSL固定向量冻结于D1b契约。6项专项通过，全量315通过/19数据库条件跳过，类型检查通过；双项审查无阻断。没有认证/占键/回执/数据库写入，I01～I16及权限映射、真实业务证明仍未实现。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

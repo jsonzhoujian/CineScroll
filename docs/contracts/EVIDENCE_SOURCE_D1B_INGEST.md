@@ -1,6 +1,22 @@
 # D1b最小来源写入契约
 
-日期：2026-10-08。状态：设计草案；用户批准本轮接口契约、权限矩阵和验收清单，不批准运行时实现、角色授权、迁移或数据库执行。
+日期：2026-10-08。状态：仓储写入仍为设计草案；上一轮只批准接口契约、权限矩阵和验收清单。本轮额外批准并完成下述纯函数协议准备；角色授权、迁移、数据库执行及写入仓储仍未批准。
+
+后续批准：2026-10-08用户确认仅实施纯函数prepareSourceIngestIdentity(serviceId, operation, command)，operation为initialize/register。返回identity副本、commandFingerprint及ingestKey={workspaceId,ingestId}；非法输入统一INVALID_COMMAND。现由billing包根导出；不授权/认证服务、不占键、不证明业务来源、不写数据库或生成成功回执。上述三个仓储接口仍未实现，I01～I16仍为未来验收。
+
+编码冻结为canonicalEvidenceValue({ ...command, serviceId, operation })的UTF8 SHA256，键按现有规范排序，不进行Unicode归一化。serviceId与operation是独立参数，命令包含同名字段拒绝。不改变v1/v2发布算法。两条固定向量以手写规范字节通过OpenSSL独立计算：
+
+```json
+{"executionReference":{"id":"execution-1","version":"1"},"ingestId":"ingest-1","operation":"initialize","protocolVersion":"source-ingest-v1","serviceId":"collector","snapshotReference":{"id":"snapshot-1","version":"1"},"taskReference":{"id":"task-1","version":"1"},"unitId":"unit-1","workspaceId":"studio"}
+```
+
+SHA256：ebd501128ae55bf1cc1e376560fa0335fb8d12b9ebf99d3e8996e71c0ff1bce5。
+
+```json
+{"businessReference":{"id":"任务一","kind":"snapshot","version":"1"},"expectedHeadRevision":1,"ingestId":"ingest-1","operation":"register","protocolVersion":"source-ingest-v1","serviceId":"collector","unitId":"unit-1","workspaceId":"工作室"}
+```
+
+SHA256：ee5a3720794a4797942b9e5c8fc2fc85427bb5a2a9f8f4f74780a258e9117130。共享键不含协议/操作/服务/集合；指纹包含完整身份。该纯函数不提供跨操作冲突检测，后续持久化仍须共同唯一登记。
 
 依据[可信来源事务](EVIDENCE_TRUSTED_SOURCE_TRANSACTION.md)、[数据库设计](../plans/2026-10-08-evidence-source-database-design.md)、[D1a实库记录](../plans/2026-10-08-evidence-source-d1a-postgres-validation.md)。保留ADR0004同库屏障及ADR0005发布协议，不变更既有v1/v2身份算法。
 
@@ -16,7 +32,7 @@
 
 ## 2. 命令与服务端资料（仅设计）
 
-所有命令为普通严格JSON对象，未知字段/访问器/符号/undefined拒绝，定位字符串沿用v2的UTF16长度与空白/禁字符规则；数组保持固定顺序。数字只接受安全整数，不自动trim、补默认或切当前活动版本。协议候选名称source-ingest-v1，仅表示来源登记，不与evidence-publication-v1混用；冻结编码向量需在实施前完成。
+所有命令为普通严格JSON对象，未知字段/访问器/符号/undefined拒绝，定位字符串沿用v2的UTF16长度与空白/禁字符规则；数组保持固定顺序。数字只接受安全整数，不自动trim、补默认或切当前活动版本。协议名称source-ingest-v1仅表示来源登记，不与evidence-publication-v1混用；本轮已冻结文首的编码向量。
 
 ```text
 Reference = { id, version }
@@ -42,7 +58,7 @@ register只登记已固定task/snapshot实体的合法追加版本：固定bindi
 
 ## 3. 幂等身份与回执
 
-初始化与登记共同使用唯一(workspaceId,ingestId)，不包含操作、服务、集合、kind或版本。命令指纹覆盖完整严格命令+服务器固定serviceId+操作名称；改变任一绑定、引用、期望头或服务是同键冲突，不能自动换ID重试。指纹沿用已有规范化JSON/UTF8/SHA256原则，但具体来源协议固定向量尚未冻结，不改发布协议算法。
+初始化与登记共同使用唯一(workspaceId,ingestId)，不包含操作、服务、集合、kind或版本。命令指纹覆盖完整严格命令+服务器固定serviceId+操作名称；改变任一绑定、引用、期望头或服务是同键冲突，不能自动换ID重试。指纹沿用已有规范化JSON/UTF8/SHA256原则，本轮已冻结文首来源协议固定向量，不改发布协议算法；冲突检测仍待后续仓储实现。
 
 回执候选结构：protocolVersion、workspaceId、ingestId、operation、producerServiceId、commandFingerprint、collectionId、unitId、generationAtCommit、headRevisionAtCommit、status、sourceReferences、committedAt。status为initialized/registered/already_registered；sourceReferences列出实际提交关联的kind/id/version/payloadFingerprint，初始化必含两项。回执不含原文、Key、完整payload或客户端费用。查询及重放返回副本。
 
@@ -110,7 +126,7 @@ register只登记已固定task/snapshot实体的合法追加版本：固定bindi
 
 ## 7. 错误与限额
 
-建议净化错误：INVALID_COMMAND、FORBIDDEN、NOT_FOUND、CONFLICT、HEAD_CONFLICT、STATE_BLOCKED、INTEGRITY_CONFLICT、CAPACITY、UNAVAILABLE。不向客户端返回SQL/连接/Key/原文/供应商私密错误；未知提交属于UNAVAILABLE但不能被当成失败终态。具体TypeScript错误类在TDD切片冻结。
+建议净化错误：INVALID_COMMAND、FORBIDDEN、NOT_FOUND、CONFLICT、HEAD_CONFLICT、STATE_BLOCKED、INTEGRITY_CONFLICT、CAPACITY、UNAVAILABLE。不向客户端返回SQL/连接/Key/原文/供应商私密错误；未知提交属于UNAVAILABLE但不能被当成失败终态。纯函数已冻结SourceIngestProtocolError（INVALID_COMMAND）；其余仓储错误类仍待TDD切片冻结。
 
 沿用D1实验候选：单元正常历史版本256条、完整来源包2MiB、ID引用限制及有界JSON规则；初始化两版本计入容量。新回执即使指向同一版本也占登记空间，工作室登记回执总量/字节限额必须在实现前批准；超限拒绝不截断、不删除历史。隔离可靠暂存/128条候选不属于本最小接口的实现。
 
@@ -145,8 +161,10 @@ register只登记已固定task/snapshot实体的合法追加版本：固定bindi
 
 拒绝通用payload写入和依次调用旧仓储拼事务；它们易接入但不能证明真实性或共同提交。完整发送/关闭/隔离一并实现的方案闭环更完整，但超出本次最小范围，留作后续契约与批准。
 
-下一步需批准：测试来源定位及不可变关联、具体运行时seam、登记指纹固定向量、授权映射/撤权锁序、登记回执总量与事务时限、独立D1b SQL草稿/预检配置。不得覆写D1a草稿或角色来跳过批准；新写入方案须有独立版本/预检，D1a封闭验收保留为回归。
+下一步需批准：测试来源定位及不可变关联、仓储运行时seam、授权映射/撤权锁序、登记回执总量与事务时限、独立D1b SQL草稿/预检配置。纯函数接口与登记指纹固定向量本轮已确认。不得覆写D1a草稿或角色来跳过批准；新写入方案须有独立版本/预检，D1a封闭验收保留为回归。
 
 ## 10. 本轮检查
 
-Standards和Spec审查无阻断；按Standards建议补齐同工作室生产者过滤/空许可向量。本轮只修改契约及T09进度；本地引用与git diff检查通过，没有代码改动，未重跑代码/数据库测试。I01～I16属于未来验收，先前D1a测试不计作本契约实现验证。具体接口、指纹向量及权限/并发方案仍需实施前确认。
+上一轮文档审查：Standards和Spec无阻断，补齐同工作室生产者过滤/空许可向量；仅修改契约及T09进度，没有代码改动或代码/数据库测试。
+
+本轮纯函数切片：6项公开接口测试通过（包含两条独立OpenSSL固定向量）；全仓测试315通过、19项数据库条件测试跳过，类型检查及diff检查通过。Standards/Spec审查无阻断，已修正旧冻结状态表述。未启动或连接数据库。I01～I16仍属于未来仓储验收，纯函数测试不证明原子提交、认证、权限或业务来源真实性。

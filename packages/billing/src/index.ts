@@ -1,3 +1,6 @@
+export { prepareSourceIngestIdentity, SourceIngestProtocolError } from "./evidence-source-ingest.ts";
+export type { SourceIngestReference, InitializeSourceCommand, RegisterSourceCommand, SourceIngestIdentity, PreparedSourceIngestIdentity } from "./evidence-source-ingest.ts";
+
 export type BillingActor = Readonly<{ workspaceId: string; serviceId: string }>;
 export type BillingAccess = { authorize(actor: BillingActor, operation: "read" | "grant" | "reserve" | "settle"): Promise<boolean> };
 export type GrantCommand = Readonly<{ eventId: string; grantId: string; amount: number; source: string }>;
