@@ -3,12 +3,17 @@ import type { Pool, PoolClient } from "pg";
 import { prepareSourceBusinessFixture, type PreparedFixtureRecord, type FixtureTaskRevision,
   type FixtureSnapshot, type FixtureExecutionIdentity, type FixtureQuote } from "../../src/index.ts";
 const schema = "source_ingest_d1b_fixture_v1";
-const tables = { task: "task_revision", snapshot: "fixed_snapshot", execution: "execution_identity", quote: "fixed_quote" };
+export const businessFixtureTables = { task: "task_revision", snapshot: "fixed_snapshot", execution: "execution_identity", quote: "fixed_quote" };
+export const isolatedAdministratorProfileQuery = `select ((select rolsuper from pg_roles where rolname=session_user)
+        and current_user=session_user and current_setting('server_version_num')::int/10000=16
+        and current_setting('server_encoding')='UTF8' and current_setting('listen_addresses')=''
+        and current_setting('data_directory') ~ '^/private/tmp/source-d1b\\.[A-Za-z0-9]{6}/data$'
+        and current_database() ~ '^d1b_[a-f0-9]{32}$') as ok`;
 export class SourceBusinessLoadError extends Error {
   readonly code: "FORBIDDEN" | "CONFLICT" | "CAPACITY_EXCEEDED" | "UNAVAILABLE";
   constructor(code: SourceBusinessLoadError["code"]) { super(code); this.code = code; }
 }
-function projection(record: PreparedFixtureRecord): Record<string, unknown> {
+export function fixtureBusinessColumns(record: PreparedFixtureRecord): Record<string, unknown> {
   const d = record.document;
   const common = { workspace_id: record.workspaceId, id: record.id, version: record.version,
     task_id: d.binding.taskId, unit_id: d.binding.unitId, binding: d.binding, producer_service_id: d.producerServiceId,
@@ -46,20 +51,16 @@ export function createIsolatedSourceBusinessLoader(pool: Pool, config: { workspa
     try {
       client = await pool.connect();
       await client.query("begin isolation level read committed; set local statement_timeout='5s'; set local lock_timeout='1s'; set local search_path=pg_catalog,pg_temp");
-      const profile = (await client.query(`select ((select rolsuper from pg_roles where rolname=session_user)
-        and current_user=session_user and current_setting('server_version_num')::int/10000=16
-        and current_setting('server_encoding')='UTF8' and current_setting('listen_addresses')=''
-        and current_setting('data_directory') ~ '^/private/tmp/source-d1b\\.[A-Za-z0-9]{6}/data$'
-        and current_database() ~ '^d1b_[a-f0-9]{32}$') as ok`)).rows[0]?.ok;
+      const profile = (await client.query(isolatedAdministratorProfileQuery)).rows[0]?.ok;
       if (profile !== true) throw new SourceBusinessLoadError("FORBIDDEN");
       await client.query("set local role novel_d1b_business_fixture");
       await client.query(`insert into ${schema}.workspace_budget values($1,0,0,0,0,0,0) on conflict do nothing`, [trusted.workspaceId]);
       await client.query(`select business_count from ${schema}.workspace_budget where workspace_id=$1 for update`, [trusted.workspaceId]);
       let inserted = 0, bytes = 0;
       for (const record of records) {
-        const columns = projection(record), names = Object.keys(columns), values = Object.values(columns);
+        const columns = fixtureBusinessColumns(record), names = Object.keys(columns), values = Object.values(columns);
         // Identifiers originate only from the fixed server-side projection above.
-        const table = `${schema}.${tables[record.kind]}`;
+        const table = `${schema}.${businessFixtureTables[record.kind]}`;
         const result = await client.query(`select count(*)::int as matches from ${table} where ${names.map((name, index) => `${name} is not distinct from $${index + 1}`).join(" and ")}`, values);
         if (result.rows[0].matches === 1) continue;
         if (record.kind !== "task") {

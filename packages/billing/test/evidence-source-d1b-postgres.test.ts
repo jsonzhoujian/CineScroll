@@ -7,6 +7,7 @@ import { assertSourceIngestDraftDatabase } from "../src/evidence-source-d1b-read
 import { createIsolatedSourceBusinessLoader } from "./support/source-business-loader.ts";
 import { sourceBusinessFixture } from "./support/source-business-fixture.ts";
 import { assertIsolatedBusinessFixtureDatabase } from "./support/source-business-readiness.ts";
+import { createIsolatedSourceBusinessReader } from "./support/source-business-reader.ts";
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -431,6 +432,55 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
         for (const table of ["task_revision", "fixed_snapshot", "execution_identity", "fixed_quote"])
           assert.equal((await setup!.query(`select count(*)::int as n from ${schema}.${table} where workspace_id=$1`, [workspace])).rows[0].n, 0);
       }
+    });
+    await t.test("administrator reads exact saved versions without falling back to a newer task", async () => {
+      const reader = createIsolatedSourceBusinessReader(setup!, { workspaceId: "parallel", allowedProducerServiceIds: ["producer"] });
+      const refs = { taskReference: { id: "task", version: "v1" }, snapshotReference: { id: "snapshot", version: "v1" }, executionReference: { id: "execution", version: "v1" } };
+      const first = await reader.read(refs);
+      assert.equal(first.records.length, 4);
+      assert.equal(first.records[0]!.version, "v1");
+      const second = await reader.read({ ...refs, taskReference: { id: "task", version: "v2" } });
+      assert.equal(second.records.length, 5);
+      await assert.rejects(reader.read({ ...refs, taskReference: { id: "task", version: "missing" } }), { code: "NOT_FOUND" });
+      first.records[0]!.document.binding.workspaceId = "changed";
+      assert.equal((await reader.read(refs)).records[0]!.document.binding.workspaceId, "parallel");
+    });
+    await t.test("integrity reader rejects getter commands and does not accept overwritten command metadata", async () => {
+      const reader = createIsolatedSourceBusinessReader(setup!, { workspaceId: "parallel", allowedProducerServiceIds: ["producer"] });
+      const refs = { taskReference: { id: "task", version: "v1" }, snapshotReference: { id: "snapshot", version: "v1" }, executionReference: { id: "execution", version: "v1" } };
+      await assert.rejects(reader.read({ ...refs, workspaceId: "secret-workspace" }), { code: "INVALID_COMMAND" });
+      await assert.rejects(reader.read({ ...refs, taskReference: { id: "bad\u0000id", version: "v1" } }), { code: "INVALID_COMMAND" });
+      let calls = 0;
+      const getter = { ...refs }; Object.defineProperty(getter, "taskReference", { enumerable: true, get() { calls++; return refs.taskReference; } });
+      await assert.rejects(reader.read(getter), { code: "INVALID_COMMAND" });
+      assert.equal(calls, 0);
+    });
+    await t.test("reader detects saved projection and noncanonical byte corruption without repairing rows", async corruptionTest => {
+      const refs = { taskReference: { id: "task", version: "v1" }, snapshotReference: { id: "snapshot", version: "v1" }, executionReference: { id: "execution", version: "v1" } };
+      const reader = createIsolatedSourceBusinessReader(setup!, { workspaceId: "parallel", allowedProducerServiceIds: ["producer"] });
+      const baseline = (await setup!.query(`select canonical,business_fingerprint,price_version from ${schema}.fixed_quote where workspace_id='parallel'`)).rows[0];
+      for (const [label,change] of [
+        ["SQL projection", `update ${schema}.fixed_quote set price_version='changed' where workspace_id='parallel'`],
+        ["noncanonical bytes and matching digest", `update ${schema}.fixed_quote set canonical=convert_to(' '||convert_from(canonical,'UTF8'),'UTF8'),business_fingerprint=encode(sha256(convert_to(' '||convert_from(canonical,'UTF8'),'UTF8')),'hex') where workspace_id='parallel'`],
+      ]) await corruptionTest.test(label!, async () => {
+        await setup!.query(`alter table ${schema}.fixed_quote disable trigger test_business_row`);
+        try {
+          await setup!.query(change!);
+          await assert.rejects(reader.read(refs), { code: "INTEGRITY_CONFLICT", message: "INTEGRITY_CONFLICT" });
+          await assert.rejects(reader.read(refs), { code: "INTEGRITY_CONFLICT" });
+        } finally {
+          try { await setup!.query(`update ${schema}.fixed_quote set canonical=$1,business_fingerprint=$2,price_version=$3 where workspace_id='parallel'`, [baseline.canonical,baseline.business_fingerprint,baseline.price_version]); }
+          finally { await setup!.query(`alter table ${schema}.fixed_quote enable always trigger test_business_row`); }
+        }
+        assert.equal((await reader.read(refs)).records.length, 4);
+        await assertIsolatedBusinessFixtureDatabase(inspector!);
+      });
+      const forbidden = createIsolatedSourceBusinessReader(runtime!, { workspaceId: "parallel", allowedProducerServiceIds: ["producer"] });
+      await assert.rejects(forbidden.read(refs), { code: "FORBIDDEN" });
+      const config = { workspaceId: "parallel", allowedProducerServiceIds: ["other"] };
+      const hidden = createIsolatedSourceBusinessReader(setup!, config); config.allowedProducerServiceIds.push("producer");
+      await assert.rejects(hidden.read(refs), { code: "NOT_FOUND" });
+      await assert.rejects(createIsolatedSourceBusinessReader(setup!, { workspaceId: "unknown", allowedProducerServiceIds: ["producer"] }).read(refs), { code: "NOT_FOUND" });
     });
   } finally {
     const failures: string[] = [];
