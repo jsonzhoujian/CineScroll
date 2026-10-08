@@ -192,6 +192,12 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 Standards/Spec各发现同一外键顺序问题，已修正并复核无残留阻断；引用、验收编号及 diff 检查通过。
 
+## D1b initialize 编码与预算候选增量（2026-10-08）
+
+新增 `docs/plans/2026-10-08-source-initialize-encoding-budget.md`：不改既有命令指纹，明确完整身份存储、13键回执、两有序引用，以及不自引用的全列逻辑字节预算与三种增量分支。C01～C08仍待验收，新增完整黄金向量/规则版本字符串仍待对齐，不能宣称已全面冻结。本轮仅文档，无代码/SQL/授权/数据库执行。
+
+Standards/Spec审查无阻断；引用、C01～C08编号及diff检查通过。下一切片补离线固定黄金向量和完整列/规则版本对齐，不提前开放执行权限。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
