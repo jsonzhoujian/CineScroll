@@ -100,3 +100,5 @@ v2协议准备、完整来源包校验、内存共同发布及历史读取门禁
 D1a增量已提供[封闭来源结构草稿与只读预检](../plans/2026-10-08-evidence-source-d1a.md)：四类基础表的独立SQL草稿不在迁移目录，未执行；assertEvidenceSourceDatabase仅目录检查、模拟响应测试，不返回数据仓储。真实PG16语法/目录形状/权限验收仍需另批；D1b写入口、真实身份映射、全部Writer及共同发布都未完成。
 
 后续已另批完成[隔离PG16.14草稿/目录验收](../plans/2026-10-08-evidence-source-d1a-postgres-validation.md)，修正connoinherit按约束类型检查，健康及28类漂移拒绝测试通过。仅封闭结构和目录门禁，不改变上述D1b/D2/D3未交付状态，不提供生产屏障或收费。
+
+D1b下一最小范围见[初始化、来源登记与回执读取契约](EVIDENCE_SOURCE_D1B_INGEST.md)：仅设计三个测试边界、固定身份权限、共同ingest命名空间、完整关联及未知提交恢复；首切片候选限定task/snapshot，不接发送/关闭/封存/真实Writer。输入不接受自报payload/金额/完整标志，具体实现、权限/登记指纹/时限及实库仍需独立批准。

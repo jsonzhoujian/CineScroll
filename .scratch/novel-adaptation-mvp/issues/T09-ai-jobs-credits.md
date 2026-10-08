@@ -124,6 +124,10 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 用户批准新建无TCP临时PG16.14实例执行草稿和漂移测试。健康目录先失败再修复connoinherit类型判据；33项实库测试（28类漂移、禁止数据访问、封闭保护及Unicode结构边界）通过，恢复后健康再次通过；全量342通过/18其他数据库条件跳过，类型检查通过。测试库/角色清理，实例停止；未连接业务库、未实现受控Writer/完整屏障或收费。下一步单独确认D1b最小接口及权限/真实证明方案。
 
+## 增量：D1b最小来源登记契约（仅文档）
+
+用户确认initializeSourceCollection/registerSourceFromBusiness/readIngestReceipt设计。契约补固定业务引用、两初始来源原子保存、共享workspace+ingest键、完整回执关联、历史重放、HEAD冲突停自动改写、固定服务/工作室/kind/生产者权限及I01～I16未来验收。首切片仅task/snapshot，执行/发送/关闭/隔离/封存及真实Writer延期；D1a仍封闭，未修改运行时代码/SQL/角色/数据库。下一步确认运行时seam、指纹向量、业务证明定位及权限/限额后实施规则切片。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
