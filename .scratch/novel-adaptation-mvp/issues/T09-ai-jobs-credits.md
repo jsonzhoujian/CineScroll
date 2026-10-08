@@ -186,6 +186,12 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 用户方案 A 仅文档：普通 LOGIN/受控 SQL 入口，同连接 READ COMMITTED 锁真实授权→预算→unit/head→核验业务→共同来源/关联/回执；管理员只读副本不作写权限权威。新增 `docs/plans/2026-10-08-source-initialize-runtime-design.md`、Proposed ADR0008、R01～R12未来验收，明确编码/回执预算/权限矩阵需分段冻结。本轮不改代码、不执行 SQL/GRANT/数据库，不开放运行仓储。
 
+## D1b initialize 入口权限细化增量（2026-10-08）
+
+继续既定文档切片：新增 `docs/plans/2026-10-08-source-initialize-entry-permissions.md`，细化普通 LOGIN/initializer/locker 权限、非递归 RLS、历史重放与新业务范围分支、行锁列权限和不可变/延迟完整性 guards，并列出 E01～E12 未来验收。ADR0008保持 Proposed；编码、回执/预算公式及独立运行 profile 尚未冻结。本轮不改可执行 SQL/代码、不授权、不执行数据库或代码测试。
+
+Standards/Spec各发现同一外键顺序问题，已修正并复核无残留阻断；引用、验收编号及 diff 检查通过。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
