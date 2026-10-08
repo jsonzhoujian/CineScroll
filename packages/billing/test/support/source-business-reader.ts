@@ -1,9 +1,10 @@
 // Test-administrator integrity reader only: no source registration or production export.
 import type { Pool } from "pg";
-import { prepareSourceBusinessFixture, prepareSourceIngestIdentity, SourceBusinessFixtureError, SourceIngestProtocolError,
+import { prepareSourceBusinessFixture, SourceBusinessFixtureError,
   type PreparedFixtureRecord, type FixtureTaskRevision, type FixtureSnapshot, type FixtureExecutionIdentity,
   type FixtureQuote, type SourceIngestReference } from "../../src/index.ts";
 import { businessFixtureTables, fixtureBusinessColumns, isolatedAdministratorProfileQuery } from "./source-business-loader.ts";
+import { prepareBusinessReadCommand } from "./source-business-read-command.ts";
 const schema = "source_ingest_d1b_fixture_v1";
 export class SourceBusinessReadError extends Error {
   readonly code: "FORBIDDEN" | "NOT_FOUND" | "INTEGRITY_CONFLICT" | "UNAVAILABLE";
@@ -13,23 +14,7 @@ export class SourceBusinessReadError extends Error {
 export function createIsolatedSourceBusinessReader(pool: Pool, config: { workspaceId: string; allowedProducerServiceIds: string[] }) {
   const trusted = structuredClone(config);
   return { async read(input: unknown): Promise<{ records: PreparedFixtureRecord[] }> {
-    const keys = ["taskReference", "snapshotReference", "executionReference"];
-    let references: Record<string, unknown>;
-    try {
-      if (!input || typeof input !== "object" || Object.getPrototypeOf(input) !== Object.prototype || Reflect.ownKeys(input).length !== 3) throw new Error();
-      references = Object.fromEntries(keys.map(key => {
-        const descriptor = Object.getOwnPropertyDescriptor(input, key);
-        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) throw new Error();
-        return [key, descriptor.value];
-      }));
-    } catch { throw new SourceIngestProtocolError(); }
-    const identity = prepareSourceIngestIdentity("fixture-reader", "initialize", {
-      ...references,
-      protocolVersion: "source-ingest-v1", workspaceId: trusted.workspaceId, unitId: "fixture-reader", ingestId: "fixture-reader",
-    }).identity;
-    if (identity.operation !== "initialize") throw new SourceBusinessReadError("UNAVAILABLE");
-    const values = [trusted.workspaceId, ...[identity.taskReference,identity.snapshotReference,identity.executionReference].flatMap(ref => [ref.id,ref.version])];
-    if (values.some(value => /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value))) throw new SourceIngestProtocolError();
+    const identity = prepareBusinessReadCommand(input, trusted.workspaceId);
     const client = await pool.connect.bind(pool)().catch(() => { throw new SourceBusinessReadError("UNAVAILABLE"); });
     const query = client.query.bind(client), release = client.release.bind(client);
     try {

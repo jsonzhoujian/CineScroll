@@ -178,6 +178,10 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 用户方案 A：test/support 管理员读取精确 task/snapshot/execution 引用及依赖报价/任务链，在 REPEATABLE READ READ ONLY 事务重算规范内容/指纹并比较完整投影，不回退最新、不修复。运行角色无新授权；普通登录、范围外、错误命令、损坏投影和非规范字节实库验收。详见 `docs/plans/2026-10-08-source-business-fixture-reader.md`。目录门禁独立装配、运行服务读取授权及来源初始化仍未实现。
 
+## D1b 管理员只读装配增量（2026-10-08）
+
+用户方案 A：单一临时 URI 创建自有 inspector/管理员池，每次读取先重新验收冻结目录，再调用精确完整性读取；门禁失败不进入读取。不接受双 Pool/第二地址，配置及引用同步固定，close 幂等。详见 `docs/plans/2026-10-08-source-business-fixture-assembly.md`。仅地址级绑定，不声明检查/读取之间原子 DDL 防护或生产许可；来源初始化与运行服务授权仍待后续。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

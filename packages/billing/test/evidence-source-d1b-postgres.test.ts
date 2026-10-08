@@ -8,6 +8,7 @@ import { createIsolatedSourceBusinessLoader } from "./support/source-business-lo
 import { sourceBusinessFixture } from "./support/source-business-fixture.ts";
 import { assertIsolatedBusinessFixtureDatabase } from "./support/source-business-readiness.ts";
 import { createIsolatedSourceBusinessReader } from "./support/source-business-reader.ts";
+import { createIsolatedSourceBusinessAssembly } from "./support/source-business-assembly.ts";
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -481,6 +482,34 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
       const hidden = createIsolatedSourceBusinessReader(setup!, config); config.allowedProducerServiceIds.push("producer");
       await assert.rejects(hidden.read(refs), { code: "NOT_FOUND" });
       await assert.rejects(createIsolatedSourceBusinessReader(setup!, { workspaceId: "unknown", allowedProducerServiceIds: ["producer"] }).read(refs), { code: "NOT_FOUND" });
+    });
+    await t.test("assembled reader binds a single endpoint and rechecks the directory for every read", async () => {
+      const assembly = createIsolatedSourceBusinessAssembly({ connectionString: setup!.options.connectionString!, inspectorLogin,
+        workspaceId: "parallel", allowedProducerServiceIds: ["producer"] });
+      const refs = { taskReference: { id: "task", version: "v1" }, snapshotReference: { id: "snapshot", version: "v1" }, executionReference: { id: "execution", version: "v1" } };
+      try {
+        assert.equal((await assembly.read(refs)).records.length, 4);
+        await setup!.query(`alter table ${schema}.fixed_quote disable trigger test_business_row`);
+        try { await assert.rejects(assembly.read(refs), { code: "NOT_READY", message: "NOT_READY" }); }
+        finally { await setup!.query(`alter table ${schema}.fixed_quote enable always trigger test_business_row`); }
+        assert.equal((await assembly.read(refs)).records.length, 4);
+      } finally { await assembly.close(); }
+      await assert.rejects(assembly.read(refs), { code: "CLOSED" });
+    });
+    await t.test("assembly snapshots configuration and commands and cannot accept a second reader endpoint", async () => {
+      const config = { connectionString: setup!.options.connectionString!, inspectorLogin, workspaceId: "parallel", allowedProducerServiceIds: ["producer"] };
+      assert.throws(() => createIsolatedSourceBusinessAssembly({ ...config, readerConnectionString: "postgresql://other@localhost/d1b_other" }), { code: "INVALID_CONFIG" });
+      const assembly = createIsolatedSourceBusinessAssembly(config);
+      const refs = { taskReference: { id: "task", version: "v1" }, snapshotReference: { id: "snapshot", version: "v1" }, executionReference: { id: "execution", version: "v1" } };
+      config.workspaceId = "unknown"; config.allowedProducerServiceIds.length = 0;
+      config.connectionString = "postgresql://other@localhost/d1b_other";
+      try {
+        const pending = assembly.read(refs);
+        refs.taskReference.version = "missing";
+        assert.equal((await pending).records[0]!.version, "v1");
+        await assert.rejects(assembly.read(refs), { code: "NOT_FOUND" });
+      } finally { await assembly.close(); }
+      await assembly.close();
     });
   } finally {
     const failures: string[] = [];
