@@ -132,6 +132,10 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 2026-10-08用户确认prepareSourceIngestIdentity(serviceId, operation, command)公开测试接口。实现initialize/register严格校验、完整身份规范化UTF8 SHA256、workspace/ingest共享键与副本隔离，根包导出；两条OpenSSL固定向量冻结于D1b契约。6项专项通过，全量315通过/19数据库条件跳过，类型检查通过；双项审查无阻断。没有认证/占键/回执/数据库写入，I01～I16及权限映射、真实业务证明仍未实现。
 
+## 增量：方案A隔离测试来源设计（仅文档）
+
+2026-10-08用户选择方案A。设计TaskRevision、固定计费快照、ExecutionIdentity及独立FixedQuote的精确版本关联、服务端投影/指纹区分、候选task追加白名单；三个仓储interface不接受payload/client，F01～F18为未来验收。ADR0006记录隔离实验不作生产证明。未增加代码/SQL/角色授权，不运行数据库；字段、权限锁序、回执预算及实库实施须另批。Standards/Spec审查无阻断，补齐快照/执行双向引用图；本地引用、验收编号及diff检查通过，文档-only未重跑代码测试。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
