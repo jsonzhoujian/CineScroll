@@ -148,6 +148,12 @@ Standards/Spec无阻断，按建议补共享锁所需权限/helper与防授权�
 
 Standards/Spec静态审查无阻断，检查13表/5角色/6函数/4策略、美元引号配对、文档引用及diff通过。无SQL解析器且未执行PG，列级锁权限、同值UPDATE拒绝及owner转移后ACL均留作明确实库用例；未重跑代码测试。
 
+## 增量：D1b封闭草稿隔离PG16验证
+
+2026-10-08继续下一步，创建无TCP新PG16.14实例验证草稿；10项创建/DDL回滚/RLS/ACL/普通login拒绝/helper无principal拒绝/管理员写门禁/Unicode测试通过。仅修正测试name[]读取和owner隐式EXECUTE期望，SQL草稿未改。全仓325通过/19条件跳过，typecheck通过；测试库及角色清理，实例停止。空授权表未证明有行锁/撤权竞态，不算完整D1b或P01～P12全通过；正向资料、写仓储/完整编码与预算仍待后续。
+
+Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未注入，未来测试准备阶段应按本次随机身份限定核对清理，当前独立查询已确认清理成功。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

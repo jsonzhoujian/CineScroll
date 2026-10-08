@@ -2,6 +2,8 @@
 
 日期：2026-10-08。用户确认按既有锁序、受控锁定helper和实验容量编写独立SQL草稿；本轮只保存文件与静态审查，不在任何数据库执行。文件：[evidence-source-d1b.sql](../sql-drafts/evidence-source-d1b.sql)。
 
+后续增量：[隔离PG16.14执行记录](2026-10-08-source-ingest-d1b-postgres-validation.md)已验证原样创建、失败回滚和负向权限，共10项通过。该增量未装载授权行或业务资料，正向锁/撤权/登记仍未完成；下文保留草稿交付时的静态状态。
+
 ## 实施步骤与范围
 
 1. 在docs/sql-drafts/evidence-source-d1b.sql编写独立PG16/UTF8结构，严格新建，不覆盖同名对象；D1a文件保持不变。
