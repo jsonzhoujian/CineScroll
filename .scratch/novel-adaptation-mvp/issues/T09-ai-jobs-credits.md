@@ -170,6 +170,10 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 用户确认方案 A 的独立测试装载器。新增 test/support 入口与独立 SQL 权限扩展，工作室预算串行后共同保存四类不可变资料；规范内容/全部投影重放比较、固定实体冲突、部分写入失败回滚、并发收敛和独立连接在途观察均实库验收。详见 `docs/plans/2026-10-08-source-business-fixture-loader.md`。不开放运行登记权限；扩展目录尚无独立冻结验收，不能生产装配。
 
+## D1b 完整扩展目录门禁增量（2026-10-08）
+
+方案 A 固定两个 guard 的稳定归属、撤回临时 probe/schema 授权，新增 test/support 受限 inspector 门禁与固定完整目录摘要（非运行时学习），包括扩展角色及 global 默认 ACL。13 类漂移拒绝并恢复，原闭合门禁不放宽。详见 `docs/plans/2026-10-08-source-business-fixture-readiness.md`；不读取业务行、不自动修复或提供生产许可，持久化完整性读取留下一切片。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

@@ -1,7 +1,7 @@
 import type { LedgerDatabasePool } from "./postgres-ledger.ts";
 import { sourceIngestDraftCatalogFingerprint, sourceIngestDraftCatalogQuery } from "./evidence-source-d1b-catalog.ts";
 
-const roleQuery = `select /* source-d1b:roles */
+export const sourceIngestDraftRoleQuery = `select /* source-d1b:roles */
   current_setting('server_version_num')::integer between 160000 and 169999
   and current_setting('server_encoding')='UTF8'
   and current_user='novel_d1b_inspector' and session_user<>current_user
@@ -42,7 +42,7 @@ export async function assertSourceIngestDraftDatabase(pool: LedgerDatabasePool):
     await query("begin read only");
     await query("set local statement_timeout='5s'");
     await query("set local search_path=pg_catalog");
-    const result = await query(roleQuery);
+    const result = await query(sourceIngestDraftRoleQuery);
     if (result.rows.length !== 1 || result.rows[0]?.ready !== true) throw new Error();
     const catalog = await query(sourceIngestDraftCatalogQuery, [sourceIngestDraftCatalogFingerprint]);
     if (catalog.rows.length !== 1 || catalog.rows[0]?.ready !== true) throw new Error();

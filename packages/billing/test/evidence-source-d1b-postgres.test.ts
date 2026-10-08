@@ -6,6 +6,7 @@ import { Pool, type PoolClient } from "pg";
 import { assertSourceIngestDraftDatabase } from "../src/evidence-source-d1b-readiness.ts";
 import { createIsolatedSourceBusinessLoader } from "./support/source-business-loader.ts";
 import { sourceBusinessFixture } from "./support/source-business-fixture.ts";
+import { assertIsolatedBusinessFixtureDatabase } from "./support/source-business-readiness.ts";
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -283,11 +284,42 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
     await t.test("controlled business loader atomically saves four immutable records and replays without budget duplication", async () => {
       const extension = await readFile(new URL("../../../docs/sql-drafts/evidence-source-d1b-business-fixture.sql", import.meta.url), "utf8");
       await setup!.query(extension); businessFixtureCreated = true;
+      await setup!.query(`revoke execute on function ${schema}.probe_test_access(text,text,text) from ${login}`);
+      await setup!.query(`revoke usage on schema ${schema} from ${login}`);
+      await assertIsolatedBusinessFixtureDatabase(inspector!);
       const loader = createIsolatedSourceBusinessLoader(setup!, { workspaceId: "studio", allowedProducerServiceIds: ["producer"] });
       assert.deepEqual(await loader.load(sourceBusinessFixture()), { inserted: 4, replayed: 0 });
       assert.deepEqual(await loader.load(sourceBusinessFixture()), { inserted: 0, replayed: 4 });
       const count = (await setup!.query(`select business_count from ${schema}.workspace_budget where workspace_id='studio'`)).rows[0].business_count;
       assert.equal(count, 4);
+    });
+    await t.test("the frozen combined profile rejects extension privilege and guard drift without repair", async profileTest => {
+      const guard = (await setup!.query("select pg_get_functiondef($1::regprocedure) as definition", [`${schema}.guard_test_business()`])).rows[0].definition;
+      const cases: [string,string,string][] = [
+        ["login-capable business role", "alter role novel_d1b_business_fixture login", "alter role novel_d1b_business_fixture nologin"],
+        ["auth BYPASSRLS", "alter role novel_d1b_auth_fixture bypassrls", "alter role novel_d1b_auth_fixture nobypassrls"],
+        ["business reachable owner", "grant novel_d1b_owner to novel_d1b_business_fixture", "revoke novel_d1b_owner from novel_d1b_business_fixture"],
+        ["extra business update", `grant update on ${schema}.task_revision to novel_d1b_business_fixture`, `revoke update on ${schema}.task_revision from novel_d1b_business_fixture`],
+        ["mutable budget scope", `grant update(source_count) on ${schema}.workspace_budget to novel_d1b_business_fixture`, `revoke update(source_count) on ${schema}.workspace_budget from novel_d1b_business_fixture`],
+        ["business guard disabled", `alter table ${schema}.fixed_quote disable trigger test_business_row`, `alter table ${schema}.fixed_quote enable always trigger test_business_row`],
+        ["auth guard disabled", `alter table ${schema}.service_principal disable trigger test_authorization_row`, `alter table ${schema}.service_principal enable always trigger test_authorization_row`],
+        ["function owner", `alter function ${schema}.guard_test_business() owner to ${url.username}`, `alter function ${schema}.guard_test_business() owner to novel_d1b_owner`],
+        ["function body", guard.replaceAll("FORBIDDEN", "CHANGED"), guard],
+        ["PUBLIC probe", `grant execute on function ${schema}.probe_test_access(text,text,text) to public`, `revoke execute on function ${schema}.probe_test_access(text,text,text) from public`],
+        ["temporary probe login", `grant execute on function ${schema}.probe_test_access(text,text,text) to ${login}`, `revoke execute on function ${schema}.probe_test_access(text,text,text) from ${login}`],
+        ["temporary schema login", `grant usage on schema ${schema} to ${login}`, `revoke usage on schema ${schema} from ${login}`],
+        ["extension global default ACL", "alter default privileges for role novel_d1b_business_fixture revoke execute on functions from public", "alter default privileges for role novel_d1b_business_fixture grant execute on functions to public"],
+      ];
+      for (const [label,change,restore] of cases) await profileTest.test(label, async () => {
+        await setup!.query(change);
+        try {
+          await assert.rejects(assertIsolatedBusinessFixtureDatabase(inspector!), { message: "BUSINESS_FIXTURE_DATABASE_NOT_READY" });
+          await assert.rejects(assertIsolatedBusinessFixtureDatabase(inspector!), { message: "BUSINESS_FIXTURE_DATABASE_NOT_READY" });
+        } finally { await setup!.query(restore); }
+        await assertIsolatedBusinessFixtureDatabase(inspector!);
+      });
+      await assert.rejects(assertIsolatedBusinessFixtureDatabase(setup!), { message: "BUSINESS_FIXTURE_DATABASE_NOT_READY" });
+      await assert.rejects(assertSourceIngestDraftDatabase(inspector!), { message: "SOURCE_INGEST_DRAFT_DATABASE_NOT_READY" });
     });
     await t.test("business preparation rejects content conflicts and new fixed versions without changing saved rows", async () => {
       const loader = createIsolatedSourceBusinessLoader(setup!, { workspaceId: "studio", allowedProducerServiceIds: ["producer"] });

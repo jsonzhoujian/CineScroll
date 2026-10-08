@@ -124,4 +124,5 @@ revoke all on function source_ingest_d1b_fixture_v1.probe_test_access(text,text,
 grant create on schema source_ingest_d1b_fixture_v1 to novel_d1b_mutator;
 alter function source_ingest_d1b_fixture_v1.probe_test_access(text,text,text) owner to novel_d1b_mutator;
 revoke create on schema source_ingest_d1b_fixture_v1 from novel_d1b_mutator;
+alter function source_ingest_d1b_fixture_v1.guard_test_authorization() owner to novel_d1b_owner;
 commit;

@@ -48,4 +48,5 @@ do $install$ declare target text; begin
     execute format('alter table source_ingest_d1b_fixture_v1.%I enable always trigger test_business_row',target);
   end loop;
 end $install$;
+alter function source_ingest_d1b_fixture_v1.guard_test_business() owner to novel_d1b_owner;
 commit;
