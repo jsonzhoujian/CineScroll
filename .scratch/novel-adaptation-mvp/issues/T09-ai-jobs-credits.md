@@ -158,6 +158,10 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 2026-10-08继续下一步，实现assertSourceIngestDraftDatabase只读接口（根包导出），固定无OID目录投影与摘要，核验受限inspector/有效权限/角色链，拒绝域/结构/索引/函数/RLS/ACL/default ACL/触发器/继承/改写规则漂移。5项mock+36项隔离PG16测试通过，25类漂移连续拒绝且人工恢复健康；全仓356通过/19条件跳过，类型检查通过。双项审查无阻断，补ACL确定排序后专项41项复验通过；临时库/角色清理、实例停止。SQL草稿未改，不读业务表/返回writer或证明正向授权/业务来源，尚未接启动装配。
 
+## D1b 隔离授权 fixture 增量（2026-10-08）
+
+新增独立测试 SQL：固定登录/service/workspace 映射准备、revision 校验的 workspace 授权启停、保留 session_user 的只读锁探针。真实行验证两种读取/撤权顺序；重复准备不复活已撤权行。原封闭目录预检仍拒绝此扩展，业务十一表继续关闭。详见 `docs/plans/2026-10-08-source-ingest-d1b-auth-fixture.md`。不包含生产授权 API、principal 撤权、业务资料装载或登记写入。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

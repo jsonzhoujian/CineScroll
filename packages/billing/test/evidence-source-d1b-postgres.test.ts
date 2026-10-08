@@ -19,7 +19,7 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
   const admin = new Pool({ connectionString: url.toString(), max: 1, connectionTimeoutMillis: 2000 });
   const suffix = randomUUID().replaceAll("-", "");
   const database = `d1b_${suffix}`, login = `d1b_login_${suffix}`, inspectorLogin = `d1b_login_inspector_${suffix}`;
-  let databaseCreated = false, draftCreated = false, loginCreated = false, inspectorCreated = false;
+  let databaseCreated = false, draftCreated = false, loginCreated = false, inspectorCreated = false, authFixtureCreated = false;
   let setup: Pool | undefined, runtime: Pool | undefined, inspector: Pool | undefined;
   try {
     assert.equal((await admin.query("show data_directory")).rows[0].data_directory, `${socket}/data`);
@@ -188,6 +188,96 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
       for (const value of [["task", "task"], [null], [" bad"]])
         assert.equal((await setup!.query(`select ${schema}.valid_ids($1) as valid`, [value])).rows[0].valid, false);
     });
+    await t.test("controlled test preparation binds a login without granting direct authorization writes", async () => {
+      const extension = await readFile(new URL("../../../docs/sql-drafts/evidence-source-d1b-auth-fixture.sql", import.meta.url), "utf8");
+      await setup!.query(extension); authFixtureCreated = true;
+      await admin.query(`create role ${inspectorLogin} login noinherit nosuperuser nocreatedb nocreaterole nobypassrls noreplication`); inspectorCreated = true;
+      await admin.query(`grant novel_d1b_inspector to ${inspectorLogin}`);
+      const inspectorUrl = new URL(url); inspectorUrl.username = inspectorLogin;
+      inspector = new Pool({ connectionString: inspectorUrl.toString(), options: "-c role=novel_d1b_inspector", max: 1, connectionTimeoutMillis: 2000 });
+      assert.equal((await inspector.query("select current_user as role")).rows[0].role, "novel_d1b_inspector");
+      await assert.rejects(assertSourceIngestDraftDatabase(inspector!), { message: "SOURCE_INGEST_DRAFT_DATABASE_NOT_READY" });
+      const prepare = `select ${schema}.prepare_test_access($1,'collector','studio',true,true,true,array['task'],array['business-producer'],array['collector']) as access`;
+      const access = (await setup!.query(prepare, [login])).rows[0].access;
+      assert.deepEqual(access, { serviceId: "collector", workspaceId: "studio", principalRevision: 1, grantRevision: 1, principalEnabled: true, grantEnabled: true });
+      assert.deepEqual((await setup!.query(prepare, [login])).rows[0].access, access);
+      await setup!.query(`grant execute on function ${schema}.probe_test_access(text,text,text) to ${login}`);
+      const result = (await runtime!.query(`select ${schema}.probe_test_access('studio','register','task') as access`)).rows[0].access;
+      assert.equal(result.serviceId, "collector");
+      assert.deepEqual(result.allowedBusinessProducerServiceIds, ["business-producer"]);
+      assert.deepEqual(result.allowedReceiptProducerServiceIds, ["collector"]);
+      await assert.rejects(runtime!.query(`select ${schema}.probe_test_access('studio','register','snapshot')`), { code: "42501", message: "FORBIDDEN" });
+      await assert.rejects(runtime!.query(prepare, [login]), { code: "42501" });
+      await assert.rejects(runtime!.query(`select ${schema}.set_test_grant_enabled('studio','collector',1,false)`), { code: "42501" });
+    });
+    await t.test("prepared authorization preserves isolation and forbids real-row lock-token writes", async () => {
+      await assert.rejects(runtime!.query(`select ${schema}.probe_test_access('other','initialize',null)`), { code: "42501", message: "FORBIDDEN" });
+      assert.equal((await runtime!.query(`select ${schema}.probe_test_access('studio','receipt_read',null) as access`)).rows[0].access.serviceId, "collector");
+      await assert.rejects(setup!.query(`select ${schema}.prepare_test_access($1,'changed','studio',true,true,true,array['task'],array['business-producer'],array['collector'])`, [login]), { message: "TEST_ACCESS_CONFLICT" });
+      await assert.rejects(setup!.query(`select ${schema}.prepare_test_access($1,'collector','studio',true,false,true,array['snapshot'],array['other-producer'],array['collector'])`, [login]), { message: "TEST_ACCESS_CONFLICT" });
+      await assert.rejects(setup!.query(`select ${schema}.prepare_test_access($1,'collector','studio',true,true,true,array['unknown'],array['business-producer'],array['collector'])`, [login]), { message: "INVALID_TEST_ACCESS" });
+      await assert.rejects(runtime!.query(`set role novel_d1b_auth_fixture`), { code: "42501" });
+      const client = await setup!.connect();
+      try {
+        for (const table of ["service_principal", "workspace_service_grant"]) {
+          await client.query("begin; set local role novel_d1b_locker");
+          await assert.rejects(client.query(`update ${schema}.${table} set lock_token=lock_token`), { code: "42501", message: "FORBIDDEN" });
+          await client.query("rollback");
+        }
+      } finally { await client.query("rollback"); client.release(); }
+    });
+    await t.test("real authorization locks serialize both read-before-revoke and revoke-before-read", async () => {
+      const reader = await runtime!.connect(), manager = await setup!.connect();
+      const revoke = `select ${schema}.set_test_grant_enabled('studio','collector',$1,$2) as revision`;
+      const probe = `select ${schema}.probe_test_access('studio','register','task') as access`;
+      const waitBlocked = async (blocked: number, blocker: number) => {
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline) {
+          if ((await admin.query("select $2::int=any(pg_blocking_pids($1::int)) as blocked", [blocked, blocker])).rows[0].blocked) return;
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.fail("expected real-row lock contention");
+      };
+      try {
+        await reader.query("set statement_timeout='5s'");
+        await manager.query("set statement_timeout='5s'");
+        const readerPid = (await reader.query("select pg_backend_pid() as pid")).rows[0].pid;
+        const managerPid = (await manager.query("select pg_backend_pid() as pid")).rows[0].pid;
+        await reader.query("begin; set local statement_timeout='5s'");
+        await reader.query(probe);
+        await manager.query("begin; set local statement_timeout='5s'");
+        const pendingRevoke = manager.query(revoke, [1, false]).then(result => ({ result }), error => ({ error }));
+        await waitBlocked(managerPid, readerPid);
+        await reader.query("commit");
+        const revoked = await pendingRevoke;
+        assert.ok("result" in revoked);
+        assert.equal(revoked.result.rows[0].revision, "2");
+        await manager.query("commit");
+        await assert.rejects(reader.query(probe), { code: "42501", message: "FORBIDDEN" });
+        const replay = (await manager.query(`select ${schema}.prepare_test_access($1,'collector','studio',true,true,true,array['task'],array['business-producer'],array['collector']) as access`, [login])).rows[0].access;
+        assert.equal(replay.grantEnabled, false);
+        assert.equal(replay.grantRevision, 2);
+        await assert.rejects(manager.query(revoke, [1, true]), { message: "TEST_ACCESS_CONFLICT" });
+        await manager.query(revoke, [2, true]);
+        await manager.query("begin; set local statement_timeout='5s'");
+        await manager.query(revoke, [3, false]);
+        const pendingRead = reader.query(probe).then(result => ({ result }), error => ({ error }));
+        await waitBlocked(readerPid, managerPid);
+        await manager.query("commit");
+        const denied = await pendingRead;
+        assert.ok("error" in denied);
+        assert.equal(denied.error.code, "42501");
+        assert.equal(denied.error.message, "FORBIDDEN");
+        assert.equal((await manager.query(revoke, [4, false])).rows[0].revision, "4");
+      } finally {
+        try { await manager.query("rollback"); }
+        finally {
+          manager.release(true);
+          try { await reader.query("rollback"); }
+          finally { reader.release(true); }
+        }
+      }
+    });
   } finally {
     const failures: string[] = [];
     const cleanup = async (stage: string, action: () => Promise<unknown>) => {
@@ -202,6 +292,7 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
     if (databaseCreated) await cleanup("test-database", () => admin.query(`drop database ${database}`));
     if (loginCreated) await cleanup("test-login", () => admin.query(`drop role ${login}`));
     if (inspectorCreated) await cleanup("inspector-login", () => admin.query(`drop role ${inspectorLogin}`));
+    if (authFixtureCreated) await cleanup("auth-fixture-owner", () => admin.query("drop role novel_d1b_auth_fixture"));
     if (draftCreated) for (const role of roles.toReversed()) await cleanup(role, () => admin.query(`drop role ${role}`));
     await cleanup("admin-pool", () => admin.end());
     assert.deepEqual(failures, [], "SOURCE_D1B_TEST_CLEANUP_FAILED");
