@@ -136,6 +136,12 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 2026-10-08用户选择方案A。设计TaskRevision、固定计费快照、ExecutionIdentity及独立FixedQuote的精确版本关联、服务端投影/指纹区分、候选task追加白名单；三个仓储interface不接受payload/client，F01～F18为未来验收。ADR0006记录隔离实验不作生产证明。未增加代码/SQL/角色授权，不运行数据库；字段、权限锁序、回执预算及实库实施须另批。Standards/Spec审查无阻断，补齐快照/执行双向引用图；本地引用、验收编号及diff检查通过，文档-only未重跑代码测试。
 
+## 增量：D1b独立存储与权限方案（仅文档）
+
+用户确认2026-10-08本轮仅设计。新增类型业务/来源关联、共享回执键与成员、稳定授权/预算逻辑存储、角色/RLS边界、授权共享锁与workspace预算外层串行点；容量/时限及P01～P12均为待批准/未执行候选。不写可执行SQL、不授权、不连接数据库，不覆盖D1a；编码/profile/仓储和D2/D3仍未实现。
+
+Standards/Spec无阻断，按建议补共享锁所需权限/helper与防授权修改前置验收；ADR0007为Proposed。本地引用、P01～P12及diff检查通过，文档-only未重跑代码/数据库测试。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
