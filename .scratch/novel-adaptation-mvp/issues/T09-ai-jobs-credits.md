@@ -112,7 +112,12 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 用户确认readPublishedEvidence(workspaceId,evidenceId)，独立settlementAccess/settle权限默认拒绝，读取历史来源包并核验四对象、规范指纹/ID及封存关联后输出既有九字段。同步存储故障夹具覆盖裸资料/残缺/篡改、跨工作室、授权撤销、异常净化和历史副本；未升级v1读取、生产门禁、数据库或收费。下一步明确数据库共同事务与所有Writer屏障的实施切片，须独立批准。
 
+## 增量：数据库来源存储与屏障实施设计（仅文档）
+
+用户确认第一步设计：8类逻辑存储对象、受控业务写/发送/关闭/封存入口、同头锁与不可变历史、隔离可靠保存、最小权限/RLS/预检、容量/时限候选及DB01～DB16未来验收。D1隔离库存储→D2全部Writer→D3共同发布/读取分期；参数和具体SQL/角色方案待批准，没有迁移/数据库连接/收费。下一步确认D1a的迁移草稿与只读启动预检范围及参数，不能直接跳生产。
+
 ## Acceptance criteria (original scope, unchanged)
+
 
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
