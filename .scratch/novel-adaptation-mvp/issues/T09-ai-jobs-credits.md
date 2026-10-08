@@ -166,6 +166,10 @@ Standards/Spec无阻断，调整进度标题位置；本轮创建响应丢失未
 
 用户批准方案 A：先严格资料校验，再接数据库原子装载。本轮新增 `prepareSourceBusinessFixture`，验证四类精确资料、完整固定引用、报价一致性与任务链，输出独立业务文档、规范内容和指纹。详见 `docs/plans/2026-10-08-source-business-fixture-validation.md`。仅证明内部一致性；装载授权、已存冲突、不可变持久化和预算累计尚未实现。
 
+## D1b 业务资料隔离装载增量（2026-10-08）
+
+用户确认方案 A 的独立测试装载器。新增 test/support 入口与独立 SQL 权限扩展，工作室预算串行后共同保存四类不可变资料；规范内容/全部投影重放比较、固定实体冲突、部分写入失败回滚、并发收敛和独立连接在途观察均实库验收。详见 `docs/plans/2026-10-08-source-business-fixture-loader.md`。不开放运行登记权限；扩展目录尚无独立冻结验收，不能生产装配。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

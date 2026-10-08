@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { assertSourceIngestDraftDatabase } from "../src/evidence-source-d1b-readiness.ts";
+import { createIsolatedSourceBusinessLoader } from "./support/source-business-loader.ts";
+import { sourceBusinessFixture } from "./support/source-business-fixture.ts";
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -19,7 +21,7 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
   const admin = new Pool({ connectionString: url.toString(), max: 1, connectionTimeoutMillis: 2000 });
   const suffix = randomUUID().replaceAll("-", "");
   const database = `d1b_${suffix}`, login = `d1b_login_${suffix}`, inspectorLogin = `d1b_login_inspector_${suffix}`;
-  let databaseCreated = false, draftCreated = false, loginCreated = false, inspectorCreated = false, authFixtureCreated = false;
+  let databaseCreated = false, draftCreated = false, loginCreated = false, inspectorCreated = false, authFixtureCreated = false, businessFixtureCreated = false;
   let setup: Pool | undefined, runtime: Pool | undefined, inspector: Pool | undefined;
   try {
     assert.equal((await admin.query("show data_directory")).rows[0].data_directory, `${socket}/data`);
@@ -278,6 +280,126 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
         }
       }
     });
+    await t.test("controlled business loader atomically saves four immutable records and replays without budget duplication", async () => {
+      const extension = await readFile(new URL("../../../docs/sql-drafts/evidence-source-d1b-business-fixture.sql", import.meta.url), "utf8");
+      await setup!.query(extension); businessFixtureCreated = true;
+      const loader = createIsolatedSourceBusinessLoader(setup!, { workspaceId: "studio", allowedProducerServiceIds: ["producer"] });
+      assert.deepEqual(await loader.load(sourceBusinessFixture()), { inserted: 4, replayed: 0 });
+      assert.deepEqual(await loader.load(sourceBusinessFixture()), { inserted: 0, replayed: 4 });
+      const count = (await setup!.query(`select business_count from ${schema}.workspace_budget where workspace_id='studio'`)).rows[0].business_count;
+      assert.equal(count, 4);
+    });
+    await t.test("business preparation rejects content conflicts and new fixed versions without changing saved rows", async () => {
+      const loader = createIsolatedSourceBusinessLoader(setup!, { workspaceId: "studio", allowedProducerServiceIds: ["producer"] });
+      const changed = sourceBusinessFixture(); changed.quote.pricingRuleVersion = "other-rule";
+      await assert.rejects(loader.load(changed), { code: "CONFLICT", message: "CONFLICT" });
+      const revised = sourceBusinessFixture();
+      revised.quote.version = "v2"; revised.snapshot.quoteReference.version = "v2";
+      await assert.rejects(loader.load(revised), { code: "CONFLICT" });
+      const moved = sourceBusinessFixture();
+      moved.tasks[0].id = moved.tasks[0].binding.taskId = "task-other";
+      moved.tasks[0].binding.unitId = "unit-other"; moved.tasks[0].scopeKeys = ["unit-other"];
+      moved.snapshot.id = moved.tasks[0].snapshotReference.id = "snapshot-other";
+      moved.execution.id = moved.tasks[0].executionReference.id = "execution-other";
+      moved.snapshot.taskAnchorReference.id = "task-other";
+      moved.quote.version = moved.snapshot.quoteReference.version = "v2";
+      await assert.rejects(loader.load(moved), { code: "CONFLICT" });
+      assert.equal((await setup!.query(`select count(*)::int as n from ${schema}.task_revision where id='task-other'`)).rows[0].n, 0);
+      assert.equal((await setup!.query(`select business_count from ${schema}.workspace_budget where workspace_id='studio'`)).rows[0].business_count, 4);
+      assert.deepEqual(await loader.load(sourceBusinessFixture()), { inserted: 0, replayed: 4 });
+    });
+    await t.test("loaded business rows remain immutable, runtime cannot load, and producer scope is fixed", async () => {
+      const input = sourceBusinessFixture();
+      const forbidden = createIsolatedSourceBusinessLoader(runtime!, { workspaceId: "studio", allowedProducerServiceIds: ["producer"] });
+      await assert.rejects(forbidden.load(input), { code: "FORBIDDEN" });
+      const config = { workspaceId: "studio", allowedProducerServiceIds: ["another"] };
+      const scoped = createIsolatedSourceBusinessLoader(setup!, config); config.allowedProducerServiceIds.push("producer");
+      await assert.rejects(scoped.load(input), { code: "FORBIDDEN" });
+      for (const table of ["task_revision", "fixed_snapshot", "execution_identity", "fixed_quote"]) {
+        await assert.rejects(setup!.query(`update ${schema}.${table} set version=version`), { code: "42501", message: "FORBIDDEN" });
+        await assert.rejects(setup!.query(`delete from ${schema}.${table}`), { code: "42501", message: "FORBIDDEN" });
+        await assert.rejects(setup!.query(`truncate ${schema}.${table} cascade`), { code: "P0001", message: "D1B_STORAGE_CLOSED" });
+        await assert.rejects(runtime!.query(`select * from ${schema}.${table}`), { code: "42501" });
+      }
+      await assert.rejects(runtime!.query("set role novel_d1b_business_fixture"), { code: "42501" });
+      await assert.rejects(assertSourceIngestDraftDatabase(inspector!), { message: "SOURCE_INGEST_DRAFT_DATABASE_NOT_READY" });
+    });
+    await t.test("parallel preparations serialize at the workspace budget and a later task revision only adds its own row", async () => {
+      const second = new Pool({ connectionString: setup!.options.connectionString, max: 1, connectionTimeoutMillis: 2000 });
+      try {
+        const input = sourceBusinessFixture(); input.tasks[0].binding.workspaceId = "parallel";
+        const config = { workspaceId: "parallel", allowedProducerServiceIds: ["producer"] };
+        const results = await Promise.all([createIsolatedSourceBusinessLoader(setup!, config).load(input), createIsolatedSourceBusinessLoader(second, config).load(input)]);
+        assert.deepEqual(results.sort((a,b) => a.inserted-b.inserted), [{ inserted: 0, replayed: 4 }, { inserted: 4, replayed: 0 }]);
+        input.tasks.push({ ...structuredClone(input.tasks[0]), version: "v2", revision: 2, predecessorVersion: "v1", recordedAt: "2026-10-08T00:00:01.000Z" });
+        assert.deepEqual(await createIsolatedSourceBusinessLoader(setup!, config).load(input), { inserted: 1, replayed: 4 });
+        assert.equal((await setup!.query(`select business_count from ${schema}.workspace_budget where workspace_id='parallel'`)).rows[0].business_count, 5);
+      } finally { await second.end(); }
+    });
+    await t.test("an independent connection sees no partial group while the preparation transaction is in flight", async () => {
+      const observerPool = new Pool({ connectionString: setup!.options.connectionString, max: 1, connectionTimeoutMillis: 2000 });
+      let observer: PoolClient | undefined;
+      const key = 521741;
+      let pending: Promise<unknown> | undefined;
+      try {
+        observer = await observerPool.connect();
+        await observer.query(`create function ${schema}.pause_business_fixture() returns trigger language plpgsql as $$ begin perform pg_advisory_xact_lock(${key}); return NEW; end $$`);
+        await observer.query(`create trigger pause_business_fixture before insert on ${schema}.fixed_snapshot for each row execute function ${schema}.pause_business_fixture()`);
+        await observer.query("select pg_advisory_lock($1)", [key]);
+        const input = sourceBusinessFixture(); input.tasks[0].binding.workspaceId = "visibility";
+        pending = createIsolatedSourceBusinessLoader(setup!, { workspaceId: "visibility", allowedProducerServiceIds: ["producer"] }).load(input);
+        // Attach rejection immediately while polling, so a timed-out test does not leak an unhandled promise.
+        const outcome = pending.then(result => ({ result }), error => ({ error }));
+        const deadline = Date.now() + 700;
+        let blocked = false;
+        while (Date.now() < deadline) {
+          blocked = (await observer.query("select exists(select 1 from pg_locks where locktype='advisory' and objid=$1 and not granted) as blocked", [key])).rows[0].blocked;
+          if (blocked) break;
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.equal(blocked, true);
+        for (const table of ["task_revision", "fixed_snapshot", "execution_identity", "fixed_quote", "workspace_budget"])
+          assert.equal((await observer.query(`select count(*)::int as n from ${schema}.${table} where workspace_id='visibility'`)).rows[0].n, 0);
+        await observer.query("select pg_advisory_unlock($1)", [key]);
+        const completed = await outcome;
+        assert.ok("result" in completed);
+        assert.deepEqual(completed.result, { inserted: 4, replayed: 0 });
+        for (const table of ["task_revision", "fixed_snapshot", "execution_identity", "fixed_quote"])
+          assert.equal((await observer.query(`select count(*)::int as n from ${schema}.${table} where workspace_id='visibility'`)).rows[0].n, 1);
+      } finally {
+        const failures: string[] = [];
+        const cleanup = async (stage: string, action: () => Promise<unknown>) => {
+          try { await action(); } catch { failures.push(stage); }
+        };
+        try {
+          if (observer) {
+            await cleanup("unlock", () => observer!.query("select pg_advisory_unlock($1)", [key]));
+            if (pending) await pending.catch(() => {});
+            await cleanup("trigger", () => observer!.query(`drop trigger if exists pause_business_fixture on ${schema}.fixed_snapshot`));
+            await cleanup("function", () => observer!.query(`drop function if exists ${schema}.pause_business_fixture()`));
+          }
+        } finally {
+          try { observer?.release(true); }
+          finally { await cleanup("observer-pool", () => observerPool.end()); }
+        }
+        assert.deepEqual(failures, [], "BUSINESS_OBSERVER_CLEANUP_FAILED");
+      }
+    });
+    await t.test("exhausted workspace budget rolls back newly inserted business rows", async () => {
+      for (const [workspace, count, bytes] of [["capacity-count",4096,0], ["capacity-bytes",0,16777216]] as const) {
+        await setup!.query("begin; set local role novel_d1b_business_fixture");
+        try {
+          await setup!.query(`insert into ${schema}.workspace_budget values($1,0,0,0,0,0,0)`, [workspace]);
+          await setup!.query(`update ${schema}.workspace_budget set business_count=$2,business_bytes=$3 where workspace_id=$1`, [workspace,count,bytes]);
+          await setup!.query("commit");
+        } finally { await setup!.query("rollback"); }
+        const input = sourceBusinessFixture(); input.tasks[0].binding.workspaceId = workspace;
+        const loader = createIsolatedSourceBusinessLoader(setup!, { workspaceId: workspace, allowedProducerServiceIds: ["producer"] });
+        await assert.rejects(loader.load(input), { code: "CAPACITY_EXCEEDED", message: "CAPACITY_EXCEEDED" });
+        for (const table of ["task_revision", "fixed_snapshot", "execution_identity", "fixed_quote"])
+          assert.equal((await setup!.query(`select count(*)::int as n from ${schema}.${table} where workspace_id=$1`, [workspace])).rows[0].n, 0);
+      }
+    });
   } finally {
     const failures: string[] = [];
     const cleanup = async (stage: string, action: () => Promise<unknown>) => {
@@ -293,6 +415,7 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
     if (loginCreated) await cleanup("test-login", () => admin.query(`drop role ${login}`));
     if (inspectorCreated) await cleanup("inspector-login", () => admin.query(`drop role ${inspectorLogin}`));
     if (authFixtureCreated) await cleanup("auth-fixture-owner", () => admin.query("drop role novel_d1b_auth_fixture"));
+    if (businessFixtureCreated) await cleanup("business-fixture-role", () => admin.query("drop role novel_d1b_business_fixture"));
     if (draftCreated) for (const role of roles.toReversed()) await cleanup(role, () => admin.query(`drop role ${role}`));
     await cleanup("admin-pool", () => admin.end());
     assert.deepEqual(failures, [], "SOURCE_D1B_TEST_CLEANUP_FAILED");
