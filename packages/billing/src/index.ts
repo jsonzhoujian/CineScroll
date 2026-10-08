@@ -1,4 +1,5 @@
 export { prepareSourceIngestIdentity, SourceIngestProtocolError } from "./evidence-source-ingest.ts";
+export { assertSourceIngestDraftDatabase } from "./evidence-source-d1b-readiness.ts";
 export type { SourceIngestReference, InitializeSourceCommand, RegisterSourceCommand, SourceIngestIdentity, PreparedSourceIngestIdentity } from "./evidence-source-ingest.ts";
 
 export type BillingActor = Readonly<{ workspaceId: string; serviceId: string }>;

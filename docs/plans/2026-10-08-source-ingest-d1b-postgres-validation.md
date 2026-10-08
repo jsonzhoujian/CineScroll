@@ -41,6 +41,8 @@ TEST_SOURCE_D1B_DATABASE_URL='postgresql://zhoujian@localhost/postgres?host=/pri
 
 ## 清理与后续
 
+后续已实施[只读目录预检](2026-10-08-source-ingest-d1b-readiness.md)，扩展为25类目录漂移测试；这不改变本文初轮10项证据或正向授权/登记尚未交付的边界。
+
 全仓测试后独立查询：novel_d1b_*及d1b_login_*角色数0，d1b_*测试库数0。pg_ctl停止成功，再查status为no server running。保留空临时集群目录及日志便于诊断，未执行递归删除。
 
 Standards/Spec审查结果记入T09。下一步可实现独立D1b目录预检，拒绝结构/权限/函数漂移并保留默认关闭；正向业务装载和运行仓储各自通过后续切片完成。

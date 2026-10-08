@@ -3,6 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
+import { assertSourceIngestDraftDatabase } from "../src/evidence-source-d1b-readiness.ts";
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -17,9 +18,9 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
   assert.equal(url.password, "");
   const admin = new Pool({ connectionString: url.toString(), max: 1, connectionTimeoutMillis: 2000 });
   const suffix = randomUUID().replaceAll("-", "");
-  const database = `d1b_${suffix}`, login = `d1b_login_${suffix}`;
-  let databaseCreated = false, draftCreated = false, loginCreated = false;
-  let setup: Pool | undefined, runtime: Pool | undefined;
+  const database = `d1b_${suffix}`, login = `d1b_login_${suffix}`, inspectorLogin = `d1b_login_inspector_${suffix}`;
+  let databaseCreated = false, draftCreated = false, loginCreated = false, inspectorCreated = false;
+  let setup: Pool | undefined, runtime: Pool | undefined, inspector: Pool | undefined;
   try {
     assert.equal((await admin.query("show data_directory")).rows[0].data_directory, `${socket}/data`);
     assert.equal((await admin.query("show listen_addresses")).rows[0].listen_addresses, "");
@@ -97,6 +98,56 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
         assert.equal((await setup!.query("select has_function_privilege($1,$2,'EXECUTE') as allowed", [role, `${schema}.lock_authorization(text,text,text)`])).rows[0].allowed, expected);
       }
     });
+    await t.test("the restricted inspector accepts only the frozen closed profile and rejects drift without repair", async profileTest => {
+      await admin.query(`create role ${inspectorLogin} login noinherit nosuperuser nocreatedb nocreaterole nobypassrls noreplication`); inspectorCreated = true;
+      await admin.query(`grant novel_d1b_inspector to ${inspectorLogin}`);
+      await admin.query(`revoke temporary on database ${database} from public`);
+      const inspectorUrl = new URL(url); inspectorUrl.username = inspectorLogin;
+      inspector = new Pool({ connectionString: inspectorUrl.toString(), options: "-c role=novel_d1b_inspector", max: 1, connectionTimeoutMillis: 2000 });
+      await assertSourceIngestDraftDatabase(inspector);
+      await assert.rejects(assertSourceIngestDraftDatabase(setup!), { message: "SOURCE_INGEST_DRAFT_DATABASE_NOT_READY" });
+      const guard = draft.match(/create function source_ingest_d1b_fixture_v1\.deny_draft_write\(\)[\s\S]*?\$body\$;/)![0].replace("create function", "create or replace function");
+      const cases: [string, string, string][] = [
+        ["BYPASSRLS login", `alter role ${inspectorLogin} bypassrls`, `alter role ${inspectorLogin} nobypassrls`],
+        ["reachable owner", `grant novel_d1b_owner to ${inspectorLogin}`, `revoke novel_d1b_owner from ${inspectorLogin}`],
+        ["login-capable locker", "alter role novel_d1b_locker login", "alter role novel_d1b_locker nologin"],
+        ["database TEMP", `grant temporary on database ${database} to public`, `revoke temporary on database ${database} from public`],
+        ["missing table", `alter table ${schema}.collection rename to drift_collection`, `alter table ${schema}.drift_collection rename to collection`],
+        ["unexpected column", `alter table ${schema}.collection add column drift text`, `alter table ${schema}.collection drop column drift`],
+        ["domain nullability changed", `alter domain ${schema}.identifier set not null`, `alter domain ${schema}.identifier drop not null`],
+        ["FORCE RLS removed", `alter table ${schema}.collection no force row level security`, `alter table ${schema}.collection force row level security`],
+        ["permissive policy", `create policy drift on ${schema}.collection using(true)`, `drop policy drift on ${schema}.collection`],
+        ["inspector table access", `grant select on ${schema}.collection to novel_d1b_inspector`, `revoke select on ${schema}.collection from novel_d1b_inspector`],
+        ["login column access", `grant select(binding) on ${schema}.collection to ${inspectorLogin}`, `revoke select(binding) on ${schema}.collection from ${inspectorLogin}`],
+        ["locker edits authorization", `grant update(enabled) on ${schema}.workspace_service_grant to novel_d1b_locker`, `revoke update(enabled) on ${schema}.workspace_service_grant from novel_d1b_locker`],
+        ["locker schema CREATE", `grant create on schema ${schema} to novel_d1b_locker`, `revoke create on schema ${schema} from novel_d1b_locker`],
+        ["weakened budget", `alter table ${schema}.workspace_budget drop constraint workspace_budget_receipt_count_check; alter table ${schema}.workspace_budget add constraint workspace_budget_receipt_count_check check(true)`,
+          `alter table ${schema}.workspace_budget drop constraint workspace_budget_receipt_count_check; alter table ${schema}.workspace_budget add constraint workspace_budget_receipt_count_check check(receipt_count between 0 and 1024)`],
+        ["immediate circular FK", `alter table ${schema}.fixed_snapshot alter constraint fixed_snapshot_task_fk not deferrable initially immediate`, `alter table ${schema}.fixed_snapshot alter constraint fixed_snapshot_task_fk deferrable initially deferred`],
+        ["missing index", `drop index ${schema}.source_enumeration`, `create index source_enumeration on ${schema}.source_version(workspace_id,collection_id,introduced_generation,kind,id,revision)`],
+        ["extra index", `create index drift on ${schema}.source_version(workspace_id)`, `drop index ${schema}.drift`],
+        ["closed row guard disabled", `alter table ${schema}.collection disable trigger draft_closed_row`, `alter table ${schema}.collection enable always trigger draft_closed_row`],
+        ["internal FK guard disabled", `alter table ${schema}.receipt_source_member disable trigger all`, `alter table ${schema}.receipt_source_member enable trigger all; alter table ${schema}.receipt_source_member enable always trigger draft_closed_row; alter table ${schema}.receipt_source_member enable always trigger draft_closed_truncate`],
+        ["guard body changed", `create or replace function ${schema}.deny_draft_write() returns trigger language plpgsql set search_path=pg_catalog,pg_temp as $$begin return new; end$$`, guard],
+        ["helper search path", `alter function ${schema}.lock_authorization(text,text,text) set search_path=public`, `alter function ${schema}.lock_authorization(text,text,text) set search_path=pg_catalog,pg_temp`],
+        ["helper PUBLIC EXECUTE", `grant execute on function ${schema}.lock_authorization(text,text,text) to public`, `revoke execute on function ${schema}.lock_authorization(text,text,text) from public`],
+        ["future PUBLIC execution", `alter default privileges for role novel_d1b_owner in schema ${schema} grant execute on functions to public`, `alter default privileges for role novel_d1b_owner in schema ${schema} revoke execute on functions from public`],
+        ["extra function", `create function ${schema}.drift() returns integer language sql as $$select 1$$`, `drop function ${schema}.drift()`],
+        ["DML rewrite rule", `create rule drift as on insert to ${schema}.collection do instead nothing`, `drop rule drift on ${schema}.collection`],
+      ];
+      for (const [name, change, restore] of cases) {
+        await profileTest.test(`preflight refuses ${name}`, async () => {
+          await setup!.query(change);
+          try {
+            await assert.rejects(assertSourceIngestDraftDatabase(inspector!), { message: "SOURCE_INGEST_DRAFT_DATABASE_NOT_READY" });
+            await assert.rejects(assertSourceIngestDraftDatabase(inspector!), { message: "SOURCE_INGEST_DRAFT_DATABASE_NOT_READY" });
+          } finally { await setup!.query(restore); }
+          await assertSourceIngestDraftDatabase(inspector!);
+        });
+      }
+      await inspector.end(); inspector = undefined;
+      await admin.query(`drop role ${inspectorLogin}`); inspectorCreated = false;
+    });
     await admin.query(`create role ${login} login noinherit nosuperuser nocreatedb nocreaterole nobypassrls noreplication`); loginCreated = true;
     await setup.query(`grant usage on schema ${schema} to ${login}`);
     url.username = login;
@@ -143,12 +194,14 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
       try { await action(); } catch { failures.push(stage); }
     };
     if (runtime) await cleanup("runtime-pool", () => runtime!.end());
+    if (inspector) await cleanup("inspector-pool", () => inspector!.end());
     if (setup) {
       await setup.query("rollback").catch(() => {});
       await cleanup("setup-pool", () => setup!.end());
     }
     if (databaseCreated) await cleanup("test-database", () => admin.query(`drop database ${database}`));
     if (loginCreated) await cleanup("test-login", () => admin.query(`drop role ${login}`));
+    if (inspectorCreated) await cleanup("inspector-login", () => admin.query(`drop role ${inspectorLogin}`));
     if (draftCreated) for (const role of roles.toReversed()) await cleanup(role, () => admin.query(`drop role ${role}`));
     await cleanup("admin-pool", () => admin.end());
     assert.deepEqual(failures, [], "SOURCE_D1B_TEST_CLEANUP_FAILED");
