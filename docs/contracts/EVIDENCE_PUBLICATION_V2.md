@@ -90,4 +90,6 @@ V01～V10尚未执行：固定向量与字段乱序；expected三字段逐项变
 
 ## 9. 共享登记与共同提交夹具增量
 
-已新增[内存共同事务规则夹具](../plans/2026-10-07-v2-publication-transaction-fixture.md)，由确认的publishFromSeal/lookupPublished测试边界验证共享键、专用授权、前序/历史关联及一次四对象保存。最终同步来源读取至保存没有await，仅同进程可用；不是数据库屏障，也不升级原v1写路径。readPublishedEvidence/生产发布读取门禁尚未实现，真实SQL回滚、COMMIT不确定性、所有Writer与收费仍延期。
+已新增[内存共同事务规则夹具](../plans/2026-10-07-v2-publication-transaction-fixture.md)，由确认的publishFromSeal/lookupPublished测试边界验证共享键、专用授权、前序/历史关联及一次四对象保存。最终同步来源读取至保存没有await，仅同进程可用；不是数据库屏障，也不升级原v1写路径。生产发布读取门禁尚未实现，真实SQL回滚、COMMIT不确定性、所有Writer与收费仍延期。
+
+增量已实现[内存已发布证据读取门禁](../plans/2026-10-08-v2-published-evidence-reader.md)：readPublishedEvidence使用独立settle授权，保存历史完整来源包并重验四对象/封存关联，复用九字段投影；缺省不授予读取，裸资料或损坏关联拒绝。可选同步存储端口只用于故障夹具。生产发布读取门禁、既有v1读取接线、真实来源认证、数据库与收费仍未实现。

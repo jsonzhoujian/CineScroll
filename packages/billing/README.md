@@ -82,3 +82,6 @@ EvidenceWriteSource.load必须来自可信宿主：负责验证来源服务身�
 实库测试使用 TEST_BILLING_DATABASE_URL（仅可丢弃管理员测试库）：`node --test packages/billing/test/postgres-ledger.test.ts`。未配置时显式跳过；隔离运行并要求临时测试库允许随机受限登录无密码连接，绝不能把此测试策略应用于部署。测试手动应用迁移，创建/删除随机登录角色，保留随机工作室夹具，模型/真实Key/业务库完全不参与。验证包含关闭并重建连接池后读回、双池并发、RLS/最小权限、回滚、历史保护及SQL非法单元拒绝。
 
 预检实库测试使用TEST_BILLING_READINESS_DATABASE_URL，仅限相同可丢弃管理员测试库。它临时改变并恢复DDL/权限，必须单独运行，或全套使用`--test-concurrency=1`，不能与其他DDL测试并行。
+## v2发布读取增量
+
+`InMemoryV2PublicationTransactionFixture.readPublishedEvidence(workspaceId,evidenceId)` 经独立 `settlementAccess` 的 `settle` 权限返回既有九字段证据，缺省拒绝。读取保存的历史完整来源包，重验请求、资料、审计、回执及封存关联；不读取当前来源头。`storedPublicationFixture` 是仅测试的同步故障注入存储端口，不能作为真实来源证明或生产仓储。未升级v1读取、数据库接线或真实收费。详见[读取设计](../../docs/plans/2026-10-08-v2-published-evidence-reader.md)。

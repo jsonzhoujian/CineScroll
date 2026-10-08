@@ -108,7 +108,12 @@ EVIDENCE_TRUSTED_SOURCE_TRANSACTION及设计分解补齐可信来源完整字段
 
 增量共同事务夹具：用户确认publishFromSeal/lookupPublished，内存共享登记纳入v1预置占用，专用授权、v2同键冲突/并发重放、来源等待后最终同步核验、前序/历史成员和四对象一次Map保存有测试。组装失败无残留，保存后响应故障可原请求恢复；固定seal身份不可变，有界容量。原v1写路径未接，未提供真实DB/来源/Writer/生产读取门禁/收费；下一步已发布证据读取门禁。
 
+## 增量：v2已发布证据内存读取门禁
+
+用户确认readPublishedEvidence(workspaceId,evidenceId)，独立settlementAccess/settle权限默认拒绝，读取历史来源包并核验四对象、规范指纹/ID及封存关联后输出既有九字段。同步存储故障夹具覆盖裸资料/残缺/篡改、跨工作室、授权撤销、异常净化和历史副本；未升级v1读取、生产门禁、数据库或收费。下一步明确数据库共同事务与所有Writer屏障的实施切片，须独立批准。
+
 ## Acceptance criteria (original scope, unchanged)
+
 
 - Jobs expose queued, running, partial-success, failed, restricted, awaiting-user, and completed states.
 - Closing the page does not interrupt jobs; completion and required action create in-app notifications.
