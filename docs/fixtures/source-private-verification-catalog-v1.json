@@ -1,0 +1,22 @@
+{
+  "fingerprint": "1cd45fa2d0f30621cbc8a9cd5bc3fb8edbc32095b3ef5d8e83fc833d9ebfa536",
+  "snapshot": {
+    "schema": {"name":"source_ingest_d1b_verify_v1","owner":"codec_admin"},
+    "acl": [
+      {"object":"function","grantee":"codec_admin","grantor":"codec_admin","identity":"verify_business_row(kind text, row_data jsonb)","privilege":"EXECUTE","is_grantable":false},
+      {"object":"function","grantee":"codec_admin","grantor":"codec_admin","identity":"verify_initialize_business(command jsonb, expected_service_id text, expected_rule_version text)","privilege":"EXECUTE","is_grantable":false},
+      {"object":"schema","grantee":"codec_admin","grantor":"codec_admin","identity":"source_ingest_d1b_verify_v1","privilege":"CREATE","is_grantable":false},
+      {"object":"schema","grantee":"codec_admin","grantor":"codec_admin","identity":"source_ingest_d1b_verify_v1","privilege":"USAGE","is_grantable":false}
+    ],
+    "roles": [
+      {"name":"codec_admin","limit":-1,"login":true,"super":true,"bypass":true,"inherit":true,"createDb":true,"createRole":true,"replication":true},
+      {"name":"codec_inspector","limit":-1,"login":true,"super":false,"bypass":false,"inherit":true,"createDb":false,"createRole":false,"replication":false}
+    ],
+    "functions": [
+      {"cost":100,"kind":"f","name":"verify_business_row","rows":0,"owner":"codec_admin","result":"jsonb","strict":false,"language":"plpgsql","parallel":"u","settings":["search_path=pg_catalog, pg_temp"],"arguments":"kind text, row_data jsonb","leakproof":false,"volatility":"s","definitionHash":"e38863fc0085d090004dc8bda7cd170f2bbb0f21f75e7be1fa6bb20b72ce8706","securityDefiner":false},
+      {"cost":100,"kind":"f","name":"verify_initialize_business","rows":0,"owner":"codec_admin","result":"jsonb","strict":false,"language":"plpgsql","parallel":"u","settings":["search_path=pg_catalog, pg_temp"],"arguments":"command jsonb, expected_service_id text, expected_rule_version text","leakproof":false,"volatility":"v","definitionHash":"01598b2bf491dbf2c5df427e4c57dbf4eb1dafb18a8b8d9cdab98a62d96207ec","securityDefiner":false}
+    ],
+    "defaults":[],"defaultHeaders":[],"extensions":[],"memberships":[],"roleSettings":[],
+    "otherObjects":{"types":0,"operators":0,"relations":0,"collations":0,"conversions":0}
+  }
+}

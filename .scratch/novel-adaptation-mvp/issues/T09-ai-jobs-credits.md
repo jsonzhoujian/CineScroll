@@ -246,6 +246,14 @@ Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已�
 
 Standards/Spec静态审查发现并修复bytea_output会话展示差异：四类实际typed bytea显式转小写hex，再与独立重建的规范字节比较。双轴复审无残留静态阻断；后续须补escape/hex实库回归。本轮引用、范围及diff检查通过，未运行数据库或应用测试。
 
+## D1b 私有核验独立配置与隔离验收（2026-10-09）
+
+用户确认独立门禁与私有主函数两个测试边界。新增test-only私有目录gate、无OID静态资料及主函数实库子项；旧业务/codec摘要与查询、私有SQL原稿均不改。新摘要1cd45fa2d0f30621cbc8a9cd5bc3fb8edbc32095b3ef5d8e83fc833d9ebfa536，门禁单元红→绿2项，8类目录漂移拒绝/显式恢复；实库111项通过含旧业务/组合回归。
+
+四类已存行字节/时间/binding/producer损坏与专属投影拒绝、黄金payload/摘要、真实授权/撤权、外层事务锁保持均验收；追加4个同步document/字节/列的自洽跨行冲突。普通LOGIN直接调用拒绝，临时管理员wrapper仅证明SQL语义，不作生产owner/RLS权限证明。完整B01～B12逐列/关联、byok/容量主函数边界及共同写入仍未完成。详见docs/plans/2026-10-09-source-private-verification-acceptance.md。
+
+全仓358通过/21数据库条件跳过（共379），类型检查通过。Standards清理风险修复、Spec关联覆盖缺口补齐部分向量且明确余项，双轴复审无残留阻断。独立连接核对测试库/角色均0，临时实例停止，目录/log保留；无生产GRANT/RLS/运行装配/writer，无push。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
