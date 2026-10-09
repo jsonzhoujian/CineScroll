@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import type { TestContext } from 'node:test';
 import { Pool } from 'pg';
 import { assertIsolatedPrivateVerificationDatabase,privateVerificationCatalogQuery } from './source-private-readiness.ts';
+import { testPrivateColumns,testPrivateRelationships,testPrivateFacts,testPrivateCapacity } from './source-private-vectors.ts';
 
 const schema='source_ingest_d1b_verify_v1',business='source_ingest_d1b_fixture_v1';
 export async function testPrivateVerification(t:TestContext,admin:Pool,inspector:Pool,url:URL){
@@ -102,6 +103,11 @@ export async function testPrivateVerification(t:TestContext,admin:Pool,inspector
       }
       assert.deepEqual((await call()).rows[0].result,baseline);
     });
+    const proofContext={admin,login,command,call,baseline};
+    await testPrivateColumns(t,proofContext);
+    await testPrivateRelationships(t,proofContext);
+    await testPrivateFacts(t,proofContext);
+    await testPrivateCapacity(t,proofContext);
     for(const [label,input,service,rule,message,code] of [
       ['extra command key',{...command,records:[]},'verify-collector','rule-v1','INVALID_COMMAND','P0001'],
       ['missing reference',{...command,taskReference:{id:'missing',version:'v1'}},'verify-collector','rule-v1','NOT_FOUND','P0001'],

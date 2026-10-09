@@ -254,6 +254,14 @@ Standards/Spec静态审查发现并修复bytea_output会话展示差异：四类
 
 全仓358通过/21数据库条件跳过（共379），类型检查通过。Standards清理风险修复、Spec关联覆盖缺口补齐部分向量且明确余项，双轴复审无残留阻断。独立连接核对测试库/角色均0，临时实例停止，目录/log保留；无生产GRANT/RLS/运行装配/writer，无push。
 
+## D1b 逐列/逐关联/主函数边界与写入前置（2026-10-09）
+
+用户批准补齐测试再推进同事务写入。新增71列显式manifest并对齐实库列/装载投影，18精确引用、28binding、8计价、自洽v2与7主函数输入/上界向量；实库244项通过（增133），manifest单元1项通过。全仓360通过/21条件跳过，共381，类型检查通过。原SQL及三个冻结目录不改，无生产权限或writer。
+
+严格业务封套合法上界各<512KiB/四份<2MiB；单份2MiB/累计16MiB硬拒绝分支当前不可达，保留防御，不造合法等值测试。验证100个256单位Unicode ID与BYOK0正例，101项/257单位/畸形2MiB字符串拒绝；主函数不得截断。详见docs/plans/2026-10-09-source-private-verification-complete-vectors.md。锚点ID向量可能被binding比较拒绝，不声称逐分支命中。
+
+Standards/Spec静态复审均无阻断；独立检查测试库/角色均0，实例停止，目录/log保留。已列同事务initialize入口和新NOLOGIN owner/真实LOGIN最小权限/RLS/guard差异；按TDD新seam须确认后实施，不将管理员wrapper当运行仓储。共同写入、历史重放与未知提交恢复尚未实施。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
