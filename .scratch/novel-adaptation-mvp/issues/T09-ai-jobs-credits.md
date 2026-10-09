@@ -218,6 +218,14 @@ Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已�
 
 详见 `docs/plans/2026-10-09-source-initialize-sql-codec-draft.md`。封套及部分值域不等于完整业务guard，SQL/Node三方对照与实际ACL仍未验收。双轴审查数字词法问题已修复，加入后续1.0等价向量；静态检查不能替代PG解析/执行。
 
+## D1b 纯计算草稿隔离PG16增量（2026-10-09）
+
+用户确认无TCP临时实例验证：安装独立纯schema，新增条件测试，38项通过，17份黄金字节/摘要、原命令指纹、业务编码/投影/预算样例、有限拒绝及普通LOGIN实际42501验证。详见 `docs/plans/2026-10-09-source-codec-postgres-validation.md`。SQL草稿/运行代码/旧profile未改，没有writer授权；全部等值容量/DDL漂移/写原子性仍未验证。
+
+独立确认测试schema及临时probe角色已清空，实例停止，目录/log保留；全仓类型检查通过。
+
+全仓347通过/21条件跳过，不混算独立实库38项。Standards/Spec无阻断，引用/diff检查通过；fixture环境options强化仍为后续建议。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
