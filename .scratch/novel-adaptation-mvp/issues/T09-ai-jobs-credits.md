@@ -206,6 +206,12 @@ Standards/Spec审查无阻断；引用、C01～C08编号及diff检查通过。�
 
 Standards与Spec本轮审查均无阻断；OpenSSL仅证明摘要，完整语义仍需固定材料审阅/SQL对照，已明确落档。
 
+## D1b SQL 编码/投影边界设计增量（2026-10-09）
+
+新增 `docs/plans/2026-10-09-source-initialize-sql-codec-design.md`：独立封闭SECURITY INVOKER纯计算schema、类型封套/有界编码/严格业务投影与UTC/hex预算，S01～S08未来验收。旧摘要不改，不把新schema天然纳入旧门禁拒绝范围；新增完整四类业务向量及遍历上界仍待草稿前确定。本轮仅文档，不交付/执行SQL、不授权或连接数据库。
+
+Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已澄清，复核无残留阻断。引用/编号/diff检查通过，未运行代码/数据库测试。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
