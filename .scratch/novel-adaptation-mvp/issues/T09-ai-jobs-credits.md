@@ -212,6 +212,12 @@ Standards与Spec本轮审查均无阻断；OpenSSL仅证明摘要，完整语义
 
 Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已澄清，复核无残留阻断。引用/编号/diff检查通过，未运行代码/数据库测试。
 
+## D1b 独立纯计算SQL草稿增量（2026-10-09）
+
+用户确认遍历上界及草稿实施：新增 `docs/sql-drafts/evidence-source-d1b-codec.sql`，独立schema/8个INVОKER函数，深度8/值节点50000/输入2MiB工作量口径/输出16MiB，固定封套编码、有限task/snapshot投影与逻辑预算。无新角色/运行GRANT/业务表访问/writer；仅文件交付，不执行数据库。
+
+详见 `docs/plans/2026-10-09-source-initialize-sql-codec-draft.md`。封套及部分值域不等于完整业务guard，SQL/Node三方对照与实际ACL仍未验收。双轴审查数字词法问题已修复，加入后续1.0等价向量；静态检查不能替代PG解析/执行。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
