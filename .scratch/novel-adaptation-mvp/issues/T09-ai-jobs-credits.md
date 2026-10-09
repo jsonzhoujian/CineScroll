@@ -226,6 +226,12 @@ Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已�
 
 全仓347通过/21条件跳过，不混算独立实库38项。Standards/Spec无阻断，引用/diff检查通过；fixture环境options强化仍为后续建议。
 
+## D1b codec 容量等值与冻结目录增量（2026-10-09）
+
+用户明确补容量等值/拒绝再冻结配置。新增test/support只读codec门禁及静态无OID目录资料；边界深度/50000节点/2MiB输入/16MiB输出/包2MiB/回执16KiB等值与+1覆盖。16MiB测试先超10s，quote_string改为固定扫描后约0.3s，原黄金字节不变。13类目录漂移拒绝/明确恢复，含空default ACL先红后补行头投影，旧两个profile不改、无writer或业务授权。
+
+详见 `docs/plans/2026-10-09-source-codec-boundaries-readiness.md`；冻结指纹固定在代码/资料，不运行时学习。codec_admin仍为隔离管理员owner，不是生产owner；纯函数证明不代完整业务guard/原子写入。68项实库、3项门禁单元通过；全仓351通过/21条件跳过、类型检查通过，双轴审查无阻断。独立核对schema/测试角色/default ACL均清空，实例停止，目录/log留存。旧业务两profile同库组合复验留下一切片。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

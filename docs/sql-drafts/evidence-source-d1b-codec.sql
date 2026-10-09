@@ -540,21 +540,20 @@ as $profiles$ select '{
 
 create function source_ingest_d1b_codec_v1.quote_string(value text) returns text
 language plpgsql immutable security invoker set search_path=pg_catalog,pg_temp as $body$
-declare result text := '"'; ch text; n int; i int;
+declare result text; escaped text; n int;
 begin
   if value is null then raise exception 'INVALID_CODEC_INPUT'; end if;
-  for i in 1..char_length(value) loop
-    ch := substr(value,i,1); n := ascii(ch);
-    if n in (34,92) then result := result || chr(92) || ch;
-    elsif n=8 then result := result || chr(92)||'b';
-    elsif n=9 then result := result || chr(92)||'t';
-    elsif n=10 then result := result || chr(92)||'n';
-    elsif n=12 then result := result || chr(92)||'f';
-    elsif n=13 then result := result || chr(92)||'r';
-    elsif n<32 then result := result || chr(92)||'u'||lpad(to_hex(n),4,'0');
-    else result := result || ch; end if;
+  -- A bounded number of native scans, not quadratic per-character concatenation.
+  -- Escape original slashes first; later inserted escapes must not be doubled.
+  result:=replace(replace(value,chr(92),chr(92)||chr(92)),chr(34),chr(92)||chr(34));
+  for n in 1..31 loop
+    if strpos(result,chr(n))>0 then
+      escaped:=chr(92)||case n when 8 then 'b' when 9 then 't' when 10 then 'n'
+        when 12 then 'f' when 13 then 'r' else 'u'||lpad(to_hex(n),4,'0') end;
+      result:=replace(result,chr(n),escaped);
+    end if;
   end loop;
-  return result || '"';
+  return chr(34)||result||chr(34);
 end $body$;
 
 create function source_ingest_d1b_codec_v1.valid_identifier(value text) returns boolean

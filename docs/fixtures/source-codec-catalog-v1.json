@@ -1,0 +1,282 @@
+{
+  "profile": "isolated-pg16-pure-codec-v1",
+  "fingerprint": "2b3f7fed921c271874fa0c5b6404e7f2133d9fbd40f4b3cf4f027c788829ffb4",
+  "snapshot": {
+    "acl": [
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "budget_bytes(collection_base jsonb, task_source jsonb, snapshot_source jsonb, task_link jsonb, snapshot_link jsonb, receipt_base jsonb, member0 jsonb, member1 jsonb)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "encode_document(profile text, value jsonb)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "profiles()",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "project_payload(kind text, document jsonb, quote_document jsonb, rule_version text)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "quote_string(value text)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "utc_millis(value timestamp with time zone)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "valid_identifier(value text)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "function",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "walk(value jsonb, shape jsonb, field text, depth integer, remaining integer)",
+        "privilege": "EXECUTE",
+        "is_grantable": false
+      },
+      {
+        "object": "schema",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "source_ingest_d1b_codec_v1",
+        "privilege": "CREATE",
+        "is_grantable": false
+      },
+      {
+        "object": "schema",
+        "grantee": "codec_admin",
+        "grantor": "codec_admin",
+        "identity": "source_ingest_d1b_codec_v1",
+        "privilege": "USAGE",
+        "is_grantable": false
+      }
+    ],
+    "roles": [
+      {
+        "name": "codec_admin",
+        "limit": -1,
+        "login": true,
+        "super": true,
+        "bypass": true,
+        "inherit": true,
+        "createDb": true,
+        "createRole": true,
+        "replication": true
+      },
+      {
+        "name": "codec_inspector",
+        "limit": -1,
+        "login": true,
+        "super": false,
+        "bypass": false,
+        "inherit": true,
+        "createDb": false,
+        "createRole": false,
+        "replication": false
+      }
+    ],
+    "schema": {
+      "name": "source_ingest_d1b_codec_v1",
+      "owner": "codec_admin"
+    },
+    "defaults": [],
+    "defaultHeaders": [],
+    "functions": [
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "budget_bytes",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "jsonb",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "collection_base jsonb, task_source jsonb, snapshot_source jsonb, task_link jsonb, snapshot_link jsonb, receipt_base jsonb, member0 jsonb, member1 jsonb",
+        "leakproof": false,
+        "volatility": "s",
+        "definitionHash": "61ac190e28d7d8c023297645dcc77ff0e5c8c00215a7860faa43a723e9c064ae",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "encode_document",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "bytea",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "profile text, value jsonb",
+        "leakproof": false,
+        "volatility": "s",
+        "definitionHash": "4d10ce90e30adeb129701d62bf6d39becf950ee54d7e11315418c86654b78986",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "profiles",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "jsonb",
+        "strict": false,
+        "language": "sql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "",
+        "leakproof": false,
+        "volatility": "i",
+        "definitionHash": "1d403e8173523472fa5010c1eba543de01d56147230faedddf19ffdf0540c9bd",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "project_payload",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "jsonb",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "kind text, document jsonb, quote_document jsonb, rule_version text",
+        "leakproof": false,
+        "volatility": "s",
+        "definitionHash": "e9595b6902872a3aafe51aa20e4704e30943e79343322bb56b442f54a549f6db",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "quote_string",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "text",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "value text",
+        "leakproof": false,
+        "volatility": "i",
+        "definitionHash": "1462a4198207edad8bdd5ffcb3ffd3a30bee758c8f4051d11673d4862bc8c72f",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "utc_millis",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "text",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "value timestamp with time zone",
+        "leakproof": false,
+        "volatility": "s",
+        "definitionHash": "96b03e9348c8897e2af7646efe3a171facf1e683e460747868a1e47698dfa4ad",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "valid_identifier",
+        "rows": 0,
+        "owner": "codec_admin",
+        "result": "boolean",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "value text",
+        "leakproof": false,
+        "volatility": "i",
+        "definitionHash": "7863931be1c9002611abec6cd5a7434b78881a77e555dd703a33ce21c1aebf27",
+        "securityDefiner": false
+      },
+      {
+        "cost": 100,
+        "kind": "f",
+        "name": "walk",
+        "rows": 1000,
+        "owner": "codec_admin",
+        "result": "TABLE(encoded text, nodes integer)",
+        "strict": false,
+        "language": "plpgsql",
+        "parallel": "u",
+        "settings": [
+          "search_path=pg_catalog, pg_temp"
+        ],
+        "arguments": "value jsonb, shape jsonb, field text, depth integer, remaining integer",
+        "leakproof": false,
+        "volatility": "s",
+        "definitionHash": "40cc5ffd83d1c6d1544af5261b5b48b44fdece438b8ecd92585e53ce5c27b7f8",
+        "securityDefiner": false
+      }
+    ],
+    "extensions": [],
+    "memberships": [],
+    "otherObjects": {
+      "types": 0,
+      "operators": 0,
+      "relations": 0,
+      "collations": 0,
+      "conversions": 0
+    },
+    "roleSettings": []
+  }
+}
