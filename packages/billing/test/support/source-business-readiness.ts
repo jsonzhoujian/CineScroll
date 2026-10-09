@@ -8,7 +8,7 @@ const originalRoles = "('novel_d1b_owner','novel_d1b_locker','novel_d1b_mutator'
 const extendedRoles = "('novel_d1b_owner','novel_d1b_locker','novel_d1b_mutator','novel_d1b_reader','novel_d1b_inspector','novel_d1b_auth_fixture','novel_d1b_business_fixture'))";
 if (sourceIngestDraftCatalogQuery.split(originalRoles).length !== 2) throw new Error("BUSINESS_FIXTURE_CATALOG_TEMPLATE_CHANGED");
 export const businessFixtureCatalogQuery = sourceIngestDraftCatalogQuery.replace(originalRoles, extendedRoles);
-const extensionRoles = `select
+export const businessFixtureExtensionRolesQuery = `select
   current_database() ~ '^d1b_[a-f0-9]{32}$'
   and current_setting('listen_addresses')=''
   and (select count(*)=2 and bool_and(not rolcanlogin and not rolsuper and not rolcreatedb and not rolcreaterole and not rolbypassrls and not rolreplication)
@@ -26,7 +26,7 @@ export async function assertIsolatedBusinessFixtureDatabase(pool: LedgerDatabase
     query = client.query.bind(client);
     release = client.release.bind(client);
     await query("begin read only; set local statement_timeout='5s'; set local search_path=pg_catalog");
-    for (const [sql, values] of [[sourceIngestDraftRoleQuery, []], [extensionRoles, []], [businessFixtureCatalogQuery, [businessFixtureCatalogFingerprint]]] as const) {
+    for (const [sql, values] of [[sourceIngestDraftRoleQuery, []], [businessFixtureExtensionRolesQuery, []], [businessFixtureCatalogQuery, [businessFixtureCatalogFingerprint]]] as const) {
       const result = await query(sql, [...values]);
       if (result.rows.length !== 1 || result.rows[0]?.ready !== true) throw new Error();
     }

@@ -9,6 +9,8 @@ import { sourceBusinessFixture } from "./support/source-business-fixture.ts";
 import { assertIsolatedBusinessFixtureDatabase } from "./support/source-business-readiness.ts";
 import { createIsolatedSourceBusinessReader } from "./support/source-business-reader.ts";
 import { createIsolatedSourceBusinessAssembly } from "./support/source-business-assembly.ts";
+import { assertIsolatedCombinedSourceDatabase } from "./support/source-combined-readiness.ts";
+import { assertIsolatedCodecDatabase } from "./support/source-codec-readiness.ts";
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -25,6 +27,7 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
   const suffix = randomUUID().replaceAll("-", "");
   const database = `d1b_${suffix}`, login = `d1b_login_${suffix}`, inspectorLogin = `d1b_login_inspector_${suffix}`;
   let databaseCreated = false, draftCreated = false, loginCreated = false, inspectorCreated = false, authFixtureCreated = false, businessFixtureCreated = false;
+  let codecInspectorCreated=false;
   let setup: Pool | undefined, runtime: Pool | undefined, inspector: Pool | undefined;
   try {
     assert.equal((await admin.query("show data_directory")).rows[0].data_directory, `${socket}/data`);
@@ -511,6 +514,25 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
       } finally { await assembly.close(); }
       await assembly.close();
     });
+    await t.test('pure codec and business metadata compose without relaxing either frozen catalog',async()=>{
+      assert.equal((await setup!.query('select session_user actor')).rows[0].actor,'codec_admin');
+      await admin.query('create role codec_inspector login nosuperuser nocreatedb nocreaterole nobypassrls noreplication');codecInspectorCreated=true;
+      await setup!.query(await readFile(new URL('../../../docs/sql-drafts/evidence-source-d1b-codec.sql',import.meta.url),'utf8'));
+      await assertIsolatedBusinessFixtureDatabase(inspector!);
+      await assertIsolatedCombinedSourceDatabase(inspector!);
+      const codecUrl=new URL(url);codecUrl.username='codec_inspector';
+      const codecPool=new Pool({connectionString:codecUrl.toString(),options:'-c search_path=pg_catalog,pg_temp',max:1});
+      try{await assert.rejects(assertIsolatedCodecDatabase(codecPool),{message:'CODEC_DATABASE_NOT_READY'});}finally{await codecPool.end();}
+      for(const [mutate,restore] of [
+        ["alter function source_ingest_d1b_codec_v1.quote_string(text) stable","alter function source_ingest_d1b_codec_v1.quote_string(text) immutable"],
+        [`grant select on ${schema}.task_revision to novel_d1b_inspector`,`revoke select on ${schema}.task_revision from novel_d1b_inspector`],
+      ]){
+        await setup!.query(mutate!);
+        try{await assert.rejects(assertIsolatedCombinedSourceDatabase(inspector!),{message:'COMBINED_SOURCE_DATABASE_NOT_READY'});}
+        finally{await setup!.query(restore!);}
+        await assertIsolatedCombinedSourceDatabase(inspector!);
+      }
+    });
   } finally {
     const failures: string[] = [];
     const cleanup = async (stage: string, action: () => Promise<unknown>) => {
@@ -525,6 +547,7 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
     if (databaseCreated) await cleanup("test-database", () => admin.query(`drop database ${database}`));
     if (loginCreated) await cleanup("test-login", () => admin.query(`drop role ${login}`));
     if (inspectorCreated) await cleanup("inspector-login", () => admin.query(`drop role ${inspectorLogin}`));
+    if (codecInspectorCreated) await cleanup('codec-inspector',()=>admin.query('drop role codec_inspector'));
     if (authFixtureCreated) await cleanup("auth-fixture-owner", () => admin.query("drop role novel_d1b_auth_fixture"));
     if (businessFixtureCreated) await cleanup("business-fixture-role", () => admin.query("drop role novel_d1b_business_fixture"));
     if (draftCreated) for (const role of roles.toReversed()) await cleanup(role, () => admin.query(`drop role ${role}`));

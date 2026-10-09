@@ -232,6 +232,12 @@ Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已�
 
 详见 `docs/plans/2026-10-09-source-codec-boundaries-readiness.md`；冻结指纹固定在代码/资料，不运行时学习。codec_admin仍为隔离管理员owner，不是生产owner；纯函数证明不代完整业务guard/原子写入。68项实库、3项门禁单元通过；全仓351通过/21条件跳过、类型检查通过，双轴审查无阻断。独立核对schema/测试角色/default ACL均清空，实例停止，目录/log留存。旧业务两profile同库组合复验留下一切片。
 
+## D1b 组合目录与同事务业务核验推进（2026-10-09）
+
+用户确认独立组合profile：复用两静态目录/摘要，单连接REPEATABLE READ READ ONLY检验随机d1b库业务inspector及两目录，不放宽独立codec postgres库限制。新增组合实库子项，原D1b与组合67项通过；codec/业务两侧漂移拒绝/明确恢复。详见 `docs/plans/2026-10-09-source-combined-readiness-verification.md`。
+
+同事务精确四类业务核验仅推进候选/V01～V05，尚未实施或授权；组合目录不代真实行核验、DDL锁或writer许可。组合单元2项通过；全仓354通过/21条件跳过、类型检查通过。Standards/Spec无阻断，引用/diff通过；随机测试库/角色独立核对0，专属实例停止，目录/log保留。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
