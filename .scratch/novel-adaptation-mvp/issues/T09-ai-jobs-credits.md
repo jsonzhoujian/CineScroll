@@ -262,6 +262,14 @@ Standards/Spec静态审查发现并修复bytea_output会话展示差异：四类
 
 Standards/Spec静态复审均无阻断；独立检查测试库/角色均0，实例停止，目录/log保留。已列同事务initialize入口和新NOLOGIN owner/真实LOGIN最小权限/RLS/guard差异；按TDD新seam须确认后实施，不将管理员wrapper当运行仓储。共同写入、历史重放与未知提交恢复尚未实施。
 
+## D1b 非BYPASS初始化权限前置（2026-10-09）
+
+用户继续承接上一轮新入口/最小权限方案。本轮先实施只读核验权限前置：独立隔离SQL新增NOLOGIN/NOINHERIT非BYPASS initializer、四表SELECT/RLS与必需7codec/2private/locker EXECUTE。namespace owned DDL管理员，initializer仅内部函数owner；普通服务无表/helper/角色切换能力，所有DML与guard仍封闭。真实服务经非管理员wrapper完成核验，直接四表counts证明workspace/producer过滤及撤权隐藏，非管理员不绕过FORCE RLS。
+
+安装缺文件明确红→新增后绿；安装末尾故障角色/schema/ACL/policy共同回滚；全部ALWAYS guard/FORCE RLS不改。实库254项通过；全仓361通过/21数据库条件跳过，共382；类型检查通过。Standards/Spec静态审查均无阻断。详见docs/plans/2026-10-09-source-initialize-access-precursor.md。
+
+旧门禁/摘要不放宽，扩展期间旧私有profile应拒绝，撤回恢复健康。新完整访问profile尚未冻结，下一步先冻结角色/四策略/helper/有效ACL/default ACL再实现同事务写入口。无initialize_source_collection/成功回执/共同写入/运行装配/生产启用；已独立确认测试库/角色0，专属实例停止，日志留存。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

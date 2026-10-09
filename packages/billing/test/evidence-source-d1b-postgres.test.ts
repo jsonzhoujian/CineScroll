@@ -12,6 +12,7 @@ import { createIsolatedSourceBusinessAssembly } from "./support/source-business-
 import { assertIsolatedCombinedSourceDatabase } from "./support/source-combined-readiness.ts";
 import { assertIsolatedCodecDatabase } from "./support/source-codec-readiness.ts";
 import { testPrivateVerification } from './support/source-private-postgres.ts';
+import { testInitializeAccess } from './support/source-initialize-access.ts';
 
 const schema = "source_ingest_d1b_fixture_v1";
 const roles = ["novel_d1b_owner", "novel_d1b_locker", "novel_d1b_mutator", "novel_d1b_reader", "novel_d1b_inspector"];
@@ -536,6 +537,9 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
     });
     await t.test('independent private verifier isolated acceptance',async child=>{
       await testPrivateVerification(child,setup!,inspector!,url);
+    });
+    await t.test('isolated non-bypass initializer permission precursor',async child=>{
+      await testInitializeAccess(child,setup!,inspector!,url);
     });
   } finally {
     const failures: string[] = [];
