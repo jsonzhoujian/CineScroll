@@ -198,6 +198,14 @@ Standards/Spec各发现同一外键顺序问题，已修正并复核无残留阻
 
 Standards/Spec审查无阻断；引用、C01～C08编号及diff检查通过。下一切片补离线固定黄金向量和完整列/规则版本对齐，不提前开放执行权限。
 
+## D1b initialize 离线黄金向量增量（2026-10-09）
+
+用户选择A：保留统一ruleVersion、独立projectionRuleVersion。新增固定17份规范字节JSON及测试专用合成构造器、5项离线复验，含两payload手写对照、OpenSSL摘要、全列静态核对及三种预算样例。详见 `docs/plans/2026-10-09-source-initialize-golden-vectors.md`。预期首次由构造器固定，不宣称全量手写或SQL独立实现证明；统一规则生产归属待D2。
+
+类型检查通过；billing140通过/10条件跳过，全仓347通过/20条件跳过。未改运行代码/SQL/权限，未连接数据库。C01～C08未整体通过，容量/SQL/原子性仍待批准隔离切片。
+
+Standards与Spec本轮审查均无阻断；OpenSSL仅证明摘要，完整语义仍需固定材料审阅/SQL对照，已明确落档。
+
 ## Acceptance criteria (original scope, unchanged)
 
 

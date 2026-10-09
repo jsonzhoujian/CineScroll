@@ -1,0 +1,131 @@
+{
+  "format": "source-initialize-offline-v1",
+  "ruleVersion": "rule-v1",
+  "projectionRuleVersion": "source-projection-v1",
+  "vectors": [
+    {
+      "name": "identity",
+      "canonical": "{\"executionReference\":{\"id\":\"execution\",\"version\":\"v1\"},\"ingestId\":\"ingest-1\",\"operation\":\"initialize\",\"protocolVersion\":\"source-ingest-v1\",\"serviceId\":\"collector\",\"snapshotReference\":{\"id\":\"snapshot\",\"version\":\"v1\"},\"taskReference\":{\"id\":\"task\",\"version\":\"v1\"},\"unitId\":\"unit\",\"workspaceId\":\"studio\"}",
+      "bytes": 301,
+      "sha256": "2ea0ac7001cc7c64b0db8df69ce1c26cbf4c41c140405b24f516cf005708c73c"
+    },
+    {
+      "name": "taskPayload",
+      "canonical": "{\"binding\":{\"chapterId\":\"chapter\",\"projectId\":\"project\",\"sourceVersionId\":\"source\",\"taskId\":\"task\",\"unitId\":\"unit\",\"upstreamVersionIds\":[\"knowledge\",\"outline\"],\"workspaceId\":\"studio\"},\"scopeKeys\":[\"unit\"],\"taskRevision\":1}",
+      "bytes": 222,
+      "sha256": "86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5"
+    },
+    {
+      "name": "snapshotPayload",
+      "canonical": "{\"binding\":{\"chapterId\":\"chapter\",\"projectId\":\"project\",\"sourceVersionId\":\"source\",\"taskId\":\"task\",\"unitId\":\"unit\",\"upstreamVersionIds\":[\"knowledge\",\"outline\"],\"workspaceId\":\"studio\"},\"priceVersion\":\"price-v1\",\"quoteId\":\"quote\",\"reserved\":7,\"responsibility\":\"platform\"}",
+      "bytes": 269,
+      "sha256": "31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d"
+    },
+    {
+      "name": "receipt",
+      "canonical": "{\"collectionId\":\"00000000-0000-4000-8000-000000000001\",\"commandFingerprint\":\"2ea0ac7001cc7c64b0db8df69ce1c26cbf4c41c140405b24f516cf005708c73c\",\"committedAt\":\"2026-10-08T00:00:00.000Z\",\"generationAtCommit\":1,\"headRevisionAtCommit\":1,\"ingestId\":\"ingest-1\",\"operation\":\"initialize\",\"producerServiceId\":\"collector\",\"protocolVersion\":\"source-ingest-v1\",\"sourceReferences\":[{\"id\":\"task\",\"kind\":\"task\",\"payloadFingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"version\":\"v1\"},{\"id\":\"snapshot\",\"kind\":\"snapshot\",\"payloadFingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"version\":\"v1\"}],\"status\":\"initialized\",\"unitId\":\"unit\",\"workspaceId\":\"studio\"}",
+      "bytes": 701,
+      "sha256": "ca3fe504b164cb79e22ed41409d96df1a1d7f208dce8c2079a103455ae344750"
+    },
+    {
+      "name": "collectionBase",
+      "canonical": "{\"binding\":{\"chapterId\":\"chapter\",\"projectId\":\"project\",\"sourceVersionId\":\"source\",\"taskId\":\"task\",\"unitId\":\"unit\",\"upstreamVersionIds\":[\"knowledge\",\"outline\"],\"workspaceId\":\"studio\"},\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"current_seal_id\":null,\"execution_fingerprint\":\"b8caea6b437005e18d0566157eeeb48723a372fae527de1b4236884a5950b9da\",\"execution_id\":\"execution\",\"execution_version\":\"v1\",\"final_seal_id\":null,\"generation\":1,\"head_revision\":1,\"history_count\":0,\"initial_snapshot_kind\":\"snapshot\",\"initial_task_kind\":\"task\",\"member_count\":2,\"quote_fingerprint\":\"92f89496996a568d7fe0198ad664ba19344a27ec5158213d7b7868313f5323ea\",\"quote_record_id\":\"quote-record\",\"quote_record_version\":\"v1\",\"snapshot_fingerprint\":\"9c255a5b863e21d349b5d3aa371eb467bb71d4b321e6f7f19ef02fab729ceda1\",\"snapshot_id\":\"snapshot\",\"snapshot_version\":\"v1\",\"task_fingerprint\":\"ec584eee0599ee7cbe605f6181f4f6697c8d73ef0da5b45ec5622c4a3c002e7e\",\"task_id\":\"task\",\"task_version\":\"v1\",\"unit_id\":\"unit\",\"unresolved_count\":0,\"workspace_id\":\"studio\"}",
+      "bytes": 1028,
+      "sha256": "5527b766c3f8231b9b18d9e70652483458b2ee861344c640abbf9bb5a53ba92b"
+    },
+    {
+      "name": "taskSource",
+      "canonical": "{\"canonical\":\"7b2262696e64696e67223a7b22636861707465724964223a2263686170746572222c2270726f6a6563744964223a2270726f6a656374222c22736f7572636556657273696f6e4964223a22736f75726365222c227461736b4964223a227461736b222c22756e69744964223a22756e6974222c22757073747265616d56657273696f6e496473223a5b226b6e6f776c65646765222c226f75746c696e65225d2c22776f726b73706163654964223a2273747564696f227d2c2273636f70654b657973223a5b22756e6974225d2c227461736b5265766973696f6e223a317d\",\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"task\",\"introduced_generation\":1,\"kind\":\"task\",\"payload\":{\"binding\":{\"chapterId\":\"chapter\",\"projectId\":\"project\",\"sourceVersionId\":\"source\",\"taskId\":\"task\",\"unitId\":\"unit\",\"upstreamVersionIds\":[\"knowledge\",\"outline\"],\"workspaceId\":\"studio\"},\"scopeKeys\":[\"unit\"],\"taskRevision\":1},\"payload_fingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"predecessor_version\":null,\"producer_service_id\":\"producer\",\"recorded_at\":\"2026-10-08T00:00:00.000Z\",\"revision\":1,\"rule_version\":\"rule-v1\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 1067,
+      "sha256": "a261a6e54cdb4b8096b1357fc0086b52bf1c8862732647aa0b20a3fa643a6097"
+    },
+    {
+      "name": "snapshotSource",
+      "canonical": "{\"canonical\":\"7b2262696e64696e67223a7b22636861707465724964223a2263686170746572222c2270726f6a6563744964223a2270726f6a656374222c22736f7572636556657273696f6e4964223a22736f75726365222c227461736b4964223a227461736b222c22756e69744964223a22756e6974222c22757073747265616d56657273696f6e496473223a5b226b6e6f776c65646765222c226f75746c696e65225d2c22776f726b73706163654964223a2273747564696f227d2c22707269636556657273696f6e223a2270726963652d7631222c2271756f74654964223a2271756f7465222c227265736572766564223a372c22726573706f6e736962696c697479223a22706c6174666f726d227d\",\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"snapshot\",\"introduced_generation\":1,\"kind\":\"snapshot\",\"payload\":{\"binding\":{\"chapterId\":\"chapter\",\"projectId\":\"project\",\"sourceVersionId\":\"source\",\"taskId\":\"task\",\"unitId\":\"unit\",\"upstreamVersionIds\":[\"knowledge\",\"outline\"],\"workspaceId\":\"studio\"},\"priceVersion\":\"price-v1\",\"quoteId\":\"quote\",\"reserved\":7,\"responsibility\":\"platform\"},\"payload_fingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"predecessor_version\":null,\"producer_service_id\":\"producer\",\"recorded_at\":\"2026-10-08T00:00:00.000Z\",\"revision\":1,\"rule_version\":\"rule-v1\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 1216,
+      "sha256": "f9f43b344bfe1aec82672d1472401e17762fd838ed340e2b44bbabb2a0ad5278"
+    },
+    {
+      "name": "taskLink",
+      "canonical": "{\"business_fingerprint\":\"ec584eee0599ee7cbe605f6181f4f6697c8d73ef0da5b45ec5622c4a3c002e7e\",\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"task\",\"kind\":\"task\",\"payload_fingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"projection_rule_version\":\"source-projection-v1\",\"verified_at\":\"2026-10-08T00:00:00.000Z\",\"verified_by_service_id\":\"collector\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 427,
+      "sha256": "3318524ad987b47e568603208342ef17e489bec49b2c08dc10e5fc00387a6b66"
+    },
+    {
+      "name": "snapshotLink",
+      "canonical": "{\"business_fingerprint\":\"9c255a5b863e21d349b5d3aa371eb467bb71d4b321e6f7f19ef02fab729ceda1\",\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"snapshot\",\"kind\":\"snapshot\",\"payload_fingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"projection_rule_version\":\"source-projection-v1\",\"quote_fingerprint\":\"92f89496996a568d7fe0198ad664ba19344a27ec5158213d7b7868313f5323ea\",\"quote_record_id\":\"quote-record\",\"quote_record_version\":\"v1\",\"verified_at\":\"2026-10-08T00:00:00.000Z\",\"verified_by_service_id\":\"collector\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 583,
+      "sha256": "688546b0102400b8c021c8640273325ef78660e984592956a682c3f21fcdd83a"
+    },
+    {
+      "name": "receiptBase",
+      "canonical": "{\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"command\":{\"executionReference\":{\"id\":\"execution\",\"version\":\"v1\"},\"ingestId\":\"ingest-1\",\"operation\":\"initialize\",\"protocolVersion\":\"source-ingest-v1\",\"serviceId\":\"collector\",\"snapshotReference\":{\"id\":\"snapshot\",\"version\":\"v1\"},\"taskReference\":{\"id\":\"task\",\"version\":\"v1\"},\"unitId\":\"unit\",\"workspaceId\":\"studio\"},\"command_canonical\":\"7b22657865637574696f6e5265666572656e6365223a7b226964223a22657865637574696f6e222c2276657273696f6e223a227631227d2c22696e676573744964223a22696e676573742d31222c226f7065726174696f6e223a22696e697469616c697a65222c2270726f746f636f6c56657273696f6e223a22736f757263652d696e676573742d7631222c22736572766963654964223a22636f6c6c6563746f72222c22736e617073686f745265666572656e6365223a7b226964223a22736e617073686f74222c2276657273696f6e223a227631227d2c227461736b5265666572656e6365223a7b226964223a227461736b222c2276657273696f6e223a227631227d2c22756e69744964223a22756e6974222c22776f726b73706163654964223a2273747564696f227d\",\"command_fingerprint\":\"2ea0ac7001cc7c64b0db8df69ce1c26cbf4c41c140405b24f516cf005708c73c\",\"committed_at\":\"2026-10-08T00:00:00.000Z\",\"generation_at_commit\":1,\"head_revision_at_commit\":1,\"ingest_id\":\"ingest-1\",\"operation\":\"initialize\",\"producer_service_id\":\"collector\",\"protocol_version\":\"source-ingest-v1\",\"receipt\":{\"collectionId\":\"00000000-0000-4000-8000-000000000001\",\"commandFingerprint\":\"2ea0ac7001cc7c64b0db8df69ce1c26cbf4c41c140405b24f516cf005708c73c\",\"committedAt\":\"2026-10-08T00:00:00.000Z\",\"generationAtCommit\":1,\"headRevisionAtCommit\":1,\"ingestId\":\"ingest-1\",\"operation\":\"initialize\",\"producerServiceId\":\"collector\",\"protocolVersion\":\"source-ingest-v1\",\"sourceReferences\":[{\"id\":\"task\",\"kind\":\"task\",\"payloadFingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"version\":\"v1\"},{\"id\":\"snapshot\",\"kind\":\"snapshot\",\"payloadFingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"version\":\"v1\"}],\"status\":\"initialized\",\"unitId\":\"unit\",\"workspaceId\":\"studio\"},\"receipt_canonical\":\"7b22636f6c6c656374696f6e4964223a2230303030303030302d303030302d343030302d383030302d303030303030303030303031222c22636f6d6d616e6446696e6765727072696e74223a2232656130616337303031636337633634623064623864663639636531633236636266346334316331343034303562323466353136636630303537303863373363222c22636f6d6d69747465644174223a22323032362d31302d30385430303a30303a30302e3030305a222c2267656e65726174696f6e4174436f6d6d6974223a312c22686561645265766973696f6e4174436f6d6d6974223a312c22696e676573744964223a22696e676573742d31222c226f7065726174696f6e223a22696e697469616c697a65222c2270726f6475636572536572766963654964223a22636f6c6c6563746f72222c2270726f746f636f6c56657273696f6e223a22736f757263652d696e676573742d7631222c22736f757263655265666572656e636573223a5b7b226964223a227461736b222c226b696e64223a227461736b222c227061796c6f616446696e6765727072696e74223a2238366433306636373630363866353863343132613138666637323564633536353335636537383033386430323532333533373132316130663266653662346635222c2276657273696f6e223a227631227d2c7b226964223a22736e617073686f74222c226b696e64223a22736e617073686f74222c227061796c6f616446696e6765727072696e74223a2233316333343338623364383266373363646437323135396431373232653632363865613234306634313632383334366262333662623839343133333733633464222c2276657273696f6e223a227631227d5d2c22737461747573223a22696e697469616c697a6564222c22756e69744964223a22756e6974222c22776f726b73706163654964223a2273747564696f227d\",\"receipt_fingerprint\":\"ca3fe504b164cb79e22ed41409d96df1a1d7f208dce8c2079a103455ae344750\",\"status\":\"initialized\",\"unit_id\":\"unit\",\"workspace_id\":\"studio\"}",
+      "bytes": 3587,
+      "sha256": "29f88286a03aadf0da9ef2c7884413991f27131f82b74acc19c71cc1d3485147"
+    },
+    {
+      "name": "member0",
+      "canonical": "{\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"task\",\"ingest_id\":\"ingest-1\",\"kind\":\"task\",\"ordinal\":0,\"payload_fingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 245,
+      "sha256": "d21fc687188eceb77240279f01c760ff1ce754f3dd64a6dbd90f9d30010861e3"
+    },
+    {
+      "name": "member1",
+      "canonical": "{\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"snapshot\",\"ingest_id\":\"ingest-1\",\"kind\":\"snapshot\",\"ordinal\":1,\"payload_fingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 253,
+      "sha256": "40223157e9666669b68034f454dc0403d4955cae5efcf88dbe5390238051e19f"
+    },
+    {
+      "name": "duplicateIdentity",
+      "canonical": "{\"executionReference\":{\"id\":\"execution\",\"version\":\"v1\"},\"ingestId\":\"ingest-2\",\"operation\":\"initialize\",\"protocolVersion\":\"source-ingest-v1\",\"serviceId\":\"collector\",\"snapshotReference\":{\"id\":\"snapshot\",\"version\":\"v1\"},\"taskReference\":{\"id\":\"task\",\"version\":\"v1\"},\"unitId\":\"unit\",\"workspaceId\":\"studio\"}",
+      "bytes": 301,
+      "sha256": "e7f6af819d892a68a14663dd0a2771f4cd2fd379398178ec3539ef77c76ed611"
+    },
+    {
+      "name": "duplicateReceipt",
+      "canonical": "{\"collectionId\":\"00000000-0000-4000-8000-000000000001\",\"commandFingerprint\":\"e7f6af819d892a68a14663dd0a2771f4cd2fd379398178ec3539ef77c76ed611\",\"committedAt\":\"2026-10-08T00:00:00.000Z\",\"generationAtCommit\":1,\"headRevisionAtCommit\":1,\"ingestId\":\"ingest-2\",\"operation\":\"initialize\",\"producerServiceId\":\"collector\",\"protocolVersion\":\"source-ingest-v1\",\"sourceReferences\":[{\"id\":\"task\",\"kind\":\"task\",\"payloadFingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"version\":\"v1\"},{\"id\":\"snapshot\",\"kind\":\"snapshot\",\"payloadFingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"version\":\"v1\"}],\"status\":\"already_registered\",\"unitId\":\"unit\",\"workspaceId\":\"studio\"}",
+      "bytes": 708,
+      "sha256": "b8081b3958da915e2adc099666d0630f2bc7cdc040e0e1e27c128a7d4a5e22fe"
+    },
+    {
+      "name": "duplicateBase",
+      "canonical": "{\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"command\":{\"executionReference\":{\"id\":\"execution\",\"version\":\"v1\"},\"ingestId\":\"ingest-2\",\"operation\":\"initialize\",\"protocolVersion\":\"source-ingest-v1\",\"serviceId\":\"collector\",\"snapshotReference\":{\"id\":\"snapshot\",\"version\":\"v1\"},\"taskReference\":{\"id\":\"task\",\"version\":\"v1\"},\"unitId\":\"unit\",\"workspaceId\":\"studio\"},\"command_canonical\":\"7b22657865637574696f6e5265666572656e6365223a7b226964223a22657865637574696f6e222c2276657273696f6e223a227631227d2c22696e676573744964223a22696e676573742d32222c226f7065726174696f6e223a22696e697469616c697a65222c2270726f746f636f6c56657273696f6e223a22736f757263652d696e676573742d7631222c22736572766963654964223a22636f6c6c6563746f72222c22736e617073686f745265666572656e6365223a7b226964223a22736e617073686f74222c2276657273696f6e223a227631227d2c227461736b5265666572656e6365223a7b226964223a227461736b222c2276657273696f6e223a227631227d2c22756e69744964223a22756e6974222c22776f726b73706163654964223a2273747564696f227d\",\"command_fingerprint\":\"e7f6af819d892a68a14663dd0a2771f4cd2fd379398178ec3539ef77c76ed611\",\"committed_at\":\"2026-10-08T00:00:00.000Z\",\"generation_at_commit\":1,\"head_revision_at_commit\":1,\"ingest_id\":\"ingest-2\",\"operation\":\"initialize\",\"producer_service_id\":\"collector\",\"protocol_version\":\"source-ingest-v1\",\"receipt\":{\"collectionId\":\"00000000-0000-4000-8000-000000000001\",\"commandFingerprint\":\"e7f6af819d892a68a14663dd0a2771f4cd2fd379398178ec3539ef77c76ed611\",\"committedAt\":\"2026-10-08T00:00:00.000Z\",\"generationAtCommit\":1,\"headRevisionAtCommit\":1,\"ingestId\":\"ingest-2\",\"operation\":\"initialize\",\"producerServiceId\":\"collector\",\"protocolVersion\":\"source-ingest-v1\",\"sourceReferences\":[{\"id\":\"task\",\"kind\":\"task\",\"payloadFingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"version\":\"v1\"},{\"id\":\"snapshot\",\"kind\":\"snapshot\",\"payloadFingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"version\":\"v1\"}],\"status\":\"already_registered\",\"unitId\":\"unit\",\"workspaceId\":\"studio\"},\"receipt_canonical\":\"7b22636f6c6c656374696f6e4964223a2230303030303030302d303030302d343030302d383030302d303030303030303030303031222c22636f6d6d616e6446696e6765727072696e74223a2265376636616638313964383932613638613134363633646430613237373166346364326664333739333938313738656333353339656637376337366564363131222c22636f6d6d69747465644174223a22323032362d31302d30385430303a30303a30302e3030305a222c2267656e65726174696f6e4174436f6d6d6974223a312c22686561645265766973696f6e4174436f6d6d6974223a312c22696e676573744964223a22696e676573742d32222c226f7065726174696f6e223a22696e697469616c697a65222c2270726f6475636572536572766963654964223a22636f6c6c6563746f72222c2270726f746f636f6c56657273696f6e223a22736f757263652d696e676573742d7631222c22736f757263655265666572656e636573223a5b7b226964223a227461736b222c226b696e64223a227461736b222c227061796c6f616446696e6765727072696e74223a2238366433306636373630363866353863343132613138666637323564633536353335636537383033386430323532333533373132316130663266653662346635222c2276657273696f6e223a227631227d2c7b226964223a22736e617073686f74222c226b696e64223a22736e617073686f74222c227061796c6f616446696e6765727072696e74223a2233316333343338623364383266373363646437323135396431373232653632363865613234306634313632383334366262333662623839343133333733633464222c2276657273696f6e223a227631227d5d2c22737461747573223a22616c72656164795f72656769737465726564222c22756e69744964223a22756e6974222c22776f726b73706163654964223a2273747564696f227d\",\"receipt_fingerprint\":\"b8081b3958da915e2adc099666d0630f2bc7cdc040e0e1e27c128a7d4a5e22fe\",\"status\":\"already_registered\",\"unit_id\":\"unit\",\"workspace_id\":\"studio\"}",
+      "bytes": 3615,
+      "sha256": "4fff3e3fc6c858c29f0cbba30668094c772778f6d6a760ef52d3f9259bc84a38"
+    },
+    {
+      "name": "duplicateMember0",
+      "canonical": "{\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"task\",\"ingest_id\":\"ingest-2\",\"kind\":\"task\",\"ordinal\":0,\"payload_fingerprint\":\"86d30f676068f58c412a18ff725dc56535ce78038d02523537121a0f2fe6b4f5\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 245,
+      "sha256": "0f6f9d690276c408fd98176fa4c183d71a00d311312f7de5ca02d3075edb48df"
+    },
+    {
+      "name": "duplicateMember1",
+      "canonical": "{\"collection_id\":\"00000000-0000-4000-8000-000000000001\",\"id\":\"snapshot\",\"ingest_id\":\"ingest-2\",\"kind\":\"snapshot\",\"ordinal\":1,\"payload_fingerprint\":\"31c3438b3d82f73cdd72159d1722e6268ea240f41628346bb36bb89413373c4d\",\"version\":\"v1\",\"workspace_id\":\"studio\"}",
+      "bytes": 253,
+      "sha256": "b257954b56776e1dd910d46010d1f58f08dceab43547648b825cc11c063b5a04"
+    }
+  ],
+  "budget": {
+    "packageBytes": 4321,
+    "receiptCost": 4085,
+    "initialized": {
+      "sourceCount": 2,
+      "sourceBytes": 4321,
+      "receiptCount": 1,
+      "receiptBytes": 4085
+    },
+    "alreadyRegistered": {
+      "sourceCount": 0,
+      "sourceBytes": 0,
+      "receiptCount": 1,
+      "receiptBytes": 4113
+    },
+    "replayed": {
+      "sourceCount": 0,
+      "sourceBytes": 0,
+      "receiptCount": 0,
+      "receiptBytes": 0
+    }
+  }
+}
