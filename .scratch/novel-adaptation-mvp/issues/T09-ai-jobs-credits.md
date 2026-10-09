@@ -238,6 +238,14 @@ Standards无硬性阻断；Spec的时间原偏移和统一报价规则断言已�
 
 同事务精确四类业务核验仅推进候选/V01～V05，尚未实施或授权；组合目录不代真实行核验、DDL锁或writer许可。组合单元2项通过；全仓354通过/21条件跳过、类型检查通过。Standards/Spec无阻断，引用/diff通过；随机测试库/角色独立核对0，专属实例停止，目录/log保留。
 
+## D1b 完整业务核验清单与私有SQL（2026-10-09）
+
+用户要求清单后实施私有核验SQL。新增 `docs/plans/2026-10-09-source-private-verification.md`（B01～B12）及独立 `docs/sql-drafts/evidence-source-d1b-verify.sql`，两个默认封闭INVОKER函数：真实session_user授权锁→精确四记录producer过滤→全列/完整规范字节/指纹及双向引用/报价核验→两来源待写资料。无writer/来源或预算写入/内部COMMIT、无新GRANT/运行owner或RLS。
+
+本轮文件交付，不安装/执行数据库；旧目录/组合gate不自动覆盖新verify schema，需后续独立profile及实库验收。SQL解析与B01～B12/V01～V05尚未执行。
+
+Standards/Spec静态审查发现并修复bytea_output会话展示差异：四类实际typed bytea显式转小写hex，再与独立重建的规范字节比较。双轴复审无残留静态阻断；后续须补escape/hex实库回归。本轮引用、范围及diff检查通过，未运行数据库或应用测试。
+
 ## Acceptance criteria (original scope, unchanged)
 
 
