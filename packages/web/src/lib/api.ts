@@ -2,6 +2,12 @@ import type { DocumentRequest, ProjectDraft } from "./workflow";
 
 type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: number };
 
+export type ScriptContentTask = StoryKnowledgeTask & { input: { stage: "script";resultType: "scriptContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[] } };
+export type ScriptContentView = { current: boolean;sourceFragments: Array<{ id: string;text: string }>;version: {
+  id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;planVersionId: string;generationStatus: string;
+  scenes: Array<{ id: string;title: string }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
+  failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
+} };
 export class ApiClientError extends Error {
   readonly status: number;
   readonly code: string | undefined;
@@ -103,6 +109,12 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  submitScriptContentTask(p: string,c: string,input: { configurationVersionId: string;modelId: string;requestId: string }) { return this.request<ScriptContentTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  getScriptContentTask(id: string) { return this.request<ScriptContentTask>(`/script-content-tasks/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
+  listScriptContentTasks(p: string,c: string) { return this.request<{ tasks: ScriptContentTask[];nextCursor: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks`,{ method: "GET",cache: "no-store" },"session"); }
+  scriptContentAvailability(p: string,c: string,input: { configurationVersionId: string;modelId: string }) { return this.request<{ available: boolean;reason: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks/availability?${new URLSearchParams(input)}`,{ method: "GET",cache: "no-store" },"session"); }
+  getScriptContent(p: string,c: string) { return this.request<ScriptContentView>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content`,{ method: "GET",cache: "no-store" },"session"); }
+
   submitEpisodeTask(p: string,c: string,input: { configurationVersionId: string; modelId: string; requestId: string }) { return this.request<EpisodeTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/episode-plan-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   getEpisodeTask(id: string) { return this.request<EpisodeTask>(`/episode-plan-tasks/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
   listEpisodeTasks(p: string,c: string,cursor: string | null = null) {

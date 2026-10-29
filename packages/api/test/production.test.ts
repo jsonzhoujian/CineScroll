@@ -102,3 +102,26 @@ test("仅开启拆集也注册独立Worker，初始化失败不启动", async ()
     assert.equal(app.get(EPISODE_PLAN_WORKER).status().state,"stopped");
   } finally { await app.close(); await production.close(); }
 });
+
+test("剧本任务独立默认关闭，开启前拒绝不可信装配配置", async () => {
+  assert.throws(() => createProductionApi({ ...base, scriptTasks: { enabled: true, workspaceIds: ["w"] } }), { message: "INVALID_SCRIPT_TASK_CONFIG" });
+  const models = { enabled: true as const, encryptionKeyBase64: Buffer.alloc(32,7).toString("base64"),
+    databaseUrl: "postgresql://model_app@localhost/fixture", databaseTlsCa: base.databaseTlsCa, routes: { deepseek: "mainland" as const } };
+  for (const workspaceIds of [[], ["w","w"], ["bad\nid"], Array.from({ length: 101 },(_,i) => `w${i}`)]) {
+    assert.throws(() => createProductionApi({ ...base, modelSettings: models, scriptTasks: { enabled: true, workspaceIds } }), { message: "INVALID_SCRIPT_TASK_CONFIG" });
+  }
+  for (const modelSettings of [{ ...models,routes: { deepseek: "overseas" as const } },{ ...models,databaseUrl: "postgresql://model_app@localhost/other" }]) {
+    assert.throws(() => createProductionApi({ ...base,modelSettings,scriptTasks: { enabled: true,workspaceIds: ["w"] } }), { message: "INVALID_SCRIPT_TASK_CONFIG" });
+  }
+  for (const intervalMs of [0,99,60001,1.5]) {
+    assert.throws(() => createProductionApi({ ...base,modelSettings: models,scriptTasks: { enabled: true,workspaceIds: ["w"],intervalMs } }), { message: "INVALID_SCRIPT_TASK_CONFIG" });
+  }
+  const production = createProductionApi({ ...base,scriptTasks: { enabled: false } });
+  const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
+  const app = ref.createNestApplication();
+  try {
+    await app.listen(0,"127.0.0.1");
+    await request(app.getHttpServer()).post("/projects/p/chapters/c/script-content-tasks").expect(404);
+    await request(app.getHttpServer()).get("/projects/p/chapters/c/script-content").expect(404);
+  } finally { await app.close(); await production.close(); }
+});

@@ -35,6 +35,7 @@ export type ScriptContentVersion = Readonly<{
   failures: Array<Readonly<{ scopeKey: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
+  findGeneration?(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<ScriptContentVersion | null>;
   findActive(actor: Actor, projectId: string, chapterId: string): Promise<ScriptContentVersion | null>;
   save(actor: Actor, version: ScriptContentVersion, expectedActiveVersionId: string | null): Promise<ScriptContentVersion>;
 }
@@ -43,7 +44,7 @@ export interface ScriptGenerationContextReader {
   findGenerationContext(actor: Actor, projectId: string, chapterId: string): Promise<ScriptGenerationContext | null>;
 }
 export class ScriptContentError extends Error {
-  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND" | "SUGGESTION_NOT_FOUND" | "SUGGESTION_CONFLICT" | "INVALID_CONFIRMATION" | "INVALID_STATE";
+  readonly code: "CONTEXT_NOT_FOUND" | "FORBIDDEN" | "INVALID_GENERATION" | "INVALID_EDIT" | "VERSION_CONFLICT" | "ELEMENT_NOT_FOUND" | "SUGGESTION_NOT_FOUND" | "SUGGESTION_CONFLICT" | "INVALID_CONFIRMATION" | "INVALID_STATE" | "STORAGE_UNAVAILABLE";
   constructor(code: ScriptContentError["code"], message: string) {
     super(message); this.name = "ScriptContentError"; this.code = code;
   }
@@ -51,6 +52,10 @@ export class ScriptContentError extends Error {
 export class InMemoryScriptContentRepository implements ScriptContentRepository {
   readonly #active = new Map<string, ScriptContentVersion>();
   readonly #versions = new Map<string, ScriptContentVersion>();
+  readonly #generations = new Map<string, ScriptContentVersion>();
+  async findGeneration(actor: Actor, projectId: string, chapterId: string, jobId: string) {
+    return structuredClone(this.#generations.get(JSON.stringify([scopeKey(actor,projectId,chapterId),jobId])) ?? null);
+  }
   async findActive(actor: Actor, projectId: string, chapterId: string): Promise<ScriptContentVersion | null> {
     const result = this.#active.get(scopeKey(actor, projectId, chapterId));
     return result ? structuredClone(result) : null;
@@ -62,6 +67,8 @@ export class InMemoryScriptContentRepository implements ScriptContentRepository 
     }
     const saved = structuredClone(version);
     this.#versions.set(JSON.stringify([key, version.id]), saved);
+    const generationKey = JSON.stringify([key,version.jobId]);
+    if (!this.#generations.has(generationKey)) this.#generations.set(generationKey,saved);
     this.#active.set(key, saved);
     return structuredClone(saved);
   }

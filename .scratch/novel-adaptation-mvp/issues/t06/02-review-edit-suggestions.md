@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: blocked
+status: ready
 
 **Blocked by:** [01](./01-generate-script-candidate.md)
 

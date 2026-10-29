@@ -33,7 +33,7 @@ T02 canonical contracts ────────┘                             
 
 2026-10-29：T01a、T02～T05 已按详细任务记录完成；T06 进行中，Checkpoint C 尚未通过。T07、T08、T09 整体验收仍受阻；T09 独立基础设施进展不解除产品依赖。T01b 在可操作 MVP 后进行，继续作为 T10 和收费验证门禁。
 
-优先完成 T06 的确认拆集 → 生成剧本 → 审核确认 → 原文追溯闭环，见[已确认拆分方案](./2026-10-29-t06-ticket-draft.md)与[独立任务索引](../../.scratch/novel-adaptation-mvp/issues/README.md)。当前可领取 T06-01，发布任务不代表开始实现或通过验收。T09 单独追踪[基础设施与整体验收](../../.scratch/novel-adaptation-mvp/issues/T09-infrastructure-status.md)。图中 T10 完整阻塞集合为 T01b、T08、T09；T07 为间接依赖。
+优先完成 T06 的确认拆集 → 生成剧本 → 审核确认 → 原文追溯闭环，见[已确认拆分方案](./2026-10-29-t06-ticket-draft.md)与[独立任务索引](../../.scratch/novel-adaptation-mvp/issues/README.md)。T06-01 已完成[候选生成与追溯交付](./2026-10-29-script-candidate-delivery.md)，当前可领取 T06-02 或 T06-03；完整 T06 仍未验收。T09 单独追踪[基础设施与整体验收](../../.scratch/novel-adaptation-mvp/issues/T09-infrastructure-status.md)。图中 T10 完整阻塞集合为 T01b、T08、T09；T07 为间接依赖。
 
 ## Delivery checkpoints
 
@@ -65,6 +65,6 @@ For each implementation ticket:
 2. Run the focused test and verify the expected failure.
 3. Implement only enough behavior to pass that test.
 4. Run the focused test and the relevant regression suite.
-5. Commit the slice with the ticket ID.
+5. Provide a Git commit message with the ticket ID; the user commits manually (2026-10-29 instruction).
 6. Repeat until all ticket acceptance criteria pass.
 7. Run a Standards + Spec code review before closing the ticket.

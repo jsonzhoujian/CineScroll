@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type EpisodePlanView } from "../lib/api";
+import { ScriptContentWorkbench } from "./script-content-workbench";
 import { EpisodePlanTaskPanel } from "./episode-plan-task";
 
 export function EpisodePlanWorkbench({ api, projectId, chapterId, sourceVersionId, knowledgeVersionId }: { api: ApiClient; projectId: string; chapterId: string; sourceVersionId: string; knowledgeVersionId: string }) {
@@ -46,7 +47,7 @@ export function EpisodePlanWorkbench({ api, projectId, chapterId, sourceVersionI
           {(["approved","rejected"] as const).map(decision => <button type="button" className="button secondary" key={decision} disabled={busy || !canReview || !reasons[p.id]?.trim()} onClick={() => void act(() => api.decideEpisodeAdaptation(projectId,chapterId,p.id,{ expectedActiveVersionId: plan.id, decision, reason: reasons[p.id]!.trim() }))}>{decision === "approved" ? "批准" : "拒绝"} {p.id}</button>)}
         </>}
       </article>)}
-      {plan.status === "confirmed" ? <p>拆集方案已确认，尚未生成剧本正文。</p> : <button type="button" className="button primary" disabled={busy || !canReview || plan.majorAdaptationProposals.some(p => !p.decision)} onClick={() => void act(() => api.confirmEpisodePlan(projectId,chapterId,plan.id))}>确认拆集方案</button>}
+      {plan.status === "confirmed" ? <><p>拆集方案已确认。</p>{current && <ScriptContentWorkbench key={JSON.stringify([projectId,chapterId,sourceVersionId,plan.id,knowledgeVersionId])} api={api} projectId={projectId} chapterId={chapterId} sourceVersionId={sourceVersionId} planVersionId={plan.id} knowledgeVersionId={knowledgeVersionId} />}</> : <button type="button" className="button primary" disabled={busy || !canReview || plan.majorAdaptationProposals.some(p => !p.decision)} onClick={() => void act(() => api.confirmEpisodePlan(projectId,chapterId,plan.id))}>确认拆集方案</button>}
       {!view?.canReview && plan.status !== "confirmed" && <small>仅当前方案的负责人或审核人可以裁决并正式确认。</small>}
     </>}
   </section>;

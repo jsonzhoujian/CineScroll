@@ -82,7 +82,7 @@ for (const mode of ["owner", "editor", "stale", "empty"]) test(`已确认知识�
   await desk.getByRole("button", { name: "拒绝 proposal" }).click();
   await expect(desk.getByRole("button", { name: "确认拆集方案", exact: true })).toBeEnabled();
   await desk.getByRole("button", { name: "确认拆集方案", exact: true }).click();
-  await expect(desk.getByText("拆集方案已确认，尚未生成剧本正文。")).toBeVisible();
+  await expect(desk.getByRole("region", { name: "剧本候选生成与追溯" })).toBeVisible();
 });
 for (const mode of ["success", "uncertain", "stale", "mobile"]) test(`审核页局部重试与明确载入：${mode}`, async ({ page }) => {
   await setup(page);
@@ -357,4 +357,65 @@ test("切换任务后忽略晚到的旧候选响应", async ({ page }) => {
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
   await expect(panel.getByRole("region", { name: "任务候选版本" })).toHaveCount(0);
   await expect(panel).not.toContainText("旧候选不应显示");
+});
+
+for (const mode of ["success","uncertain","stale","mobile"]) test(`确认拆集后剧本生成与原文追溯：${mode}`,async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: {
+    id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: []
+  } } }));
+  let posts = 0,requestId = "";
+  const task = { id: "script-task",projectId: "p",chapterId: "c",input: { stage: "script",resultType: "scriptContent",sourceVersionId: "s",upstreamConfirmedVersionIds: ["plan","candidate"] },state: "succeeded",reason: null,result: { candidateVersionId: "script",extractionStatus: "partially_succeeded" } };
+  await page.route(`${origin}/projects/p/chapters/c/script-content-tasks**`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    if (r.request().method() === "POST") {
+      posts++; const input = r.request().postDataJSON();
+      expect(Object.keys(input).sort()).toEqual(["configurationVersionId","modelId","requestId"]);
+      if (requestId) expect(input.requestId).toBe(requestId); else requestId = input.requestId;
+      if (mode === "uncertain" && posts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+      return r.fulfill({ headers,json: task });
+    }
+    return r.fulfill({ headers,json: r.request().url().includes("availability") ? { available: true,reason: null } : { tasks: [task],nextCursor: null } });
+  });
+  await page.route(`${origin}/script-content-tasks/script-task`,r => r.fulfill({ headers,json: task }));
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: mode !== "stale",sourceFragments: [{ id: "f",text: "雨落" }],version: {
+    id: "script",jobId: task.id,projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",generationStatus: "partially_succeeded",
+    scenes: [{ id: "scene",title: "雨中庭院" }],elements: [{ id: "action",sceneId: "scene",text: "雨点打湿庭院",elementType: "action",provenance: [{ type: "source_fragment",fragmentId: "f",transformation: "visualized" }] }],failures: [{ scopeKey: "dialogue",code: "INVALID_ELEMENT",retryable: true }]
+  } } }));
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+  await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "剧本候选生成与追溯" });
+  await panel.getByRole("button",{ name: "读取剧本模型",exact: true }).click();
+  await panel.getByLabel("剧本模型").selectOption("model");
+  await panel.getByRole("button",{ name: "生成剧本候选",exact: true }).click();
+  if (mode === "uncertain") {
+    await expect(panel.getByLabel("剧本模型")).toBeDisabled();
+    await panel.getByRole("button",{ name: "刷新剧本任务",exact: true }).click();
+    await expect(panel.getByRole("button",{ name: "script-task · succeeded",exact: true })).toBeDisabled();
+    await page.reload(); await login(page);
+    const storyTask = page.getByRole("region",{ name: "故事知识任务" });
+    await storyTask.getByLabel("任务编号").fill("task"); await storyTask.getByRole("button",{ name: "读取任务",exact: true }).click();
+    await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+    await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+    await panel.getByRole("button",{ name: "核对剧本原提交",exact: true }).click();
+  }
+  await expect(panel.getByRole("button",{ name: "载入剧本候选",exact: true })).toBeEnabled();
+  await expect(panel.getByRole("heading",{ name: "雨中庭院" })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "载入剧本候选",exact: true }).click();
+  if (mode === "stale") await expect(panel.getByText("结果或上游已变化，请重新核对。")).toBeVisible();
+  else {
+    await panel.getByRole("button",{ name: "雨点打湿庭院",exact: true }).click();
+    await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
+    await expect(panel.getByText("失败范围 dialogue · INVALID_ELEMENT")).toBeVisible();
+    if (mode === "mobile") {
+      await page.setViewportSize({ width: 390,height: 844 });
+      await expect(panel.getByRole("button",{ name: "生成剧本候选",exact: true })).toBeHidden();
+    }
+  }
+  expect(posts).toBe(mode === "uncertain" ? 2 : 1);
 });

@@ -10,6 +10,7 @@ import { HmacSessionManager } from "@novel-adaptation/identity";
 import { createProductionApi } from "../src/production.ts";
 import { PostgresProjectImportRepository } from "@novel-adaptation/project-import/postgres-repository";
 import { StoryKnowledgeTaskWorker } from "../src/story-knowledge-task-worker.ts";
+import { SCRIPT_CONTENT_WORKER } from "../src/script-content-worker-module.ts";
 import { EPISODE_PLAN_WORKER } from "../src/episode-plan-worker-module.ts";
 
 // Opt-in: only a disposable admin-owned TLS database, never a business database.
@@ -42,6 +43,11 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     assert.equal(url, "https://api.deepseek.com/chat/completions");
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
+    if (input.stage === "script" && input.scopeKeys[0] === "script") {
+      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",
+        scenes: [{ id: "scene",episodeId: "e1",ordinal: 1,title: "rain",environment: "outside",characters: [] }],items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene",elementType: "action",ordinal: 1,text: "雨落",provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+      return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(result) } }] });
+    }
     if (input.stage === "script") {
       const plan = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",resultType: "episodePlan",
         projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,
@@ -57,9 +63,10 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         evidence: [{ sourceVersionId: input.sourceVersionId, fragmentId: input.input.sourceFragments[0].id }] } }] };
     return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
   };
-  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false) => {
+  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false) => {
     const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa },
       ...(tasksEnabled ? { storyTasks: { enabled: true, workspaceIds: [workspaceId], intervalMs: 100 } } : {}),
+      ...(scriptsEnabled ? { scriptTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(episodesEnabled ? { episodeTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}) }, { modelFetch });
     try {
       const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
@@ -67,6 +74,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       try { await app.listen(0, "127.0.0.1"); }
       catch (error) { await app.close(); throw error; }
       return { http: request(app.getHttpServer()), worker: tasksEnabled ? app.get(StoryKnowledgeTaskWorker) : null,
+        scriptWorker: scriptsEnabled ? app.get(SCRIPT_CONTENT_WORKER) as StoryKnowledgeTaskWorker : null,
         episodeWorker: episodesEnabled ? app.get(EPISODE_PLAN_WORKER) as StoryKnowledgeTaskWorker : null,
         closeResources: production.close, close: async () => { try { await app.close(); } finally { await production.close(); } } };
     } catch (error) { await production.close(); throw error; }
@@ -81,7 +89,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -213,6 +221,33 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(listed.body.tasks.length,1);
       assert.equal(modelCalls,2);
     } finally { await episodeRestart.close(); }
+    await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
+    await admin.query("alter table script_content_heads disable trigger script_content_head_transition");
+    try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter table script_content_heads enable trigger script_content_head_transition"); }
+    const scriptApp = await start(ca,false,false,true);
+    let scriptTaskId: string;
+    try {
+      const path = `/projects/${projectId}/chapters/${chapterId}/script-content-tasks`;
+      const submitted = await scriptApp.http.post(path).set("authorization",bearer).send({ configurationVersionId: version!,modelId: "m",requestId: "fixture-script" }).expect(201);
+      scriptTaskId = submitted.body.id;
+      let status;
+      for (let i=0;i<100;i++) {
+        status = await scriptApp.http.get(`/script-content-tasks/${scriptTaskId}`).set("authorization",bearer).expect(200);
+        if (status.body.state === "succeeded" || status.body.state === "failed" || status.body.state === "paused") break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(status!.body.state,"succeeded",JSON.stringify(status!.body));
+      const view = await scriptApp.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
+      assert.equal(view.body.version.id,status!.body.result.candidateVersionId);
+      assert.equal(view.body.current,true); assert.equal(modelCalls,3);
+    } finally { await scriptApp.close(); assert.equal(scriptApp.scriptWorker!.status().state,"stopped"); }
+    const scriptRestart = await start(ca,false,false,true);
+    try {
+      const task = await scriptRestart.http.get(`/script-content-tasks/${scriptTaskId!}`).set("authorization",bearer).expect(200);
+      const view = await scriptRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
+      assert.equal(view.body.version.id,task.body.result.candidateVersionId); assert.equal(modelCalls,3);
+    } finally { await scriptRestart.close(); }
     const second = await start();
     try {
       const read = await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(200);

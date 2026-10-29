@@ -1,3 +1,9 @@
+## 2026-10-29：剧本候选生成
+
+`scriptContent` 为独立任务结果类型，已有受控 DeepSeek 传输、后台扫描、任务 API、候选读取与原文追溯 UI。`PostgresScriptContentRepository` 保存不可变候选、CAS 活动指针与原始任务结果索引；迁移为 `0013_script_content.sql`，须在前序迁移之后由可信管理员应用，启动只读预检不执行迁移。
+
+生产 `scriptTasks` 默认关闭，只有明确配置工作室白名单、受限同库 TLS 与大陆处理路由后才装配。未知执行/存储结果暂停并恢复读取，不自动重投。真实模型质量、生产启用、积分结算以及候选编辑/确认等后续能力各有独立门禁。以下章节保留早期增量背景，当前交付范围以任务索引和 2026-10-29 交付记录为准。
+
 # Script quality gateway
 
 ## Workspace BYOK foundation

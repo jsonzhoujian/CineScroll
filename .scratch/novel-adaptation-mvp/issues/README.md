@@ -24,13 +24,13 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 
 | ID | Ticket | Status | Blocked by |
 | --- | --- | --- | --- |
-| T06-01 | [生成并追溯剧本候选](./t06/01-generate-script-candidate.md) | ready | — |
-| T06-02 | [候选编辑与修改建议](./t06/02-review-edit-suggestions.md) | blocked | T06-01 |
-| T06-03 | [失败范围重试](./t06/03-retry-failed-scopes.md) | blocked | T06-01 |
+| T06-01 | [生成并追溯剧本候选](./t06/01-generate-script-candidate.md) | done | — |
+| T06-02 | [候选编辑与修改建议](./t06/02-review-edit-suggestions.md) | ready | T06-01 completed |
+| T06-03 | [失败范围重试](./t06/03-retry-failed-scopes.md) | ready | T06-01 completed |
 | T06-04 | [质量报告、确认与锁定](./t06/04-quality-confirm-lock.md) | blocked | T06-02, T06-03 |
 | T06-05 | [正式剧本修订与影响范围](./t06/05-revise-confirmed-script.md) | blocked | T06-04 |
 | T06-06 | [闭环验收与 T07 交接](./t06/06-acceptance-handoff.md) | blocked | T06-05 |
 
-当前可领取 T06-01。其完成后 T06-02 与 T06-03 可分别推进；下游任务在全部阻塞项完成后才转为 ready。
+T06-01 已完成，见[交付与验证记录](../../../docs/plans/2026-10-29-script-candidate-delivery.md)。当前可领取 T06-02 或 T06-03；下游任务在全部阻塞项完成后才转为 ready。T06 父项仍进行中。
 
 T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁见[独立状态页](./T09-infrastructure-status.md)。

@@ -1,3 +1,13 @@
+import { ScriptContentContext } from "./script-content-context.ts";
+import { ScriptContentTaskExecutor } from "./script-content-task-executor.ts";
+import { ScriptContentTaskDispatcher } from "./script-content-task-dispatcher.ts";
+import { ScriptContentTaskApiModule } from "./script-content-task-api.ts";
+import { ScriptContentApiModule } from "./script-content-api.ts";
+import { DeepSeekScriptContentModel } from "./deepseek-script-content-model.ts";
+import { PostgresScriptContentRepository } from "@novel-adaptation/script/postgres-script-content";
+import { ScriptContentService } from "@novel-adaptation/script/script-content";
+import { ScriptContentWorkerModule } from "./script-content-worker-module.ts";
+import { assertScriptContentDatabase } from "./script-content-database-readiness.ts";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { Module, type DynamicModule } from "@nestjs/common";
@@ -48,6 +58,7 @@ import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModu
 export interface ProductionApiConfig {
   modelSettings?: ProductionModelSettingsConfig;
   storyTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
+  scriptTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   databaseUrl: string;
   databaseTlsCa: string;
@@ -104,6 +115,18 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       const main = new URL(config.databaseUrl), model = new URL(models.databaseUrl);
       if (main.hostname !== model.hostname || (main.port || "5432") !== (model.port || "5432") || main.pathname !== model.pathname || config.databaseTlsCa !== models.databaseTlsCa) throw new Error();
     } catch { throw new Error("INVALID_EPISODE_TASK_CONFIG"); }
+  }
+  if (config.scriptTasks !== undefined && config.scriptTasks.enabled !== false) {
+    try {
+      const tasks = config.scriptTasks, models = config.modelSettings;
+      if (tasks.enabled !== true || models?.enabled !== true || models.routes.deepseek !== "mainland" ||
+          !Array.isArray(tasks.workspaceIds) || tasks.workspaceIds.length === 0 || tasks.workspaceIds.length > 100 ||
+          tasks.workspaceIds.some(id => typeof id !== "string" || !id.trim() || id.length > 256 || /[\r\n]/.test(id)) ||
+          new Set(tasks.workspaceIds).size !== tasks.workspaceIds.length ||
+          (tasks.intervalMs !== undefined && (!Number.isInteger(tasks.intervalMs) || tasks.intervalMs < 100 || tasks.intervalMs > 60000))) throw new Error();
+      const main = new URL(config.databaseUrl), model = new URL(models.databaseUrl);
+      if (main.hostname !== model.hostname || (main.port || "5432") !== (model.port || "5432") || main.pathname !== model.pathname || config.databaseTlsCa !== models.databaseTlsCa) throw new Error();
+    } catch { throw new Error("INVALID_SCRIPT_TASK_CONFIG"); }
   }
   if (config.storyTasks !== undefined && config.storyTasks.enabled !== false) {
     try {
@@ -177,6 +200,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
     });
   let modelPool: Pool | undefined;
   let worker: StoryKnowledgeTaskWorker | undefined;
+  let scriptWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
   let apiModule: DynamicModule = projectModule;
   if (modelKey && config.modelSettings?.enabled === true) {
@@ -266,12 +290,41 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         onModuleInit: () => assertEpisodeTaskDatabase(restrictedPool,taskConfig.workspaceIds),
       } });
     }
+    if (config.scriptTasks?.enabled === true) {
+      const taskConfig = config.scriptTasks;
+      const projects = new PostgresProjectImportRepository(restrictedPool);
+      const knowledge = new StoryKnowledgeService({ repository: new PostgresStoryKnowledgeRepository(restrictedPool), projectAccessReader: projects,
+        sourceReader: { async findSourceVersion(actor, projectId, chapterId, sourceVersionId) {
+          const chapter = await projects.findChapter(actor,projectId,chapterId);
+          const source = chapter?.versions.find(version => version.id === sourceVersionId);
+          return source ? { id: source.id,fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
+        } },idGenerator: () => `skv_${randomUUID()}`,clock: () => new Date() });
+      const script = new ScriptService({ repository: new PostgresScriptRepository(restrictedPool),
+        upstreamReader: new EpisodePlanUpstreamReader(projects,knowledge),accessReader: projects,
+        idGenerator: () => `epv_${randomUUID()}`,clock: () => new Date() });
+      const contentRepository = new PostgresScriptContentRepository(restrictedPool);
+      const context = new ScriptContentContext(projects,knowledge,script);
+      const service = new ScriptContentService({ repository: contentRepository,contextReader: context,accessReader: projects,idGenerator: () => `scv_${randomUUID()}`,clock: () => new Date() });
+      const repository = new PostgresModelTaskRepository(restrictedPool);
+      const tasks = new ModelTaskService({ settings,repository,contextReader: context,
+        scriptAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
+        generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `job_${randomUUID()}` });
+      const executor = new ScriptContentTaskExecutor({ tasks,context,repository: contentRepository,service,
+        model: new DeepSeekScriptContentModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
+      scriptWorker = new StoryKnowledgeTaskWorker({ dispatcher: new ScriptContentTaskDispatcher({ repository,executor }),
+        enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
+      apiModule.imports!.push(ScriptContentTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
+        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context }),ScriptContentWorkerModule.forWorker(scriptWorker));
+      apiModule.providers!.push({ provide: "SCRIPT_CONTENT_DATABASE_STARTUP_CHECK",useValue: {
+        onModuleInit: () => assertScriptContentDatabase(restrictedPool,taskConfig.workspaceIds),
+      } });
+    }
   }
   let closing: Promise<void> | undefined;
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop()]); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop()]); }
       finally { await Promise.all([pool.end(), modelPool?.end()]); }
     })(),
   };
