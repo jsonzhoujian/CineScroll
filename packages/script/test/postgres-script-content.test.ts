@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PostgresScriptContentRepository } from "../src/postgres-script-content.ts";
+import { ScriptContentService } from "../src/script-content.ts";
 import type { ScriptContentVersion } from "../src/script-content.ts";
 import { PostgresScriptRepository } from "../src/postgres-episode-plan.ts";
 import { ScriptUpstreamChangedError, type EpisodePlanVersion } from "../src/index.ts";
@@ -14,7 +15,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0013_script_content.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -55,6 +56,26 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.deepEqual(await new PostgresScriptContentRepository(app).findGeneration(actor,projectId,chapterId,candidate.jobId),candidate);
     assert.equal(await content.findActive({ ...actor,workspaceId: "other" },projectId,chapterId),null);
     assert.equal(await content.findGeneration({ ...actor,userId: "outsider" },projectId,chapterId,candidate.jobId),null);
+    let sequence = 0;
+    const review = new ScriptContentService({ repository: content,accessReader: { findProjectAccess: async a => ({ role: a.userId === "editor" ? "editor" : "owner" }) },
+      contextReader: { findGenerationContext: async () => ({ sourceVersionId: sourceId,planVersionId: confirmed.id,fragments: [],approvedAdditionIds: [] }) },idGenerator: () => `review-${suffix}-${++sequence}`,clock: () => new Date("2026-10-29") });
+    const beforeReview = (await content.findActive(actor,projectId,chapterId))!;
+    const reviewCommand = { kind: "suggest" as const,requestId: "suggestion",expectedActiveVersionId: beforeReview.id,elementId: "action",text: "rain falls",reason: "visual" };
+    // Save a valid editable element as a candidate before exercising the public review seam.
+    const populated = { ...beforeReview,id: `populated-${suffix}`,parentVersionId: beforeReview.id,elements: [{ id: "action",sceneId: "scene",elementType: "action" as const,ordinal: 1,text: "rain",provenance: [] }] };
+    await content.save(actor,populated,beforeReview.id);
+    const suggested = await review.reviewCandidate({ ...actor,userId: "editor" },projectId,chapterId,{ ...reviewCommand,expectedActiveVersionId: populated.id });
+    const rebuilt = new PostgresScriptContentRepository(app);
+    assert.equal((await rebuilt.findActive(actor,projectId,chapterId))?.suggestions?.[0]?.text,"rain falls");
+    const accepted = await review.reviewCandidate(actor,projectId,chapterId,{ kind: "decide",requestId: "accept",expectedActiveVersionId: suggested.id,suggestionId: suggested.suggestions![0]!.id,decision: "accepted",reason: "verified" });
+    assert.equal(accepted.elements[0]!.text,"rain falls");
+    assert.equal((await rebuilt.findReviewOperation(actor,projectId,chapterId,"accept"))?.id,accepted.id);
+    for (const field of ["requestId","fingerprint","kind","targetId","reason"]) {
+      const malformed = { ...accepted,id: `malformed-${field}-${suffix}`,parentVersionId: accepted.id,reviewOperation: { ...accepted.reviewOperation!,[field]: null } };
+      await assert.rejects(() => admin.query("insert into script_content_versions(workspace_id,project_id,chapter_id,id,parent_version_id,source_version_id,plan_version_id,job_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",[actor.workspaceId,projectId,chapterId,malformed.id,malformed.parentVersionId,sourceId,confirmed.id,malformed.jobId,actor.userId,JSON.stringify(malformed)]),{ code: "23514" });
+    }
+    const directEditor = { ...accepted,id: `forged-edit-${suffix}`,parentVersionId: accepted.id,createdBy: "editor",reviewOperation: { ...accepted.reviewOperation!,requestId: "forged" } };
+    await assert.rejects(() => content.save({ ...actor,userId: "editor" },directEditor,accepted.id),{ code: "FORBIDDEN" });
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
     const head = await content.findActive(actor,projectId,chapterId);
     await assert.rejects(() => content.save(actor,{ ...candidate,id: `stale-${suffix}`,parentVersionId: head!.id },head!.id),{ code: "CONTEXT_NOT_FOUND" });

@@ -147,3 +147,37 @@ test("post-model storage outage preserves unknown execution rather than allowing
   assert.equal(result.state,"paused"); assert.equal(result.reason,"EXECUTION_UNCERTAIN");
   assert.equal(await f.contentRepository.findActive(f.actor,"p","c"),null);
 });
+
+test("candidate review API enforces roles, persists suggestions, replays decisions and rejects stale edits",async () => {
+  const f = await fixture();
+  await f.projects.saveProject(f.actor,{ ...f.project,members: [{ userId: "owner",role: "owner" },{ userId: "editor",role: "editor" },{ userId: "reviewer",role: "reviewer" }] });
+  const task = await f.tasks.submitScriptContent(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "review-fixture" });
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) { return scriptResponse(r); } } }).run(f.actor,task.id);
+  let sequence = 0;
+  const review = new ScriptContentService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,idGenerator: () => `review-${++sequence}`,clock: () => new Date("2026-10-29") });
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [ScriptContentApiModule.register({ sessionVerifier: sessions,repository: f.contentRepository,context: f.context,review })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),path = "/projects/p/chapters/c/script-content";
+    const owner = { authorization: `Bearer ${await sessions.issue("owner","w")}` },editor = { authorization: `Bearer ${await sessions.issue("editor","w")}` },reviewer = { authorization: `Bearer ${await sessions.issue("reviewer","w")}` };
+    const original = await http.get(path).set(owner).expect(200);
+    const command = { kind: "edit",requestId: "edit",expectedActiveVersionId: original.body.version.id,elementId: "action",text: "雨打庭院",reason: "视觉表达" };
+    await http.post(`${path}/review`).set(editor).send(command).expect(403);
+    await http.post(`${path}/review`).set(owner).send({ ...command,actor: "forged" }).expect(400);
+    const suggestion = await http.post(`${path}/review`).set(editor).send({ ...command,kind: "suggest",requestId: "suggest" }).expect(201);
+    assert.equal(suggestion.body.elements[0].text,"雨落");
+    const decision = { kind: "decide",requestId: "decision",expectedActiveVersionId: suggestion.body.id,suggestionId: suggestion.body.suggestions[0].id,decision: "accepted",reason: "符合原文" };
+    await http.post(`${path}/review`).set(editor).send(decision).expect(403);
+    const accepted = await http.post(`${path}/review`).set(reviewer).send(decision).expect(201);
+    const replay = await http.post(`${path}/review`).set(reviewer).send(decision).expect(201);
+    assert.equal(replay.body.id,accepted.body.id); assert.equal(accepted.body.elements[0].text,"雨打庭院");
+    const noEffect = await http.post(`${path}/review`).set(reviewer).send({ ...decision,requestId: "noop",expectedActiveVersionId: accepted.body.id }).expect(201);
+    assert.equal(noEffect.body.reviewOperation.requestId,"noop");
+    await http.post(`${path}/review`).set(reviewer).send({ ...command,requestId: "noop",expectedActiveVersionId: noEffect.body.id }).expect(409);
+    await http.post(`${path}/review`).set(owner).send(command).expect(409);
+    const saved = await http.get(path).set(owner).expect(200);
+    assert.equal(saved.body.version.id,noEffect.body.id); assert.equal(saved.body.permissions.canEdit,true);
+    assert.deepEqual(saved.body.version.elements[0].provenance,original.body.version.elements[0].provenance);
+  } finally { await app.close(); }
+});

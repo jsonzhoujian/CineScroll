@@ -314,7 +314,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       scriptWorker = new StoryKnowledgeTaskWorker({ dispatcher: new ScriptContentTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
       apiModule.imports!.push(ScriptContentTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
-        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context }),ScriptContentWorkerModule.forWorker(scriptWorker));
+        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,review: service }),ScriptContentWorkerModule.forWorker(scriptWorker));
       apiModule.providers!.push({ provide: "SCRIPT_CONTENT_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertScriptContentDatabase(restrictedPool,taskConfig.workspaceIds),
       } });

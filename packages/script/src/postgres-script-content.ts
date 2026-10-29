@@ -11,6 +11,12 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
       join script_content_versions v using(workspace_id,project_id,chapter_id)
       where h.workspace_id=$1 and h.project_id=$2 and h.chapter_id=$3 and v.id=h.active_version_id`,[actor.workspaceId,projectId,chapterId])).rows[0]));
   }
+  findReviewOperation(actor: Actor,p: string,c: string,requestId: string) {
+    return this.transaction(actor,client => this.reviewResult(client,actor,p,c,requestId));
+  }
+  private async reviewResult(client: ModelSettingsClient,actor: Actor,p: string,c: string,requestId: string) {
+    return decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and created_by=$4 and version_json->'reviewOperation'->>'requestId'=$5",[actor.workspaceId,p,c,actor.userId,requestId])).rows[0]);
+  }
   findGeneration(actor: Actor, projectId: string, chapterId: string, jobId: string) {
     return this.transaction(actor,async client => decode((await client.query(`select v.version_json from script_content_generations g
       join script_content_versions v on v.workspace_id=g.workspace_id and v.project_id=g.project_id and v.chapter_id=g.chapter_id and v.id=g.version_id
@@ -28,10 +34,17 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
         where h.workspace_id=$1 and h.project_id=$2 and h.chapter_id=$3 for share of h`,key)).rows[0];
       if (!chapter || !plan || chapter.active_source_version_id !== version.sourceVersionId || plan.source_version_id !== version.sourceVersionId
         || plan.confirmed_version_id !== version.planVersionId || knowledge?.confirmed_version_id !== plan.story_bible_version_id) throw new ScriptContentError("CONTEXT_NOT_FOUND","剧本上游已变化");
-      // This ticket only exposes generation writes; review/confirmation gets its own workflow.
+      // Only candidate writes; formal confirmation remains a separate workflow.
       if (version.status !== "candidate" || version.createdBy !== actor.userId || version.parentVersionId !== expected) throw new ScriptContentError("INVALID_GENERATION","候选元数据无效");
       await client.query("insert into script_content_heads(workspace_id,project_id,chapter_id) values($1,$2,$3) on conflict do nothing",key);
       const head = (await client.query("select active_version_id from script_content_heads where workspace_id=$1 and project_id=$2 and chapter_id=$3 for update",key)).rows[0];
+      if (version.reviewOperation) {
+        const replay = await this.reviewResult(client,actor,version.projectId,version.chapterId,version.reviewOperation.requestId);
+        if (replay) {
+          if (replay.reviewOperation?.fingerprint !== version.reviewOperation.fingerprint) throw new ScriptContentError("VERSION_CONFLICT","重复请求内容不一致");
+          return replay;
+        }
+      }
       if ((head?.active_version_id ?? null) !== expected) throw new ScriptContentError("VERSION_CONFLICT","剧本已更新");
       await client.query(`insert into script_content_versions(workspace_id,project_id,chapter_id,id,parent_version_id,source_version_id,plan_version_id,job_id,created_by,version_json)
         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,[...key,version.id,version.parentVersionId,version.sourceVersionId,version.planVersionId,version.jobId,version.createdBy,JSON.stringify(version)]);

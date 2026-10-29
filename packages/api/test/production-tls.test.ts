@@ -89,7 +89,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -226,7 +226,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
     finally { await admin.query("alter table script_content_heads enable trigger script_content_head_transition"); }
     const scriptApp = await start(ca,false,false,true);
-    let scriptTaskId: string;
+    let scriptTaskId: string,scriptReviewedId: string;
     try {
       const path = `/projects/${projectId}/chapters/${chapterId}/script-content-tasks`;
       const submitted = await scriptApp.http.post(path).set("authorization",bearer).send({ configurationVersionId: version!,modelId: "m",requestId: "fixture-script" }).expect(201);
@@ -241,12 +241,19 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const view = await scriptApp.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
       assert.equal(view.body.version.id,status!.body.result.candidateVersionId);
       assert.equal(view.body.current,true); assert.equal(modelCalls,3);
+      assert.equal(view.body.permissions.canEdit,true);
+      const command = { kind: "edit",requestId: "tls-edit",expectedActiveVersionId: view.body.version.id,elementId: "action",text: "雨打庭院",reason: "镜头表达" };
+      const edited = await scriptApp.http.post(`/projects/${projectId}/chapters/${chapterId}/script-content/review`).set("authorization",bearer).send(command).expect(201);
+      scriptReviewedId = edited.body.id;
+      assert.equal(edited.body.elements[0].text,"雨打庭院");
+      const replay = await scriptApp.http.post(`/projects/${projectId}/chapters/${chapterId}/script-content/review`).set("authorization",bearer).send(command).expect(201);
+      assert.equal(replay.body.id,scriptReviewedId);
     } finally { await scriptApp.close(); assert.equal(scriptApp.scriptWorker!.status().state,"stopped"); }
     const scriptRestart = await start(ca,false,false,true);
     try {
       const task = await scriptRestart.http.get(`/script-content-tasks/${scriptTaskId!}`).set("authorization",bearer).expect(200);
       const view = await scriptRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
-      assert.equal(view.body.version.id,task.body.result.candidateVersionId); assert.equal(modelCalls,3);
+      assert.equal(view.body.version.id,scriptReviewedId!); assert.notEqual(view.body.version.id,task.body.result.candidateVersionId); assert.equal(modelCalls,3);
     } finally { await scriptRestart.close(); }
     const second = await start();
     try {

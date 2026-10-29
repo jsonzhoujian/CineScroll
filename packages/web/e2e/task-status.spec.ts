@@ -419,3 +419,58 @@ for (const mode of ["success","uncertain","stale","mobile"]) test(`确认拆集�
   }
   expect(posts).toBe(mode === "uncertain" ? 2 : 1);
 });
+
+for (const role of ["owner","editor","reviewer"]) test(`剧本候选编辑和建议权限及模式恢复：${role}`,async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  let version = { id: "script",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",generationStatus: "succeeded",scenes: [{ id: "scene",title: "庭院" }],elements: [{ id: "action",sceneId: "scene",text: "雨落庭院",elementType: "action",provenance: [{ type: "source_fragment",fragmentId: "f",transformation: "visualized" }] }],failures: [],suggestions: [] as Array<{ id: string;elementId: string;text: string;reason: string;status: string;submittedBy: string }> };
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { version,current: true,permissions: { canEdit: role !== "editor",canSuggest: true,canDecide: role !== "editor" },sourceFragments: [{ id: "f",text: "雨落" }] } }));
+  let posts = 0;
+  await page.route(`${origin}/projects/p/chapters/c/script-content/review`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    const cmd = r.request().postDataJSON(); expect(cmd.expectedActiveVersionId).toBe(version.id); expect(cmd.requestId).toBeTruthy(); posts++;
+    if (cmd.kind === "edit") { expect(role).not.toBe("editor"); version = { ...version,id: `v${posts}`,elements: [{ ...version.elements[0]!,text: cmd.text }] }; }
+    else if (cmd.kind === "suggest") version = { ...version,id: `v${posts}`,suggestions: [{ id: "proposal",elementId: "action",text: cmd.text,reason: cmd.reason,status: "pending",submittedBy: role }] };
+    else version = { ...version,id: `v${posts}`,suggestions: [{ ...version.suggestions[0]!,status: cmd.decision }],elements: [{ ...version.elements[0]!,text: version.suggestions[0]!.text }] };
+    return r.fulfill({ headers,json: version });
+  });
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click(); await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "剧本候选生成与追溯" });
+  await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click(); await panel.getByRole("button",{ name: "雨落庭院",exact: true }).click();
+  await panel.getByLabel("替换内容").fill("雨打庭院"); await panel.getByLabel("修改理由",{ exact: true }).fill("视觉表达");
+  if (role === "editor") { await expect(panel.getByRole("button",{ name: "保存候选修改" })).toHaveCount(0); await panel.getByRole("button",{ name: "提交剧本建议" }).click(); }
+  else {
+    await panel.getByRole("button",{ name: "保存候选修改" }).click(); await panel.getByRole("button",{ name: "雨打庭院",exact: true }).click();
+    await panel.getByLabel("替换内容").fill("雨滴落满庭院"); await panel.getByLabel("修改理由",{ exact: true }).fill("补充可见动作"); await panel.getByRole("button",{ name: "提交剧本建议" }).click();
+    await panel.getByLabel("建议裁决理由 proposal").fill("与原文一致"); await panel.getByRole("button",{ name: "接受剧本建议 proposal" }).click();
+  }
+  const expected = role === "editor" ? "雨落庭院" : "雨滴落满庭院";
+  await panel.getByRole("button",{ name: expected,exact: true }).click();
+  await page.getByRole("button",{ name: "追溯",exact: true }).click(); await page.getByRole("button",{ name: "审核",exact: true }).click();
+  await expect(panel.getByRole("button",{ name: expected,exact: true })).toHaveAttribute("aria-pressed","true"); await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
+  if (role === "owner") {
+    let release!: () => void,entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    await page.route(`${origin}/projects/p/chapters/c/script-content`,async r => {
+      entered(); await gate;
+      return r.fulfill({ headers,json: { version,current: true,permissions: { canEdit: true,canSuggest: true,canDecide: true },sourceFragments: [{ id: "f",text: "雨落" }] } });
+    });
+    try {
+      await page.reload(); await login(page);
+      const storyTask = page.getByRole("region",{ name: "故事知识任务" });
+      await storyTask.getByLabel("任务编号").fill("task"); await storyTask.getByRole("button",{ name: "读取任务",exact: true }).click();
+      await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+      await started;
+      await expect(panel.getByRole("button",{ name: "读取当前剧本",exact: true })).toBeDisabled();
+    } finally { release(); }
+    await expect(panel.getByRole("button",{ name: expected,exact: true })).toHaveAttribute("aria-pressed","true");
+    await expect(panel.getByRole("button",{ name: "读取当前剧本",exact: true })).toBeEnabled();
+  }
+  expect(posts).toBe(role === "editor" ? 1 : 3);
+});

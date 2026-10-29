@@ -10,6 +10,10 @@ export function EpisodePlanWorkbench({ api, projectId, chapterId, sourceVersionI
   const busy = ownBusy || taskBusy;
   const alive = useRef(true), locked = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    const saved = new URL(window.location.href).searchParams.get("scriptReviewContext");
+    if (saved) { try { const ids = JSON.parse(saved); if (ids[0] === projectId && ids[1] === chapterId && ids[2] === sourceVersionId && ids[4] === knowledgeVersionId) void act(); } catch { /* Ignore invalid navigation metadata. */ } }
+  },[projectId,chapterId,sourceVersionId,knowledgeVersionId]);
   async function read() {
     const next = await api.getEpisodePlan(projectId,chapterId);
     if (next.plan.projectId !== projectId || next.plan.chapterId !== chapterId) throw new Error("wrong context");

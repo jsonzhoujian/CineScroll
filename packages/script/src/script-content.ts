@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Actor, EpisodePlanVersion, ProjectAccessReader } from "./index.ts";
 
 export type Transformation = "retained" | "compressed" | "merged" | "visualized" | "actionized" | "narrated" | "sonified";
@@ -24,7 +25,11 @@ export type ScriptGenerationContext = Readonly<{
   confirmedPlan?: EpisodePlanVersion;
   confirmedStoryKnowledge?: { versionId: string; facts: Array<{ id: string; statement: string }> };
 }>;
+export type ScriptReviewCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & (
+  { kind: "edit" | "suggest";elementId: string;text: string } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" });
+export type ScriptReviewOperation = { requestId: string;fingerprint: string;kind: ScriptReviewCommand["kind"];targetId: string;reason: string };
 export type ScriptContentVersion = Readonly<{
+  reviewOperation?: ScriptReviewOperation;
   id: string; parentVersionId: string | null; projectId: string; chapterId: string;
   sourceVersionId: string; planVersionId: string; jobId: string; status: "candidate" | "confirmed";
   confirmedBy?: string; confirmedAt?: string; confirmationCandidateVersionId?: string;
@@ -35,6 +40,7 @@ export type ScriptContentVersion = Readonly<{
   failures: Array<Readonly<{ scopeKey: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
+  findReviewOperation?(actor: Actor,projectId: string,chapterId: string,requestId: string): Promise<ScriptContentVersion | null>;
   findGeneration?(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<ScriptContentVersion | null>;
   findActive(actor: Actor, projectId: string, chapterId: string): Promise<ScriptContentVersion | null>;
   save(actor: Actor, version: ScriptContentVersion, expectedActiveVersionId: string | null): Promise<ScriptContentVersion>;
@@ -53,6 +59,9 @@ export class InMemoryScriptContentRepository implements ScriptContentRepository 
   readonly #active = new Map<string, ScriptContentVersion>();
   readonly #versions = new Map<string, ScriptContentVersion>();
   readonly #generations = new Map<string, ScriptContentVersion>();
+  async findReviewOperation(actor: Actor,p: string,c: string,requestId: string) {
+    return structuredClone([...this.#versions.entries()].find(([key,v]) => key === JSON.stringify([scopeKey(actor,p,c),v.id]) && v.createdBy === actor.userId && v.reviewOperation?.requestId === requestId)?.[1] ?? null);
+  }
   async findGeneration(actor: Actor, projectId: string, chapterId: string, jobId: string) {
     return structuredClone(this.#generations.get(JSON.stringify([scopeKey(actor,projectId,chapterId),jobId])) ?? null);
   }
@@ -82,6 +91,50 @@ export class ScriptContentService {
     confirmationGate?: { validate(version: ScriptContentVersion): Promise<boolean> };
   };
   constructor(dependencies: ScriptContentService["dependencies"]) { this.dependencies = dependencies; }
+
+  async getReviewPermissions(actor: Actor,p: string) {
+    const access = await this.dependencies.accessReader?.findProjectAccess(actor,p);
+    return { canSuggest: !!access,canEdit: !!access && access.role !== "editor",canDecide: !!access && access.role !== "editor" };
+  }
+  async reviewCandidate(actor: Actor,p: string,c: string,input: ScriptReviewCommand): Promise<ScriptContentVersion> {
+    if (!isRecord(input) || !["edit","suggest","decide"].includes(input.kind) || !nonblank(input.requestId) || input.requestId.length > 256
+      || !nonblank(input.expectedActiveVersionId) || !nonblank(input.reason) || input.reason.length > 2000
+      || !onlyKeys(input,input.kind === "decide" ? ["kind","requestId","expectedActiveVersionId","suggestionId","decision","reason"] : ["kind","requestId","expectedActiveVersionId","elementId","text","reason"])) throw new ScriptContentError("INVALID_EDIT","审核命令无效");
+    const current = await this.readEditableVersion(actor,p,c,null,input.kind !== "suggest");
+    if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE","仅可修改候选剧本");
+    const normalized = input.kind === "decide" ? { kind: input.kind,requestId: input.requestId,expectedActiveVersionId: input.expectedActiveVersionId,suggestionId: input.suggestionId,decision: input.decision,reason: input.reason.trim() }
+      : { kind: input.kind,requestId: input.requestId,expectedActiveVersionId: input.expectedActiveVersionId,elementId: input.elementId,text: input.text,reason: input.reason.trim() };
+    const fingerprint = createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+    const repository = this.dependencies.repository;
+    if (!repository.findReviewOperation) throw new ScriptContentError("STORAGE_UNAVAILABLE","审核存储未就绪");
+    const replay = await repository.findReviewOperation(actor,p,c,input.requestId);
+    if (replay) { if (replay.reviewOperation?.fingerprint !== fingerprint) throw new ScriptContentError("VERSION_CONFLICT","请求标识已用于其他修改"); return replay; }
+    if (current.id !== input.expectedActiveVersionId) throw new ScriptContentError("VERSION_CONFLICT","剧本已更新，请重新读取");
+    const operation: ScriptReviewOperation = { requestId: input.requestId,fingerprint,kind: input.kind,targetId: input.kind === "decide" ? input.suggestionId : input.elementId,reason: input.reason.trim() };
+    const scoped = new ScriptContentService({ ...this.dependencies,repository: {
+      findActive: repository.findActive.bind(repository),
+      save: (a,v,expected) => repository.save(a,{ ...v,reviewOperation: operation },expected),
+    } });
+    try {
+      if (input.kind === "edit") return await scoped.editElement(actor,p,c,{ expectedActiveVersionId: input.expectedActiveVersionId,elementId: input.elementId,text: input.text,reason: input.reason });
+      if (input.kind === "suggest") return await scoped.submitSuggestion(actor,p,c,{ expectedActiveVersionId: input.expectedActiveVersionId,elementId: input.elementId,text: input.text,reason: input.reason });
+      if (input.kind === "decide") {
+        const decided = await scoped.decideSuggestion(actor,p,c,{ expectedActiveVersionId: input.expectedActiveVersionId,suggestionId: input.suggestionId,decision: input.decision });
+        if (decided.id !== current.id) {
+          if (decided.createdBy === actor.userId && decided.reviewOperation?.requestId === operation.requestId && decided.reviewOperation.fingerprint === operation.fingerprint) return decided;
+          throw new ScriptContentError("VERSION_CONFLICT","建议已被其他请求处理，请重新读取");
+        }
+        return await repository.save(actor,{ ...current,id: this.dependencies.idGenerator(),parentVersionId: current.id,createdBy: actor.userId,createdAt: this.dependencies.clock().toISOString(),reviewOperation: operation },current.id);
+      }
+      throw new ScriptContentError("INVALID_EDIT","审核命令无效");
+    } catch (error) {
+      if (error instanceof ScriptContentError && ["VERSION_CONFLICT","STORAGE_UNAVAILABLE"].includes(error.code)) {
+        const saved = await repository.findReviewOperation(actor,p,c,input.requestId);
+        if (saved?.reviewOperation?.fingerprint === fingerprint) return saved;
+      }
+      throw error;
+    }
+  }
 
   async confirmContent(actor: Actor, projectId: string, chapterId: string, expectedVersionId: string): Promise<ScriptContentVersion> {
     const current = await this.readEditableVersion(actor, projectId, chapterId, null, true);
