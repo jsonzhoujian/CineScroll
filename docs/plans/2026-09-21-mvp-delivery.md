@@ -6,7 +6,7 @@
 
 **Architecture:** Begin with user validation and canonical data contracts, then establish the technical architecture. Build one thin end-to-end chapter flow before expanding stage depth, collaboration, billing, compliance, and exports. The three desktop work modes must remain projections over one canonical project state.
 
-**Tech Stack:** To be selected and recorded by ticket `T03`; Markdown and JSON Schema are used for pre-implementation artifacts.
+**Tech Stack:** T03 已完成选型，见 ADR-0001～0003；TypeScript 模块化单体、独立 Worker、Next.js、NestJS 和 PostgreSQL。架构中的队列和 Outbox 为目标设计，不表示全部已经接入。
 
 ---
 
@@ -31,7 +31,9 @@ T02 canonical contracts ────────┘                             
                                                                             └─→ T10 export + compliance + pilot
 ```
 
-T01a and T02 are complete, so T03 is ready. T01b is deliberately deferred until an operable MVP exists and remains a gate for T10 and paid launch validation.
+2026-10-29：T01a、T02～T05 已按详细任务记录完成；T06 进行中，Checkpoint C 尚未通过。T07、T08、T09 整体验收仍受阻；T09 独立基础设施进展不解除产品依赖。T01b 在可操作 MVP 后进行，继续作为 T10 和收费验证门禁。
+
+优先完成 T06 的确认拆集 → 生成剧本 → 审核确认 → 原文追溯闭环，见[已确认拆分方案](./2026-10-29-t06-ticket-draft.md)与[独立任务索引](../../.scratch/novel-adaptation-mvp/issues/README.md)。当前可领取 T06-01，发布任务不代表开始实现或通过验收。T09 单独追踪[基础设施与整体验收](../../.scratch/novel-adaptation-mvp/issues/T09-infrastructure-status.md)。图中 T10 完整阻塞集合为 T01b、T08、T09；T07 为间接依赖。
 
 ## Delivery checkpoints
 
