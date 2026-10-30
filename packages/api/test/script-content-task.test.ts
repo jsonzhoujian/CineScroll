@@ -60,7 +60,7 @@ async function fixture() {
   }; } } }).run(f.actor,task.id);
   const candidate = await f.script.getEpisodePlan(f.actor,"p","c");
   await f.script.confirmEpisodePlan(f.actor,"p","c",{ expectedActiveVersionId: candidate.id });
-  const context = new ScriptContentContext(f.projects,f.knowledge,f.script),repository = new InMemoryScriptContentRepository();
+  const repository = new InMemoryScriptContentRepository(),context = new ScriptContentContext(f.projects,f.knowledge,f.script,repository);
   let id = 0;
   const service = new ScriptContentService({ repository,contextReader: context,idGenerator: () => `content${++id}`,clock: () => new Date("2026-10-29") });
   const tasks = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: context,scriptAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },generationPolicy: { isAllowed: async () => true },idGenerator: () => `script-task${++id}` });
@@ -180,4 +180,99 @@ test("candidate review API enforces roles, persists suggestions, replays decisio
     assert.equal(saved.body.version.id,noEffect.body.id); assert.equal(saved.body.permissions.canEdit,true);
     assert.deepEqual(saved.body.version.elements[0].provenance,original.body.version.elements[0].provenance);
   } finally { await app.close(); }
+});
+
+async function partialScriptFixture() {
+  const f = await fixture();
+  const task = await f.tasks.submitScriptContent(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "partial-script" });
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) {
+    const response = scriptResponse(r);
+    return { ...response,status: "partially_succeeded",items: [...response.items,{ scopeKey: "dialogue",status: "failed",error: { code: "INVALID_ELEMENT",message: "missing",retryable: true } },{ scopeKey: "sound",status: "failed",error: { code: "INVALID_ELEMENT",message: "needs manual decision",retryable: false } }] };
+  } } }).run(f.actor,task.id);
+  return { ...f,base: (await f.contentRepository.findActive(f.actor,"p","c"))! };
+}
+function retriedResponse(r: Parameters<import("../src/script-content-task-executor.ts").CredentialedScriptContentModel["generate"]>[0]) {
+  const full = scriptResponse(r);
+  return { ...full,scenes: [],items: [{ scopeKey: "dialogue",status: "succeeded",value: { ...full.items[0]!.value,id: "recovered-dialogue",elementType: "dialogue",ordinal: 2,text: "下雨了" } }] };
+}
+test("script retry API freezes only eligible failure scopes and worker preserves successful content",async () => {
+  const f = await partialScriptFixture();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [ScriptContentTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),path = "/projects/p/chapters/c/script-content-tasks/retries",auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` };
+    const input = { ...await f.settingsSelection(),requestId: "retry",expectedActiveVersionId: f.base.id,scopeKeys: ["dialogue"] };
+    await http.post(path).send(input).expect(401);
+    await http.post(path).set(auth).send({ ...input,sourceVersionId: "forged" }).expect(400);
+    for (const scopeKeys of [["action"],["sound"],["dialogue","dialogue"],[]]) await http.post(path).set(auth).send({ ...input,scopeKeys }).expect(400);
+    await http.post(path).set({ authorization: `Bearer ${await sessions.issue("outsider","w")}` }).send(input).expect(404);
+    const submitted = await http.post(path).set(auth).send(input).expect(201);
+    assert.equal((await http.post(path).set(auth).send(input).expect(201)).body.id,submitted.body.id);
+    await http.post(path).set(auth).send({ ...input,scopeKeys: ["sound"] }).expect(409);
+    await http.post(path).set(auth).send({ ...input,requestId: "duplicate-active" }).expect(409);
+    const executor = new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) {
+      assert.deepEqual(r.scopeKeys,["dialogue"]); assert.equal(r.input.retry?.expectedActiveVersionId,f.base.id);
+      assert.equal("elements" in r.input,false); assert.deepEqual(r.input.retry?.sceneReferences,[{ id: "scene",episodeId: "e",ordinal: 1 }]);
+      return retriedResponse(r);
+    } } });
+    const result = await executor.run(f.actor,submitted.body.id);
+    assert.equal(result.state,"succeeded");
+    const merged = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+    assert.deepEqual(merged.elements[0],f.base.elements[0]); assert.equal(merged.elements[1]?.id,"recovered-dialogue");
+    assert.deepEqual(merged.failures.map(f => f.scopeKey),["sound"]); assert.equal(merged.retry?.retryOfJobId,f.base.jobId);
+    assert.equal((await http.post(path).set(auth).send(input).expect(201)).body.id,submitted.body.id);
+    await http.post(path).set(auth).send({ ...input,requestId: "new-stale" }).expect(409);
+  } finally { await app.close(); }
+});
+test("a user edit during retry pauses the stale task without overwriting successful content",async () => {
+  const f = await partialScriptFixture();
+  const task = await f.tasks.submitScriptContentRetry(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "raced-retry",expectedActiveVersionId: f.base.id,scopeKeys: ["dialogue"] });
+  const review = new ScriptContentService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,idGenerator: () => "edited-during-retry",clock: () => new Date("2026-10-29") });
+  const executor = new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) {
+    await review.reviewCandidate(f.actor,"p","c",{ kind: "edit",requestId: "edit-during-retry",expectedActiveVersionId: f.base.id,elementId: "action",text: "已人工修改",reason: "保留人工表达" });
+    return retriedResponse(r);
+  } } });
+  assert.equal((await executor.run(f.actor,task.id)).reason,"UPSTREAM_CHANGED");
+  const active = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+  assert.equal(active.elements[0]?.text,"已人工修改"); assert.deepEqual(active.failures,f.base.failures);
+});
+test("lost retry commit response recovers the exact merged snapshot without another model call",async () => {
+  const f = await partialScriptFixture(),backing = f.contentRepository;
+  const repository = { findActive: backing.findActive.bind(backing),findGeneration: backing.findGeneration.bind(backing),async save(...args: Parameters<typeof backing.save>) { await backing.save(...args); throw new (await import("@novel-adaptation/script/script-content")).ScriptContentError("STORAGE_UNAVAILABLE","lost response"); } };
+  const service = new ScriptContentService({ repository,contextReader: f.context,idGenerator: () => "persisted-retry",clock: () => new Date("2026-10-29") });
+  const task = await f.tasks.submitScriptContentRetry(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "unknown-retry",expectedActiveVersionId: f.base.id,scopeKeys: ["dialogue"] });
+  let calls = 0;
+  const executor = new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository,service,model: { async generate(r) { calls++; return retriedResponse(r); } } });
+  const unknown = await executor.run(f.actor,task.id); assert.equal(unknown.reason,"EXECUTION_UNCERTAIN");
+  assert.equal((await executor.recover(f.actor,task.id)).result?.candidateVersionId,"persisted-retry"); assert.equal(calls,1);
+  assert.deepEqual((await backing.findActive(f.actor,"p","c"))?.elements[0],f.base.elements[0]);
+});
+
+test("storage failure in retry validation after the response remains execution-uncertain",async () => {
+  const f = await partialScriptFixture();
+  const task = await f.tasks.submitScriptContentRetry(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "late-read-outage",expectedActiveVersionId: f.base.id,scopeKeys: ["dialogue"] });
+  const original = f.context.findGenerationContext.bind(f.context);
+  const executor = new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) {
+    let reads = 0;
+    f.context.findGenerationContext = async (...args) => { if (++reads === 2) throw new Error("late persistence outage"); return original(...args); };
+    return retriedResponse(r);
+  } } });
+  assert.equal((await executor.run(f.actor,task.id)).reason,"EXECUTION_UNCERTAIN");
+  assert.equal((await f.contentRepository.findActive(f.actor,"p","c"))?.id,f.base.id);
+});
+test("successive retries retain each unselected failure's real origin task",async () => {
+  const f = await partialScriptFixture();
+  const prepared = { ...f.base,id: "all-retryable",parentVersionId: f.base.id,failures: f.base.failures.map(f => ({ ...f,retryable: true })) };
+  await f.contentRepository.save(f.actor,prepared,f.base.id);
+  const first = await f.tasks.submitScriptContentRetry(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "origin-a",expectedActiveVersionId: prepared.id,scopeKeys: ["dialogue"] });
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) { return { ...retriedResponse(r),status: "failed",items: [{ scopeKey: "dialogue",status: "failed",error: { code: "INVALID_ELEMENT",message: "still missing",retryable: true } }] }; } } }).run(f.actor,first.id);
+  const partial = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+  const second = await f.tasks.submitScriptContentRetry(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "origin-b",expectedActiveVersionId: partial.id,scopeKeys: ["sound"] });
+  assert.equal(second.input.retry?.retryOfJobId,first.id);
+  assert.deepEqual(second.input.retry?.failureOrigins,[{ scopeKey: "sound",jobId: f.base.jobId }]);
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) { const response = retriedResponse(r); return { ...response,items: response.items.map(i => ({ ...i,scopeKey: "sound" })) }; } } }).run(f.actor,second.id);
+  const final = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+  assert.deepEqual(final.retry?.failureOrigins,[{ scopeKey: "sound",jobId: f.base.jobId }]);
+  assert.equal(final.failures.find(f => f.scopeKey === "dialogue")?.originJobId,first.id);
 });

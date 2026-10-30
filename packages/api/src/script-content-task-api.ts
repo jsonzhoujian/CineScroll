@@ -10,11 +10,11 @@ import { enforceTaskSubmissionRate, type TaskSubmissionRequest } from "./task-su
 const TASKS = Symbol("SCRIPT_CONTENT_TASKS");
 const RATE = Symbol("SCRIPT_CONTENT_TASK_RATE");
 function identifier(value: unknown): string {
-  if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n]/.test(value)) throw new BadRequestException("拆集任务参数无效");
+  if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n]/.test(value)) throw new BadRequestException("剧本任务参数无效");
   return value;
 }
 function selection(body: unknown, submission = false) {
-  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !(submission ? ["configurationVersionId","modelId","requestId"] : ["configurationVersionId","modelId"]).includes(key))) throw new BadRequestException("拆集任务参数无效");
+  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !(submission ? ["configurationVersionId","modelId","requestId"] : ["configurationVersionId","modelId"]).includes(key))) throw new BadRequestException("剧本任务参数无效");
   const value = body as Record<string,unknown>;
   return { configurationVersionId: identifier(value.configurationVersionId),modelId: identifier(value.modelId),...(submission ? { requestId: identifier(value.requestId) } : {}) };
 }
@@ -32,6 +32,16 @@ class ScriptContentTaskController {
     const chosen = selection(body,true), projectId = identifier(p),chapterId = identifier(c);
     await enforceTaskSubmissionRate(this.#rate,request);
     return safely(() => this.#tasks.submitScriptContent(request.actor,{ projectId,chapterId,configurationVersionId: chosen.configurationVersionId,modelId: chosen.modelId,requestId: chosen.requestId! }));
+  }
+  async retry(request: TaskSubmissionRequest,p: string,c: string,body: unknown) {
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(k => !["configurationVersionId","modelId","requestId","expectedActiveVersionId","scopeKeys"].includes(k))) throw new BadRequestException("剧本重试参数无效");
+    const value = body as Record<string,unknown>;
+    const chosen = selection({ configurationVersionId: value.configurationVersionId,modelId: value.modelId,requestId: value.requestId },true);
+    const expectedActiveVersionId = identifier(value.expectedActiveVersionId),projectId = identifier(p),chapterId = identifier(c);
+    if (!Array.isArray(value.scopeKeys) || !value.scopeKeys.length || value.scopeKeys.length > 100 || new Set(value.scopeKeys).size !== value.scopeKeys.length) throw new BadRequestException("剧本重试范围无效");
+    const scopeKeys = value.scopeKeys.map(identifier);
+    await enforceTaskSubmissionRate(this.#rate,request);
+    return safely(() => this.#tasks.submitScriptContentRetry(request.actor,{ projectId,chapterId,configurationVersionId: chosen.configurationVersionId,modelId: chosen.modelId,requestId: chosen.requestId!,expectedActiveVersionId,scopeKeys }));
   }
   availability(request: { actor: Actor }, p: string, c: string, query: unknown) {
     const chosen = selection(query),projectId = identifier(p),chapterId = identifier(c);
@@ -65,13 +75,13 @@ class ScriptTaskFilter implements ExceptionFilter<ModelTaskError | ModelSettings
 Catch(ModelTaskError,ModelSettingsError)(ScriptTaskFilter);
 Controller()(ScriptContentTaskController); UseGuards(SessionGuard)(ScriptContentTaskController); Inject(TASKS)(ScriptContentTaskController,undefined,0);
 Inject(RATE)(ScriptContentTaskController,undefined,1);
-for (const [method,decorator] of [["submit",Post("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/script-content-tasks/availability")], ["get",Get("script-content-tasks/:id")]] as const) {
+for (const [method,decorator] of [["retry",Post("projects/:projectId/chapters/:chapterId/script-content-tasks/retries")], ["submit",Post("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/script-content-tasks/availability")], ["get",Get("script-content-tasks/:id")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(ScriptContentTaskController.prototype,method)!;
   decorator(ScriptContentTaskController.prototype,method,descriptor); Header("Cache-Control","no-store")(ScriptContentTaskController.prototype,method,descriptor); Req()(ScriptContentTaskController.prototype,method,0);
   if (method === "get") Param("id")(ScriptContentTaskController.prototype,method,1);
   else {
     Param("projectId")(ScriptContentTaskController.prototype,method,1); Param("chapterId")(ScriptContentTaskController.prototype,method,2);
-    if (method === "submit") Body()(ScriptContentTaskController.prototype,method,3); else Query()(ScriptContentTaskController.prototype,method,3);
+    if (method === "submit" || method === "retry") Body()(ScriptContentTaskController.prototype,method,3); else Query()(ScriptContentTaskController.prototype,method,3);
   }
 }
 /** Optional authenticated boundary only; requires ScriptContentContext and never exposes a run endpoint. */

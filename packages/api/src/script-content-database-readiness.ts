@@ -13,7 +13,9 @@ export async function assertScriptContentDatabase(pool: Pool,workspaceIds: reado
       and not has_table_privilege(current_user,c.oid,'UPDATE')) ready
       from pg_class c where c.oid in (to_regclass('public.script_content_versions'),to_regclass('public.script_content_heads'),to_regclass('public.script_content_generations'))`);
     if (!result.rows[0]?.ready) throw new Error();
-    const guards = await client.query(`select exists(select 1 from pg_index where indexrelid=to_regclass('public.script_content_review_request_idx') and indisvalid and indisunique)
+    const guards = await client.query(`select exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_script_retry_active_idx') and indisvalid and indisunique)
+      and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_content_retry_valid' and convalidated)
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.script_content_review_request_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_content_review_operation_valid' and convalidated)
       and has_column_privilege(current_user,'public.script_content_heads','active_version_id','UPDATE')
       and (select count(*)=3 from pg_trigger where tgenabled in ('O','A') and not tgisinternal and

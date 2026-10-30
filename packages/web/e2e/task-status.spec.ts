@@ -474,3 +474,73 @@ for (const role of ["owner","editor","reviewer"]) test(`剧本候选编辑和建
   }
   expect(posts).toBe(role === "editor" ? 1 : 3);
 });
+
+for (const mode of ["success","unknown-submit","stale","unknown-execution","mobile"]) test(`剧本失败范围重试：${mode}`,async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const provenance = [{ type: "source_fragment",fragmentId: "f",transformation: "retained" }];
+  const base = { id: "script",jobId: "original-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",generationStatus: "partially_succeeded",scenes: [{ id: "late-scene",episodeId: "e",ordinal: 2,title: "庭院后景" }],elements: [{ id: "saved",sceneId: "late-scene",elementType: "action",ordinal: 2,text: "已成功动作",provenance }],failures: [{ scopeKey: "dialogue",code: "INVALID_ELEMENT",retryable: true },{ scopeKey: "narration",code: "INVALID_ELEMENT",retryable: true },{ scopeKey: "sound",code: "NEEDS_REVIEW",retryable: false }] };
+  const retry = { expectedActiveVersionId: "script",retryOfJobId: "original-task",scopeKeys: ["dialogue","narration"] };
+  const task = { id: "retry-task",projectId: "p",chapterId: "c",input: { stage: "script",resultType: "scriptContent",sourceVersionId: "s",upstreamConfirmedVersionIds: ["plan","candidate"],retry },state: "queued",reason: null,result: null };
+  let posts = 0,requestId = "",done = false;
+  await page.route(`${origin}/projects/p/chapters/c/script-content-tasks/retries`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    posts++; const input = r.request().postDataJSON(); expect(Object.keys(input).sort()).toEqual(["configurationVersionId","expectedActiveVersionId","modelId","requestId","scopeKeys"]);
+    expect(input.expectedActiveVersionId).toBe("script"); expect(input.scopeKeys).toEqual(["dialogue","narration"]);
+    if (requestId) expect(input.requestId).toBe(requestId); else requestId = input.requestId;
+    if (mode === "unknown-submit" && posts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+    return r.fulfill({ headers,json: task });
+  });
+  await page.route(`${origin}/projects/p/chapters/c/script-content-tasks*`,r => r.fulfill({ headers,json: { tasks: [],nextCursor: null } }));
+  await page.route(`${origin}/script-content-tasks/retry-task`,r => {
+    if (mode === "unknown-execution") return r.fulfill({ headers,json: { ...task,state: "paused",reason: "EXECUTION_UNCERTAIN" } });
+    done = true; return r.fulfill({ headers,json: { ...task,state: "succeeded",result: { candidateVersionId: "retry-result",extractionStatus: "partially_succeeded" } } });
+  });
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: {
+    current: !(done && mode === "stale"),episodes: [{ id: "e",ordinal: 1 }],permissions: { canEdit: true,canSuggest: true,canDecide: true },sourceFragments: [{ id: "f",text: "雨落" }],version: done ? {
+      ...base,id: "retry-result",jobId: "retry-task",retry,scenes: [...base.scenes,{ id: "early-scene",episodeId: "e",ordinal: 1,title: "庭院前景" }],
+      elements: [...base.elements,{ id: "recovered-dialogue",sceneId: "late-scene",elementType: "dialogue",ordinal: 1,text: "恢复对白",provenance },{ id: "recovered-narration",sceneId: "early-scene",elementType: "narration",ordinal: 1,text: "恢复旁白",provenance }],failures: [base.failures[2]]
+    } : base,
+  } }));
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click(); await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "剧本候选生成与追溯" }),local = page.getByRole("region",{ name: "剧本失败范围重试" });
+  await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click();
+  await expect(local.getByRole("checkbox",{ name: "重试范围 sound" })).toBeDisabled();
+  await local.getByRole("checkbox",{ name: "重试范围 dialogue" }).check(); await local.getByRole("checkbox",{ name: "重试范围 narration" }).check();
+  await local.getByRole("button",{ name: "读取剧本重试模型" }).click(); await local.getByRole("combobox",{ name: "剧本重试模型",exact: true }).selectOption("model");
+  await local.getByRole("button",{ name: "仅重试选中失败项" }).click();
+  if (mode === "unknown-submit") {
+    await expect(local.getByRole("checkbox",{ name: "重试范围 dialogue" })).toBeDisabled();
+    await page.reload(); await login(page);
+    const story = page.getByRole("region",{ name: "故事知识任务" });
+    await story.getByLabel("任务编号").fill("task"); await story.getByRole("button",{ name: "读取任务",exact: true }).click();
+    await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+    await local.getByRole("button",{ name: "核对剧本重试原提交" }).click();
+  }
+  await expect(local.getByRole("button",{ name: "仅重试选中失败项" })).toBeDisabled();
+  await panel.getByRole("button",{ name: "刷新剧本任务",exact: true }).click();
+  if (mode === "unknown-execution") {
+    await expect(local.getByRole("button",{ name: "仅重试选中失败项" })).toBeDisabled();
+    await expect(panel.getByRole("button",{ name: "载入剧本候选",exact: true })).toBeDisabled();
+  } else {
+    await expect(panel.getByRole("button",{ name: "恢复对白",exact: true })).toHaveCount(0);
+    await panel.getByRole("button",{ name: "载入剧本候选",exact: true }).click();
+    if (mode === "stale") await expect(panel.getByText("结果或上游已变化，请重新核对。")).toBeVisible();
+    else {
+      await expect(panel.getByRole("button",{ name: "已成功动作",exact: true })).toBeVisible();
+      await expect(panel.getByText(/本次成功范围：dialogue、narration/)).toBeVisible();
+      await expect(panel.getByText(/其余失败范围：sound/)).toBeVisible();
+      expect(await panel.locator("h3").allTextContents()).toContain("庭院前景");
+      const sceneTitles = await panel.locator("h3").allTextContents(); expect(sceneTitles.indexOf("庭院前景")).toBeLessThan(sceneTitles.indexOf("庭院后景"));
+      const texts = await panel.getByRole("button").allTextContents(); expect(texts.indexOf("恢复对白")).toBeLessThan(texts.indexOf("已成功动作"));
+      await panel.getByRole("button",{ name: "恢复对白",exact: true }).click(); await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
+      if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 }); await expect(local).toBeHidden(); }
+    }
+  }
+  expect(posts).toBe(mode === "unknown-submit" ? 2 : 1);
+});

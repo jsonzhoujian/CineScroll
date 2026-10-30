@@ -27,6 +27,8 @@ JSON Schema 校验字段、枚举、联合类型、必填项及基本状态条�
 
 ## 可重复验证
 
+剧本局部重试请求增加 `input.retry` 的候选身份及只读场次引用，顶层 `retryOfJobId` 表示聚合父任务；实际失败来源保存在服务器任务快照的 `failureOrigins`。请求夹具 `valid-script-retry-request.json` 应通过 request Schema，`invalid-script-retry-request-successful-payload.json` 应失败。成功剧本元素不能作为重试目标夹带进请求。完整行为与验证边界见 [T06-03 交付记录](../plans/2026-10-30-script-retry-delivery.md)。
+
 使用 `check-jsonschema` Draft 2020-12 校验：
 
 ```bash

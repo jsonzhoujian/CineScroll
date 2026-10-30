@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ScriptContentRetry } from "./script-content-retry";
 import { ApiClientError, type ApiClient, type ScriptContentTask, type ScriptContentView, type ModelConfiguration } from "../lib/api";
 
 type Pending = { requestId: string;configurationVersionId: string;modelId: string };
@@ -109,6 +110,8 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
       }
     }
   }
+  const episodeOrder = new Map(view?.episodes?.map(e => [e.id,e.ordinal]));
+  const orderedScenes = view?.version.scenes.slice().sort((a,b) => (episodeOrder.get(a.episodeId ?? "") ?? 0) - (episodeOrder.get(b.episodeId ?? "") ?? 0) || (a.ordinal ?? 0) - (b.ordinal ?? 0));
   const selected = view?.version.elements.find(e => e.id === elementId);
   return <section className="task-panel" aria-label="剧本候选生成与追溯">
     <h2>生成剧本候选</h2><p role="status">{notice}</p>
@@ -122,8 +125,9 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
     {task && <p>剧本任务：{task.state} {task.reason} {task.result?.extractionStatus}</p>}
     <button type="button" disabled={busy || task?.state !== "succeeded" || !task.result} onClick={() => void act(load)}>载入剧本候选</button>
     <button type="button" disabled={busy} onClick={() => void act(readCurrent)}>读取当前剧本</button>
+    {view?.version.retry && <p role="status">本次成功范围：{view.version.retry.scopeKeys.filter(s => !view.version.failures.some(f => f.scopeKey === s)).join("、") || "无"}；本次仍失败范围：{view.version.retry.scopeKeys.filter(s => view.version.failures.some(f => f.scopeKey === s)).join("、") || "无"}；其余失败范围：{view.version.failures.filter(f => !view.version.retry!.scopeKeys.includes(f.scopeKey)).map(f => f.scopeKey).join("、") || "无"}</p>}
     {view && <><p>剧本版本 {view.version.id} · {view.version.generationStatus}</p>{view.version.failures.map(f => <p key={f.scopeKey}>失败范围 {f.scopeKey} · {f.code}</p>)}
-      {view.version.scenes.map(scene => <section key={scene.id}><h3>{scene.title}</h3>{view.version.elements.filter(e => e.sceneId === scene.id).map(e => <button type="button" key={e.id} aria-pressed={elementId === e.id} onClick={() => { setElementId(e.id); setReplacement(e.text); setReason(""); rememberCursor(view,e.id); }}>{e.text}</button>)}</section>)}
+      {orderedScenes!.map(scene => <section key={scene.id}><h3>{scene.title}</h3>{view.version.elements.filter(e => e.sceneId === scene.id).sort((a,b) => (a.ordinal ?? 0) - (b.ordinal ?? 0)).map(e => <button type="button" key={e.id} aria-pressed={elementId === e.id} onClick={() => { setElementId(e.id); setReplacement(e.text); setReason(""); rememberCursor(view,e.id); }}>{e.text}</button>)}</section>)}
       {selected && <aside aria-label="剧本原文依据"><h3>原文依据</h3>{selected.provenance.map((p,i) => <article key={i}><small>{p.transformation ?? "已批准改编新增"}</small><p>{p.type === "source_fragment" ? view.sourceFragments.find(f => f.id === p.fragmentId)?.text ?? "原文不可用" : p.additionId}</p></article>)}</aside>}
       {selected && <div className="desktop-task-action" aria-label="剧本候选编辑">
         <label>替换内容<textarea value={replacement} maxLength={20000} onChange={e => setReplacement(e.target.value)} disabled={busy || reviewUnknown} /></label>
@@ -131,6 +135,8 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
         {view.permissions?.canEdit && <button type="button" disabled={busy || reviewUnknown || !replacement.trim() || !reason.trim()} onClick={() => void act(() => review("edit"))}>保存候选修改</button>}
         {view.permissions?.canSuggest && <button type="button" disabled={busy || reviewUnknown || !replacement.trim() || !reason.trim()} onClick={() => void act(() => review("suggest"))}>提交剧本建议</button>}
       </div>}
+      <ScriptContentRetry key={context} api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={busy || uncertain || !!(task?.input.retry && (task.state === "queued" || task.state === "running" || task.reason === "EXECUTION_UNCERTAIN"))} run={act}
+        onSubmitted={next => { setTask(valid(next)); remember(null,next.id); setNotice("局部重试已提交，可刷新任务状态，完成后明确载入结果。"); }} />
       <section aria-label="剧本修改建议">{view.version.suggestions?.map(s => <article key={s.id}><p>{s.text}</p><small>{s.reason} · {s.status} · {s.submittedBy}</small>
         {s.status === "pending" && view.permissions?.canDecide && <><label>建议裁决理由 {s.id}<input value={reason} maxLength={2000} onChange={e => setReason(e.target.value)} disabled={busy || reviewUnknown} /></label>
           <button type="button" disabled={busy || reviewUnknown || !reason.trim()} onClick={() => void act(() => review("decide",s.id,"accepted"))}>接受剧本建议 {s.id}</button>

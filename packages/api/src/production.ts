@@ -303,7 +303,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         upstreamReader: new EpisodePlanUpstreamReader(projects,knowledge),accessReader: projects,
         idGenerator: () => `epv_${randomUUID()}`,clock: () => new Date() });
       const contentRepository = new PostgresScriptContentRepository(restrictedPool);
-      const context = new ScriptContentContext(projects,knowledge,script);
+      const context = new ScriptContentContext(projects,knowledge,script,contentRepository);
       const service = new ScriptContentService({ repository: contentRepository,contextReader: context,accessReader: projects,idGenerator: () => `scv_${randomUUID()}`,clock: () => new Date() });
       const repository = new PostgresModelTaskRepository(restrictedPool);
       const tasks = new ModelTaskService({ settings,repository,contextReader: context,

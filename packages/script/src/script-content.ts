@@ -28,7 +28,10 @@ export type ScriptGenerationContext = Readonly<{
 export type ScriptReviewCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & (
   { kind: "edit" | "suggest";elementId: string;text: string } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" });
 export type ScriptReviewOperation = { requestId: string;fingerprint: string;kind: ScriptReviewCommand["kind"];targetId: string;reason: string };
+export type ScriptRetrySelection = { expectedActiveVersionId: string;scopeKeys: string[] };
+export type ScriptRetrySnapshot = ScriptRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 export type ScriptContentVersion = Readonly<{
+  retry?: ScriptRetrySnapshot;
   reviewOperation?: ScriptReviewOperation;
   id: string; parentVersionId: string | null; projectId: string; chapterId: string;
   sourceVersionId: string; planVersionId: string; jobId: string; status: "candidate" | "confirmed";
@@ -37,7 +40,7 @@ export type ScriptContentVersion = Readonly<{
   createdBy: string; createdAt: string; elements: ScriptElement[];
   scenes: ScriptScene[];
   suggestions?: ScriptSuggestion[];
-  failures: Array<Readonly<{ scopeKey: string; code: string; message: string; retryable: boolean }>>;
+  failures: Array<Readonly<{ scopeKey: string; originJobId?: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
   findReviewOperation?(actor: Actor,projectId: string,chapterId: string,requestId: string): Promise<ScriptContentVersion | null>;
@@ -256,6 +259,52 @@ export class ScriptContentService {
     }, current.id);
   }
 
+  async getRetryCandidate(actor: Actor,p: string,c: string,selection: ScriptRetrySelection) {
+    const context = await this.dependencies.contextReader.findGenerationContext(actor,p,c);
+    if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND","剧本依据已变化");
+    const current = await this.dependencies.repository.findActive(actor,p,c);
+    if (!current || current.sourceVersionId !== context.sourceVersionId || current.planVersionId !== context.planVersionId) throw new ScriptContentError("CONTEXT_NOT_FOUND","剧本依据已变化");
+    assertScriptRetrySelection(current,selection);
+    return current;
+  }
+  async recordRetry(actor: Actor,input: {
+    projectId: string;chapterId: string;jobId: string;sourceVersionId: string;planVersionId: string;retry: ScriptRetrySnapshot;
+    scenes: unknown[];items: Array<{ scopeKey: string;value?: unknown;error?: { code: string;message: string;retryable: boolean } }>;
+  }): Promise<ScriptContentVersion> {
+    const current = await this.getRetryCandidate(actor,input.projectId,input.chapterId,input.retry);
+    if (current.jobId !== input.retry.retryOfJobId || current.sourceVersionId !== input.sourceVersionId || current.planVersionId !== input.planVersionId) throw new ScriptContentError("VERSION_CONFLICT","重试依据已变化");
+    if (!Array.isArray(input.items) || input.items.length !== input.retry.scopeKeys.length || input.items.some(i => !isRecord(i) || !nonblank(i.scopeKey)) || new Set(input.items.map(i => i.scopeKey)).size !== input.items.length
+      || input.items.some(i => !input.retry.scopeKeys.includes(i.scopeKey)) || !Array.isArray(input.scenes)) throw new ScriptContentError("INVALID_GENERATION","重试返回范围不匹配");
+    const scenes: unknown[] = [...current.scenes];
+    for (const scene of input.scenes) {
+      if (!isRecord(scene)) throw new ScriptContentError("INVALID_GENERATION","重试场次无效");
+      const existing = current.scenes.find(s => s.id === scene.id);
+      if (existing) {
+        if (scene.episodeId !== existing.episodeId || scene.ordinal !== existing.ordinal || scene.title !== existing.title || scene.environment !== existing.environment
+          || !Array.isArray(scene.characters) || scene.characters.length !== existing.characters.length || scene.characters.some((v,i) => v !== existing.characters[i])) throw new ScriptContentError("INVALID_GENERATION","重试不得修改既有场次");
+      } else scenes.push(scene);
+    }
+    const protectedItems = input.items.map(item => {
+      const value = item.value;
+      return isRecord(value) && current.elements.some(e => e.id === value.id || e.sceneId === value.sceneId && e.ordinal === value.ordinal)
+        ? { scopeKey: item.scopeKey,error: { code: "EXISTING_ELEMENT",message: "重试不得覆盖成功或锁定内容",retryable: true } } : item;
+    });
+    // Validate returned items through the same canonical generation rules without a preliminary write.
+    const validator = new ScriptContentService({ ...this.dependencies,repository: { findActive: async () => null,save: async (_a,v) => v } });
+    const generated = await validator.recordGeneration(actor,{ ...input,expectedActiveVersionId: current.id,scenes,items: protectedItems });
+    const failureOrigins = input.retry.scopeKeys.map(scopeKey => ({ scopeKey,jobId: current.failures.find(f => f.scopeKey === scopeKey)!.originJobId ?? current.jobId }));
+    if (input.retry.failureOrigins && (input.retry.failureOrigins.length !== failureOrigins.length || failureOrigins.some(f => !input.retry.failureOrigins!.some(other => other.scopeKey === f.scopeKey && other.jobId === f.jobId)))) throw new ScriptContentError("VERSION_CONFLICT","失败来源已变化");
+    const failures = [...current.failures.filter(f => !input.retry.scopeKeys.includes(f.scopeKey)).map(f => ({ ...f,originJobId: f.originJobId ?? current.jobId })),...generated.failures];
+    const elements = [...current.elements,...generated.elements];
+    const { reviewOperation: _reviewOperation,retry: _previousRetry,...unchanged } = current;
+    return this.dependencies.repository.save(actor,{
+      ...unchanged,id: generated.id,parentVersionId: current.id,jobId: input.jobId,retry: { ...structuredClone(input.retry),failureOrigins },
+      createdBy: actor.userId,createdAt: generated.createdAt,elements,failures,
+      scenes: generated.scenes.filter(s => current.scenes.some(old => old.id === s.id) || generated.elements.some(e => e.sceneId === s.id)),
+      generationStatus: failures.length === 0 ? "succeeded" : elements.length ? "partially_succeeded" : "failed",
+    },current.id);
+  }
+
   async recordGeneration(actor: Actor, input: {
     expectedActiveVersionId: string | null; projectId: string; chapterId: string;
     sourceVersionId: string; planVersionId: string; jobId: string;
@@ -303,7 +352,7 @@ export class ScriptContentService {
         continue;
       }
       const value = parseElement(item.value, context);
-      if (!value || ids.has(value.id) || !scenes.some(({ id }) => id === value.sceneId)) {
+      if (!value || ids.has(value.id) || elements.some(e => e.sceneId === value.sceneId && e.ordinal === value.ordinal) || !scenes.some(({ id }) => id === value.sceneId)) {
         failures.push({ scopeKey: item.scopeKey, code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true });
       } else { ids.add(value.id); elements.push(value); }
     }
@@ -312,7 +361,7 @@ export class ScriptContentService {
       projectId: input.projectId, chapterId: input.chapterId, sourceVersionId: input.sourceVersionId,
       planVersionId: input.planVersionId, jobId: input.jobId, status: "candidate",
       generationStatus: failures.length === 0 ? "succeeded" : elements.length === 0 ? "failed" : "partially_succeeded",
-      createdBy: actor.userId, createdAt: this.dependencies.clock().toISOString(), elements, failures, scenes,
+      createdBy: actor.userId, createdAt: this.dependencies.clock().toISOString(), elements, failures: failures.map(f => ({ ...f,originJobId: input.jobId })), scenes,
     }, input.expectedActiveVersionId);
   }
 
@@ -333,6 +382,13 @@ export class ScriptContentService {
       return fragment ? [{ ...fragment, transformation: evidence.transformation }] : [];
     });
   }
+}
+
+export function assertScriptRetrySelection(current: ScriptContentVersion,selection: ScriptRetrySelection) {
+  if (!selection || !nonblank(selection.expectedActiveVersionId) || current.id !== selection.expectedActiveVersionId) throw new ScriptContentError("VERSION_CONFLICT","候选已变化，请重新读取");
+  if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE","只能重试候选失败项");
+  if (!Array.isArray(selection.scopeKeys) || !selection.scopeKeys.length || selection.scopeKeys.length > 100 || selection.scopeKeys.some(s => !nonblank(s) || s.length > 256 || /[\r\n]/.test(s))
+    || new Set(selection.scopeKeys).size !== selection.scopeKeys.length || selection.scopeKeys.some(s => !current.failures.some(f => f.scopeKey === s && f.retryable))) throw new ScriptContentError("INVALID_GENERATION","只能选择可重试失败范围");
 }
 
 function parseElement(value: unknown, context: ScriptGenerationContext): ScriptElement | null {

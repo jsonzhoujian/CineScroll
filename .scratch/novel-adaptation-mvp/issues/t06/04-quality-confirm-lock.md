@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: blocked
+status: ready
 
 **Blocked by:** [02](./02-review-edit-suggestions.md), [03](./03-retry-failed-scopes.md)
 

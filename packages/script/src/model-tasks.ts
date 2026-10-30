@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { ModelSettingsError, type TaskModelSnapshot, type WorkspaceModelSettings } from "./model-settings.ts";
 
 export type StoryRetrySelection = { expectedActiveVersionId: string; scopeKeys: string[] };
-export type StoryRetrySnapshot = StoryRetrySelection & { retryOfJobId: string };
+export type StoryRetrySnapshot = StoryRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 export type TaskInput = { stage: "story_knowledge" | "script"; resultType?: "episodePlan" | "scriptContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
@@ -115,15 +115,19 @@ export class ModelTaskService {
   async #context(actor: Actor, projectId: string, chapterId: string, retry?: StoryRetrySelection) {
     const input = retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
-    if (input.resultType !== undefined && (!["episodePlan","scriptContent"].includes(input.resultType) || input.stage !== "script" || input.upstreamConfirmedVersionIds.length !== (input.resultType === "scriptContent" ? 2 : 1) || input.retry)
+    if (input.resultType !== undefined && (!["episodePlan","scriptContent"].includes(input.resultType) || input.stage !== "script" || input.upstreamConfirmedVersionIds.length !== (input.resultType === "scriptContent" ? 2 : 1) || input.retry && input.resultType !== "scriptContent")
       || !["story_knowledge", "script"].includes(input.stage) || !input.sourceVersionId
       || (input.stage === "script" && !input.upstreamConfirmedVersionIds.length)
       || (input.stage === "story_knowledge" && input.upstreamConfirmedVersionIds.length !== 0) || input.upstreamConfirmedVersionIds.some(id => !id)
       || ![60, 180, 300].includes(input.generationParameters.targetDurationSeconds)
       || !["9:16", "16:9"].includes(input.generationParameters.aspectRatio)
       || !["narration", "dialogue"].includes(input.generationParameters.narrativeMode)) throw new ModelTaskError("INVALID_CONTEXT");
-    if (retry && (input.stage !== "story_knowledge" || !input.retry || input.retry.expectedActiveVersionId !== retry.expectedActiveVersionId
+    if (retry && (input.stage !== "story_knowledge" && input.resultType !== "scriptContent" || !input.retry || input.retry.expectedActiveVersionId !== retry.expectedActiveVersionId
       || !validIdentifier(input.retry.retryOfJobId) || !validRetrySelection(input.retry) || !sameScopes(input.retry.scopeKeys, retry.scopeKeys))) throw new ModelTaskError("INVALID_CONTEXT");
+    if (input.resultType === "scriptContent" && input.retry && (!Array.isArray(input.retry.failureOrigins) || input.retry.failureOrigins.length !== input.retry.scopeKeys.length
+      || input.retry.failureOrigins.some(f => !f || !validIdentifier(f.scopeKey) || !validIdentifier(f.jobId))
+      || new Set(input.retry.failureOrigins.map(f => f.scopeKey)).size !== input.retry.scopeKeys.length
+      || input.retry.scopeKeys.some(s => !input.retry!.failureOrigins!.some(f => f.scopeKey === s)))) throw new ModelTaskError("INVALID_CONTEXT");
     return { stage: input.stage, ...(input.resultType ? { resultType: input.resultType } : {}), sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
       ...(retry && input.retry ? { retry: structuredClone(input.retry) } : {}),
       generationParameters: { targetDurationSeconds: input.generationParameters.targetDurationSeconds,
@@ -231,6 +235,30 @@ export class ModelTaskService {
       return duplicate;
     }
   }
+  async submitScriptContentRetry(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string } & StoryRetrySelection) {
+    if (!validIdentifier(input.requestId) || !validRetrySelection(input)) throw new ModelTaskError("INVALID_CONTEXT");
+    if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+    const id = `script_retry_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
+    const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId && task.input.resultType === "scriptContent" && task.input.retry?.expectedActiveVersionId === input.expectedActiveVersionId
+      && sameScopes(task.input.retry.scopeKeys, input.scopeKeys) && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
+    const existing = await this.#options.repository.find(actor.workspaceId, id);
+    if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
+    const context = await this.#context(actor, input.projectId, input.chapterId, input);
+    if (context.resultType !== "scriptContent" || !context.retry) throw new ModelTaskError("INVALID_CONTEXT");
+    await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
+    this.#assertAdmission(actor, context);
+    const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
+    this.#assertAdmission(actor, context, model);
+    try {
+      return await this.#options.repository.insert({ id, workspaceId: actor.workspaceId, createdBy: actor.userId, projectId: input.projectId, chapterId: input.chapterId,
+        parentTaskId: null, input: context, model, state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
+    } catch (error) {
+      if (!(error instanceof ModelTaskError && ["STATE_CONFLICT", "TASK_QUEUE_FULL"].includes(error.code))) throw error;
+      const duplicate = await this.#options.repository.find(actor.workspaceId, id);
+      if (!duplicate || !matches(duplicate)) throw error;
+      return duplicate;
+    }
+  }
   /** Internal reconciliation only. Reader must return a persisted, task-matched result, never invoke a model. */
   async recover(actor: Actor, id: string, readResult: (task: ModelTask) => Promise<TaskResult | null>) {
     const task = await this.get(actor, id);
@@ -274,13 +302,17 @@ export class ModelTaskService {
 }
 function sameInput(a: TaskInput, b: TaskInput) {
   return a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
-    && (!a.retry && !b.retry || !!a.retry && !!b.retry && a.retry.expectedActiveVersionId === b.retry.expectedActiveVersionId && a.retry.retryOfJobId === b.retry.retryOfJobId && sameScopes(a.retry.scopeKeys, b.retry.scopeKeys))
+    && (!a.retry && !b.retry || !!a.retry && !!b.retry && a.retry.expectedActiveVersionId === b.retry.expectedActiveVersionId && a.retry.retryOfJobId === b.retry.retryOfJobId && sameScopes(a.retry.scopeKeys, b.retry.scopeKeys) && sameFailureOrigins(a.retry.failureOrigins,b.retry.failureOrigins))
     && a.upstreamConfirmedVersionIds.length === b.upstreamConfirmedVersionIds.length
     && a.upstreamConfirmedVersionIds.every((id, i) => id === b.upstreamConfirmedVersionIds[i])
     && a.generationParameters.targetDurationSeconds === b.generationParameters.targetDurationSeconds
     && a.generationParameters.aspectRatio === b.generationParameters.aspectRatio
     && a.generationParameters.narrativeMode === b.generationParameters.narrativeMode;
 }
+function sameFailureOrigins(a: StoryRetrySnapshot["failureOrigins"],b: StoryRetrySnapshot["failureOrigins"]) {
+  return !a && !b || !!a && !!b && a.length === b.length && a.every(f => b.some(other => other.scopeKey === f.scopeKey && other.jobId === f.jobId));
+}
+
 function validIdentifier(value: unknown): value is string { return typeof value === "string" && !!value.trim() && value.length <= 256 && !/[\r\n]/.test(value); }
 function validRetrySelection(value: StoryRetrySelection) { return validIdentifier(value.expectedActiveVersionId) && Array.isArray(value.scopeKeys) && value.scopeKeys.length > 0 && value.scopeKeys.length <= 100 && value.scopeKeys.every(validIdentifier) && new Set(value.scopeKeys).size === value.scopeKeys.length; }
 function sameScopes(a: string[], b: string[]) { return a.length === b.length && a.every(scope => b.includes(scope)); }
@@ -335,6 +367,9 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async insert(task: ModelTask) {
     if (task.state !== "queued" || task.revision !== 0 || task.reason !== null || task.result !== null || task.leaseExpiresAt !== null) throw new ModelTaskError("STATE_CONFLICT");
     if (this.#tasks.has(this.#key(task.workspaceId, task.id)) || (task.parentTaskId && [...this.#tasks.values()].some(t => t.workspaceId === task.workspaceId && t.parentTaskId === task.parentTaskId))) throw new ModelTaskError("STATE_CONFLICT");
+    if (task.input.resultType === "scriptContent" && task.input.retry && [...this.#tasks.values()].some(old => old.workspaceId === task.workspaceId && old.projectId === task.projectId && old.chapterId === task.chapterId
+      && old.input.resultType === "scriptContent" && old.input.retry?.expectedActiveVersionId === task.input.retry!.expectedActiveVersionId
+      && (old.state === "queued" || old.state === "running" || old.state === "paused" && old.reason === "EXECUTION_UNCERTAIN"))) throw new ModelTaskError("STATE_CONFLICT");
     this.#admit(task.workspaceId, "queued");
     this.#tasks.set(this.#key(task.workspaceId, task.id), structuredClone(task)); return structuredClone(task);
   }

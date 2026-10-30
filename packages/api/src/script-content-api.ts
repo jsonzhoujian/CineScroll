@@ -17,7 +17,7 @@ class ScriptContentController {
       if (!version) throw new ScriptContentError("CONTEXT_NOT_FOUND","尚无剧本候选");
       const context = await this.services.context.findGenerationContext(request.actor,p,c);
       const current = context?.sourceVersionId === version.sourceVersionId && context?.planVersionId === version.planVersionId;
-      return { version,current,permissions: current && this.services.review ? await this.services.review.getReviewPermissions(request.actor,p) : { canEdit: false,canSuggest: false,canDecide: false },sourceFragments: current ? context!.fragments : [] };
+      return { version,current,episodes: current ? context!.confirmedPlan?.episodes.map(({ id,ordinal }) => ({ id,ordinal })) ?? [] : [],permissions: current && this.services.review ? await this.services.review.getReviewPermissions(request.actor,p) : { canEdit: false,canSuggest: false,canDecide: false },sourceFragments: current ? context!.fragments : [] };
     } catch (error) { if (error instanceof ScriptContentError) throw error; throw new ScriptContentError("STORAGE_UNAVAILABLE","剧本读取失败"); }
   }
   async command(request: { actor: Actor },p: string,c: string,body: unknown) {

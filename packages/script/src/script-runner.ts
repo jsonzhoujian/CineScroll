@@ -1,12 +1,12 @@
 import type { Actor, AspectRatio, NarrativeMode, TargetDurationSeconds, EpisodePlanVersion } from "./index.ts";
-import { ScriptContentError, ScriptContentService, type ScriptGenerationContextReader } from "./script-content.ts";
+import { ScriptContentError, ScriptContentService, type ScriptRetrySnapshot, type ScriptGenerationContextReader } from "./script-content.ts";
 
 type ScriptRequest = Readonly<{
   contractVersion: "0.1.0"; jobId: string; stage: "script"; projectId: string; chapterId: string;
-  sourceVersionId: string; upstreamConfirmedVersionIds: string[]; scopeKeys: string[];
+  sourceVersionId: string; upstreamConfirmedVersionIds: string[]; scopeKeys: string[];retryOfJobId?: string;
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode };
   input: { sourceFragments: Array<{ id: string; text: string }>; confirmedUpstreamContent: Array<EpisodePlanVersion | { versionId: string; facts: Array<{ id: string; statement: string }> }>;
-    approvedAdditionIds: string[]; lockedItemIds: string[] };
+    retry?: { expectedActiveVersionId: string;retryOfJobId: string;sceneReferences: Array<{ id: string;episodeId: string;ordinal: number }> }; approvedAdditionIds: string[]; lockedItemIds: string[] };
 }>;
 export interface ScriptModelPort { generate(request: ScriptRequest): Promise<unknown> }
 export class ScriptModelError extends Error {
@@ -18,7 +18,7 @@ export class ScriptRunner {
   constructor(options: { contextReader: ScriptGenerationContextReader; service: ScriptContentService; model: ScriptModelPort }) { this.#options = options; }
   async run(actor: Actor, input: {
     projectId: string; chapterId: string; jobId: string; expectedActiveVersionId: string | null;
-    generationParameters: ScriptRequest["generationParameters"];
+    generationParameters: ScriptRequest["generationParameters"];retry?: ScriptRetrySnapshot;
   }) {
     if (![input.projectId, input.chapterId, input.jobId].every(nonblank)
       || ![60, 180, 300].includes(input.generationParameters.targetDurationSeconds)
@@ -34,11 +34,15 @@ export class ScriptRunner {
     if (!context.confirmedStoryKnowledge || context.confirmedStoryKnowledge.versionId !== context.confirmedPlan.storyBibleVersionId) {
       throw new ScriptModelError("INVALID_REQUEST", "缺少与拆集方案一致的已确认故事知识");
     }
+    const retryCandidate = input.retry ? await this.#options.service.getRetryCandidate(actor,input.projectId,input.chapterId,input.retry) : null;
+    if (input.retry && retryCandidate?.jobId !== input.retry.retryOfJobId) throw new ScriptContentError("VERSION_CONFLICT","重试任务依据已变化");
     const request: ScriptRequest = freeze(structuredClone({
       contractVersion: "0.1.0", jobId: input.jobId, stage: "script", projectId: input.projectId, chapterId: input.chapterId,
-      sourceVersionId: context.sourceVersionId, upstreamConfirmedVersionIds: [context.planVersionId, context.confirmedStoryKnowledge.versionId], scopeKeys: ["script"],
+      sourceVersionId: context.sourceVersionId, upstreamConfirmedVersionIds: [context.planVersionId, context.confirmedStoryKnowledge.versionId], scopeKeys: input.retry ? [...input.retry.scopeKeys] : ["script"],
+      ...(input.retry ? { retryOfJobId: input.retry.retryOfJobId } : {}),
       generationParameters: input.generationParameters, input: { sourceFragments: context.fragments,
-        confirmedUpstreamContent: [context.confirmedPlan, context.confirmedStoryKnowledge], approvedAdditionIds: context.approvedAdditionIds, lockedItemIds: [] },
+        confirmedUpstreamContent: [context.confirmedPlan, context.confirmedStoryKnowledge],
+        ...(input.retry && retryCandidate ? { retry: { expectedActiveVersionId: input.retry.expectedActiveVersionId,retryOfJobId: input.retry.retryOfJobId,sceneReferences: retryCandidate.scenes.map(({ id,episodeId,ordinal }) => ({ id,episodeId,ordinal })) } } : {}), approvedAdditionIds: context.approvedAdditionIds, lockedItemIds: [] },
     }));
     let response: unknown;
     try { response = await this.#options.model.generate(request); }
@@ -66,6 +70,7 @@ export class ScriptRunner {
     if (response.status !== status || new Set(items.map(({ scopeKey }) => scopeKey)).size !== items.length) {
       throw new ScriptModelError("INVALID_RESPONSE", "剧本模型响应状态或范围不一致");
     }
+    if (input.retry) return this.#options.service.recordRetry(actor,{ projectId: request.projectId,chapterId: request.chapterId,jobId: request.jobId,sourceVersionId: request.sourceVersionId,planVersionId: context.planVersionId,retry: input.retry,items,scenes: response.scenes });
     return this.#options.service.recordGeneration(actor, { projectId: request.projectId, chapterId: request.chapterId,
       jobId: request.jobId, sourceVersionId: request.sourceVersionId, planVersionId: context.planVersionId,
       expectedActiveVersionId: input.expectedActiveVersionId, items, scenes: response.scenes });

@@ -43,10 +43,15 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     assert.equal(url, "https://api.deepseek.com/chat/completions");
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
-    if (input.stage === "script" && input.scopeKeys[0] === "script") {
-      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",
-        scenes: [{ id: "scene",episodeId: "e1",ordinal: 1,title: "rain",environment: "outside",characters: [] }],items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene",elementType: "action",ordinal: 1,text: "雨落",provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+    if (input.stage === "script" && input.input.retry) {
+      assert.deepEqual(input.scopeKeys,["dialogue"]); assert.equal("elements" in input.input,false);
+      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",scenes: [],items: [{ scopeKey: "dialogue",status: "succeeded",value: { id: "recovered-dialogue",sceneId: "scene",elementType: "dialogue",ordinal: 2,text: "下雨了",provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
       return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(result) } }] });
+    }
+    if (input.stage === "script" && input.scopeKeys[0] === "script") {
+      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "partially_succeeded",
+        scenes: [{ id: "scene",episodeId: "e1",ordinal: 1,title: "rain",environment: "outside",characters: [] }],items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene",elementType: "action",ordinal: 1,text: "雨落",provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+      return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify({ ...result,items: [...result.items,{ scopeKey: "dialogue",status: "failed",error: { code: "INVALID_ELEMENT",message: "missing dialogue",retryable: true } }] }) } }] });
     }
     if (input.stage === "script") {
       const plan = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",resultType: "episodePlan",
@@ -89,7 +94,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -225,8 +230,11 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query("alter table script_content_heads disable trigger script_content_head_transition");
     try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
     finally { await admin.query("alter table script_content_heads enable trigger script_content_head_transition"); }
+    await admin.query("alter index model_tasks_script_retry_active_idx rename to hidden_retry_active_idx");
+    try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter index hidden_retry_active_idx rename to model_tasks_script_retry_active_idx"); }
     const scriptApp = await start(ca,false,false,true);
-    let scriptTaskId: string,scriptReviewedId: string;
+    let scriptTaskId: string,scriptReviewedId: string,retryTaskId: string;
     try {
       const path = `/projects/${projectId}/chapters/${chapterId}/script-content-tasks`;
       const submitted = await scriptApp.http.post(path).set("authorization",bearer).send({ configurationVersionId: version!,modelId: "m",requestId: "fixture-script" }).expect(201);
@@ -248,12 +256,28 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(edited.body.elements[0].text,"雨打庭院");
       const replay = await scriptApp.http.post(`/projects/${projectId}/chapters/${chapterId}/script-content/review`).set("authorization",bearer).send(command).expect(201);
       assert.equal(replay.body.id,scriptReviewedId);
+      const retryInput = { configurationVersionId: version!,modelId: "m",requestId: "tls-retry",expectedActiveVersionId: edited.body.id,scopeKeys: ["dialogue"] };
+      const retried = await scriptApp.http.post(`${path}/retries`).set("authorization",bearer).send(retryInput).expect(201);
+      retryTaskId = retried.body.id;
+      for (let i=0;i<100;i++) {
+        status = await scriptApp.http.get(`/script-content-tasks/${retryTaskId}`).set("authorization",bearer).expect(200);
+        if (["succeeded","failed","paused"].includes(status.body.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(status!.body.state,"succeeded",JSON.stringify(status!.body));
+      const merged = await scriptApp.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
+      assert.equal(merged.body.version.elements[0].text,"雨打庭院"); assert.equal(merged.body.version.elements[1].text,"下雨了");
+      assert.equal(merged.body.version.failures.length,0); assert.equal(modelCalls,4);
+      scriptReviewedId = merged.body.version.id;
+      assert.equal((await scriptApp.http.post(`${path}/retries`).set("authorization",bearer).send(retryInput).expect(201)).body.id,retryTaskId);
     } finally { await scriptApp.close(); assert.equal(scriptApp.scriptWorker!.status().state,"stopped"); }
     const scriptRestart = await start(ca,false,false,true);
     try {
       const task = await scriptRestart.http.get(`/script-content-tasks/${scriptTaskId!}`).set("authorization",bearer).expect(200);
       const view = await scriptRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
-      assert.equal(view.body.version.id,scriptReviewedId!); assert.notEqual(view.body.version.id,task.body.result.candidateVersionId); assert.equal(modelCalls,3);
+      assert.equal(view.body.version.id,scriptReviewedId!); assert.notEqual(view.body.version.id,task.body.result.candidateVersionId); assert.equal(modelCalls,4);
+      const retried = await scriptRestart.http.get(`/script-content-tasks/${retryTaskId!}`).set("authorization",bearer).expect(200);
+      assert.equal(retried.body.result.candidateVersionId,view.body.version.id);
     } finally { await scriptRestart.close(); }
     const second = await start();
     try {

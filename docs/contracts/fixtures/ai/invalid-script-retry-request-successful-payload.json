@@ -1,0 +1,56 @@
+{
+  "contractVersion": "0.1.0",
+  "jobId": "retry-job",
+  "stage": "script",
+  "projectId": "p",
+  "chapterId": "c",
+  "sourceVersionId": "s",
+  "upstreamConfirmedVersionIds": [
+    "plan",
+    "bible"
+  ],
+  "scopeKeys": [
+    "dialogue"
+  ],
+  "retryOfJobId": "original-job",
+  "generationParameters": {
+    "targetDurationSeconds": 60,
+    "aspectRatio": "9:16",
+    "narrativeMode": "dialogue"
+  },
+  "input": {
+    "sourceFragments": [
+      {
+        "id": "f",
+        "text": "雨落。"
+      }
+    ],
+    "confirmedUpstreamContent": [
+      {
+        "id": "plan"
+      },
+      {
+        "versionId": "bible"
+      }
+    ],
+    "approvedAdditionIds": [],
+    "lockedItemIds": [],
+    "retry": {
+      "expectedActiveVersionId": "base-candidate",
+      "retryOfJobId": "original-job",
+      "sceneReferences": [
+        {
+          "id": "scene",
+          "episodeId": "e",
+          "ordinal": 1
+        }
+      ],
+      "successfulElements": [
+        {
+          "id": "already-saved",
+          "text": "不可作为重试目标"
+        }
+      ]
+    }
+  }
+}

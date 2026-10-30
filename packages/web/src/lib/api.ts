@@ -2,12 +2,13 @@ import type { DocumentRequest, ProjectDraft } from "./workflow";
 
 type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: number };
 
-export type ScriptContentTask = StoryKnowledgeTask & { input: { stage: "script";resultType: "scriptContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[] } };
-export type ScriptContentView = { permissions?: { canEdit: boolean;canSuggest: boolean;canDecide: boolean };current: boolean;sourceFragments: Array<{ id: string;text: string }>;version: {
+export type ScriptContentTask = StoryKnowledgeTask & { input: { stage: "script";resultType: "scriptContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[];retry?: { expectedActiveVersionId: string;retryOfJobId: string;scopeKeys: string[] } } };
+export type ScriptContentView = { episodes?: Array<{ id: string;ordinal: number }>;permissions?: { canEdit: boolean;canSuggest: boolean;canDecide: boolean };current: boolean;sourceFragments: Array<{ id: string;text: string }>;version: {
   suggestions?: Array<{ id: string;elementId: string;text: string;reason: string;status: string;submittedBy: string;decidedBy?: string }>;
   reviewOperation?: { requestId: string;kind: string;reason: string };
   id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;planVersionId: string;generationStatus: string;
-  scenes: Array<{ id: string;title: string }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
+  retry?: { scopeKeys: string[];expectedActiveVersionId: string;retryOfJobId: string };
+  scenes: Array<{ id: string;title: string;episodeId?: string;ordinal?: number }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;ordinal?: number;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
   failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
 } };
 export class ApiClientError extends Error {
@@ -112,6 +113,7 @@ export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resul
 
 export class ApiClient {
   reviewScriptContent(p: string,c: string,input: { kind: "edit" | "suggest" | "decide";requestId: string;expectedActiveVersionId: string;reason: string;elementId?: string;text?: string;suggestionId?: string;decision?: "accepted" | "rejected" }) { return this.request<ScriptContentView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/review`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  submitScriptContentRetry(p: string,c: string,input: { configurationVersionId: string;modelId: string;requestId: string;expectedActiveVersionId: string;scopeKeys: string[] }) { return this.request<ScriptContentTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks/retries`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   submitScriptContentTask(p: string,c: string,input: { configurationVersionId: string;modelId: string;requestId: string }) { return this.request<ScriptContentTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   getScriptContentTask(id: string) { return this.request<ScriptContentTask>(`/script-content-tasks/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
   listScriptContentTasks(p: string,c: string) { return this.request<{ tasks: ScriptContentTask[];nextCursor: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks`,{ method: "GET",cache: "no-store" },"session"); }

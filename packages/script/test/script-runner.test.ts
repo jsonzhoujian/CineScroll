@@ -40,9 +40,9 @@ test("剧本运行器先读取授权确认上下文，保留模型局部失败�
   assert.equal(result.elements[0]?.id, "element_1");
   assert.deepEqual(result.scenes, [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭院·清晨", environment: "晨雾笼罩庭院", characters: ["少年"] }]);
   assert.deepEqual(result.failures, [
-    { scopeKey: "dialogue:1", code: "TIMEOUT", message: "生成超时", retryable: true },
-    { scopeKey: "action:2", code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true },
-    { scopeKey: "action:3", code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true },
+    { scopeKey: "dialogue:1", originJobId: "job_1", code: "TIMEOUT", message: "生成超时", retryable: true },
+    { scopeKey: "action:2", originJobId: "job_1", code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true },
+    { scopeKey: "action:3", originJobId: "job_1", code: "INVALID_ELEMENT", message: "剧本条目结构或出处无效", retryable: true },
   ]);
 });
 

@@ -77,6 +77,8 @@ queued/running → cancelled
 
 结算规则：提交冻结预计积分；成功项按实际规则结算，失败项额度自动退回。`partially_succeeded` 必须同时至少含一个成功项和一个失败项。重试任务通过 `retryOfJobId` 与失败 `scopeKey` 关联，仅覆盖所选失败项。
 
+对于 `scriptContent` 局部重试，候选是累积结果：`retryOfJobId` 指所依赖候选的聚合生成任务，`expectedActiveVersionId` 固定该候选；任务快照的 `failureOrigins` 逐项记录 `scopeKey` 与真实失败任务。候选失败项的 `originJobId` 在未被选中时保持不变，选中后再次失败才更新为本次任务。结算证据不得把聚合父任务当作所有失败范围的执行来源，也不得仅凭重试状态退款。
+
 ## 7. 原文重新导入
 
 ```text

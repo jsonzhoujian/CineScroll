@@ -3,6 +3,8 @@ import test from "node:test";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { PostgresModelTaskRepository } from "../src/postgres-model-tasks.ts";
+import type { ModelTask } from "../src/model-tasks.ts";
 import { PostgresScriptContentRepository } from "../src/postgres-script-content.ts";
 import { ScriptContentService } from "../src/script-content.ts";
 import type { ScriptContentVersion } from "../src/script-content.ts";
@@ -15,7 +17,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -76,6 +78,24 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     }
     const directEditor = { ...accepted,id: `forged-edit-${suffix}`,parentVersionId: accepted.id,createdBy: "editor",reviewOperation: { ...accepted.reviewOperation!,requestId: "forged" } };
     await assert.rejects(() => content.save({ ...actor,userId: "editor" },directEditor,accepted.id),{ code: "FORBIDDEN" });
+    const { reviewOperation: _audit,...unreviewed } = accepted;
+    const partial = { ...unreviewed,id: `partial-${suffix}`,parentVersionId: accepted.id,scenes: [{ id: "scene",episodeId: "e",ordinal: 1,title: "rain",environment: "outside",characters: [] }],failures: [{ scopeKey: "dialogue",code: "INVALID_ELEMENT",message: "missing",retryable: true }],generationStatus: "partially_succeeded" as const };
+    await content.save(actor,partial,accepted.id);
+    const retries = new ScriptContentService({ repository: content,contextReader: { findGenerationContext: async () => ({ sourceVersionId: sourceId,planVersionId: confirmed.id,confirmedPlan: confirmed,fragments: [{ id: "f",text: "雨落" }],approvedAdditionIds: [] }) },idGenerator: () => `retried-${suffix}`,clock: () => new Date("2026-10-29") });
+    const merged = await retries.recordRetry(actor,{ projectId,chapterId,sourceVersionId: sourceId,planVersionId: confirmed.id,jobId: `retry-job-${suffix}`,retry: { expectedActiveVersionId: partial.id,retryOfJobId: partial.jobId,scopeKeys: ["dialogue"] },scenes: [],items: [{ scopeKey: "dialogue",value: { id: "dialogue",sceneId: "scene",elementType: "dialogue",ordinal: 2,text: "下雨了",provenance: [{ type: "source_fragment",sourceVersionId: sourceId,fragmentId: "f",transformation: "retained" }] } }] });
+    assert.deepEqual(merged.elements[0],partial.elements[0]); assert.equal(merged.failures.length,0);
+    assert.deepEqual(await rebuilt.findGeneration(actor,projectId,chapterId,merged.jobId),merged);
+    await review.reviewCandidate(actor,projectId,chapterId,{ kind: "edit",requestId: "after-retry",expectedActiveVersionId: merged.id,elementId: "action",text: "edited after retry",reason: "visual" });
+    assert.deepEqual(await rebuilt.findGeneration(actor,projectId,chapterId,merged.jobId),merged);
+    const taskRepository = new PostgresModelTaskRepository(app);
+    const queued: ModelTask = { id: `queue-a-${suffix}`,workspaceId: actor.workspaceId,createdBy: actor.userId,projectId,chapterId,parentTaskId: null,input: { stage: "script",resultType: "scriptContent",sourceVersionId: sourceId,upstreamConfirmedVersionIds: [confirmed.id,bibleId],retry: { expectedActiveVersionId: partial.id,retryOfJobId: partial.jobId,scopeKeys: ["dialogue"] },generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "dialogue" } },model: { workspaceId: actor.workspaceId,configurationVersionId: "cfg",providerId: "deepseek",modelId: "m",processingRegion: "mainland" },state: "queued",revision: 0,reason: null,result: null,leaseExpiresAt: null };
+    await taskRepository.insert(queued);
+    await assert.rejects(() => taskRepository.insert({ ...queued,id: `queue-b-${suffix}` }),{ code: "STATE_CONFLICT" });
+    const running = await taskRepository.transition(actor.workspaceId,queued.id,0,"running",null);
+    const unknown = await taskRepository.transition(actor.workspaceId,queued.id,running.revision,"paused","EXECUTION_UNCERTAIN");
+    await assert.rejects(() => taskRepository.insert({ ...queued,id: `queue-c-${suffix}` }),{ code: "STATE_CONFLICT" });
+    await taskRepository.recover(actor.workspaceId,queued.id,unknown.revision,{ candidateVersionId: merged.id,extractionStatus: "succeeded" });
+    await taskRepository.insert({ ...queued,id: `queue-after-recovery-${suffix}` });
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
     const head = await content.findActive(actor,projectId,chapterId);
     await assert.rejects(() => content.save(actor,{ ...candidate,id: `stale-${suffix}`,parentVersionId: head!.id },head!.id),{ code: "CONTEXT_NOT_FOUND" });

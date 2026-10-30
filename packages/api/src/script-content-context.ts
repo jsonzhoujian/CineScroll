@@ -3,13 +3,14 @@ import { ScriptError } from "@novel-adaptation/script";
 import type { ProjectImportRepository } from "@novel-adaptation/project-import";
 import type { StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 import { StoryKnowledgeError } from "@novel-adaptation/story-knowledge";
-import type { ScriptGenerationContextReader } from "@novel-adaptation/script/script-content";
-import type { ModelTaskContextReader } from "@novel-adaptation/script/model-tasks";
+import { assertScriptRetrySelection, ScriptContentError, type ScriptContentRepository, type ScriptRetrySelection, type ScriptGenerationContextReader } from "@novel-adaptation/script/script-content";
+import { ModelTaskError, type ModelTaskContextReader } from "@novel-adaptation/script/model-tasks";
 
 type Projects = Pick<ProjectImportRepository,"findProjectAccess" | "findProject" | "findChapter">;
 export class ScriptContentContext implements ScriptGenerationContextReader, ModelTaskContextReader {
   private readonly projects: Projects; private readonly knowledge: StoryKnowledgeService; private readonly plans: ScriptService;
-  constructor(projects: Projects,knowledge: StoryKnowledgeService,plans: ScriptService) { this.projects = projects; this.knowledge = knowledge; this.plans = plans; }
+  private readonly content: ScriptContentRepository | undefined;
+  constructor(projects: Projects,knowledge: StoryKnowledgeService,plans: ScriptService,content?: ScriptContentRepository) { this.projects = projects; this.knowledge = knowledge; this.plans = plans; this.content = content; }
   async canRead(actor: Actor,p: string,c: string) { return !!await this.projects.findProjectAccess(actor,p) && !!await this.projects.findChapter(actor,p,c); }
   async findGenerationContext(actor: Actor,p: string,c: string) {
     if (!await this.canRead(actor,p,c)) return null;
@@ -29,6 +30,16 @@ export class ScriptContentContext implements ScriptGenerationContextReader, Mode
       if (error instanceof ScriptError && error.code === "EPISODE_PLAN_NOT_FOUND" || error instanceof StoryKnowledgeError && error.code === "STAGE_RESULT_NOT_FOUND") return null;
       throw error;
     }
+  }
+  async readRetry(actor: Actor,p: string,c: string,selection: ScriptRetrySelection) {
+    const input = await this.read(actor,p,c);
+    if (!input) return null;
+    if (!this.content) throw new ModelTaskError("STORAGE_UNAVAILABLE");
+    const candidate = await this.content.findActive(actor,p,c);
+    if (!candidate || candidate.sourceVersionId !== input.sourceVersionId || candidate.planVersionId !== input.upstreamConfirmedVersionIds[0]) throw new ModelTaskError("UPSTREAM_CHANGED");
+    try { assertScriptRetrySelection(candidate,selection); }
+    catch (error) { if (error instanceof ScriptContentError) throw new ModelTaskError(error.code === "VERSION_CONFLICT" ? "UPSTREAM_CHANGED" : "INVALID_CONTEXT"); throw error; }
+    return { ...input,retry: { expectedActiveVersionId: candidate.id,retryOfJobId: candidate.jobId,scopeKeys: [...selection.scopeKeys].sort(),failureOrigins: [...selection.scopeKeys].sort().map(scopeKey => ({ scopeKey,jobId: candidate.failures.find(f => f.scopeKey === scopeKey)!.originJobId ?? candidate.jobId })) } };
   }
   async read(actor: Actor,p: string,c: string) {
     const context = await this.findGenerationContext(actor,p,c);
