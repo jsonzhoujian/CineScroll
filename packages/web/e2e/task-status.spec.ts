@@ -453,6 +453,15 @@ for (const role of ["owner","editor","reviewer"]) test(`剧本候选编辑和建
   await panel.getByRole("button",{ name: expected,exact: true }).click();
   await page.getByRole("button",{ name: "追溯",exact: true }).click(); await page.getByRole("button",{ name: "审核",exact: true }).click();
   await expect(panel.getByRole("button",{ name: expected,exact: true })).toHaveAttribute("aria-pressed","true"); await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
+  const savedVersion = version.id,savedSuggestionState = version.suggestions.map(s => s.status),savedPosts = posts;
+  const before = new URL(page.url()).searchParams;
+  const cursor = ["scriptElement","scriptScene","scriptFragment","scriptReviewContext"].map(k => before.get(k));
+  await page.getByRole("button",{ name: "分镜",exact: true }).click();
+  await expect(page.getByText("正式内容尚未解锁",{ exact: true })).toBeVisible();
+  expect(["scriptElement","scriptScene","scriptFragment","scriptReviewContext"].map(k => new URL(page.url()).searchParams.get(k))).toEqual(cursor);
+  await page.getByRole("button",{ name: "追溯",exact: true }).click();await page.getByRole("button",{ name: "审核",exact: true }).click();
+  await expect(panel.getByRole("button",{ name: expected,exact: true })).toHaveAttribute("aria-pressed","true");
+  expect(version.id).toBe(savedVersion);expect(version.suggestions.map(s => s.status)).toEqual(savedSuggestionState);expect(posts).toBe(savedPosts);
   if (role === "owner") {
     let release!: () => void,entered!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
