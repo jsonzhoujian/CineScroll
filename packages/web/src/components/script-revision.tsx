@@ -1,7 +1,8 @@
 "use client";
 import { useEffect,useState } from "react";
-import { ApiClientError,type ApiClient,type ScriptContentView,type ScriptRevisionCommand } from "../lib/api";
+import { ApiClientError,type ApiClient,type ScriptContentView,type ScriptRevisionCommand,type ScriptImpactLink } from "../lib/api";
 export function ScriptRevision({ api,projectId,chapterId,view,selectedId,disabled,run,onChanged }: { api: ApiClient;projectId: string;chapterId: string;view: ScriptContentView;selectedId: string;disabled: boolean;run(f: () => Promise<void>): Promise<void>;onChanged(): Promise<void> }) {
+  const [impacts,setImpacts] = useState<{ versionId: string;impacts: ScriptImpactLink[] } | null>(null);
   const [text,setText] = useState(""),[reason,setReason] = useState(""),[pending,setPending] = useState<ScriptRevisionCommand | null>(null);
   const [formal,setFormal] = useState<ScriptContentView["version"] | null>(null),[notice,setNotice] = useState("正式修改将派生候选，重新确认前保留原正式版。");
   const [restoreBlocked,setRestoreBlocked] = useState(true);
@@ -36,6 +37,8 @@ export function ScriptRevision({ api,projectId,chapterId,view,selectedId,disable
   }
   return <section aria-label="正式剧本修订"><h3>正式剧本修订</h3><p role="status">{notice}</p>
     <button type="button" disabled={disabled} onClick={() => void run(async () => { const result = await api.getScriptVersion(projectId,chapterId,"confirmed");if (result.version.projectId !== projectId || result.version.chapterId !== chapterId || result.version.status !== "confirmed") throw new Error();setFormal(result.version); })}>读取保留正式版</button>
+    {isFormal && <button type="button" disabled={disabled} onClick={() => void run(async () => { const result = await api.getScriptImpacts(projectId,chapterId,view.version.id);if (result.versionId !== view.version.id || result.impacts.some(i => i.confirmed_version_id !== result.versionId)) throw new Error();setImpacts(result); })}>读取修订影响范围</button>}
+    {impacts?.versionId === view.version.id && <aside aria-label="修订受影响项"><p>仅标记待核对，不会自动重做下游。</p>{impacts.impacts.length ? impacts.impacts.map((i,n) => <p key={n}>{i.target_stage === "storyboard" ? "分镜" : "设定"} · {i.target_item_id} · 来源元素 {i.source_element_id} · 待核对</p>) : <p>该版本尚无已登记依赖的受影响项。</p>}</aside>}
     {formal && <article aria-label="保留正式剧本"><p>正式版本 {formal.id}</p>{formal.elements.map(e => <p key={e.id}>{e.text}</p>)}</article>}
     {isFormal && <div className="desktop-task-action">
       <label>正式修订理由<input value={reason} maxLength={2000} disabled={blocked} onChange={e => setReason(e.target.value)} /></label>
