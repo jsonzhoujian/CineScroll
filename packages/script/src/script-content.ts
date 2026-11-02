@@ -248,6 +248,7 @@ export class ScriptContentService {
     if (suggestion.status !== "pending") throw new ScriptContentError("SUGGESTION_CONFLICT", "修改建议已裁决");
     if (current.id !== input.expectedActiveVersionId) throw new ScriptContentError("VERSION_CONFLICT", "剧本已更新，请刷新后重试");
     const element = current.elements.find(({ id }) => id === suggestion.elementId);
+    if (input.decision === "accepted" && element?.lockedAt) throw new ScriptContentError("INVALID_STATE","请先明确解锁");
     if (input.decision === "accepted" && (!element || element.text !== suggestion.baseText)) {
       throw new ScriptContentError("SUGGESTION_CONFLICT", "建议对应内容已修改，请重新提交");
     }
@@ -274,6 +275,7 @@ export class ScriptContentService {
     const current = await this.readEditableVersion(actor, projectId, chapterId, input.expectedActiveVersionId, true);
     if (current.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "正式剧本不可直接编辑");
     if (!current.elements.some(({ id }) => id === input.elementId)) throw new ScriptContentError("ELEMENT_NOT_FOUND", "剧本条目不存在");
+    if (current.elements.find(e => e.id === input.elementId)?.lockedAt) throw new ScriptContentError("INVALID_STATE","请先明确解锁");
     const editedAt = this.dependencies.clock().toISOString();
     return this.dependencies.repository.save(actor, {
       ...current, id: this.dependencies.idGenerator(), parentVersionId: current.id,

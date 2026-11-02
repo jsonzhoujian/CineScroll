@@ -41,9 +41,9 @@ export class ScriptRevisionService {
       const suggestion = current.suggestions?.find(s => s.id === input.suggestionId);
       if (!suggestion || suggestion.status !== "pending" || !suggestion.baseVersionId) throw new ScriptContentError("SUGGESTION_CONFLICT","建议不存在或已处理");
       const element = current.elements.find(e => e.id === suggestion.elementId);
-      if (!element || element.text !== suggestion.baseText || element.lockedAt) throw new ScriptContentError("SUGGESTION_CONFLICT","目标已变化或锁定");
+      if (input.decision === "accepted" && (!element || element.text !== suggestion.baseText || element.lockedAt)) throw new ScriptContentError("SUGGESTION_CONFLICT","目标已变化或锁定");
       next = { ...next,suggestions: current.suggestions!.map(s => s.id === suggestion.id ? { ...s,status: input.decision,decidedBy: actor.userId,decidedAt: at } : s) };
-      if (input.decision === "accepted") {
+      if (input.decision === "accepted" && element) {
         const { confirmedBy: _by,confirmedAt: _at,confirmationCandidateVersionId: _candidate,qualityReportId: _report,qualityBinding: _binding,...candidate } = next;
         next = { ...candidate,status: "candidate",revisionOfVersionId: current.id,revisionChanges: { fromVersionId: current.id,acceptedSuggestionId: suggestion.id,elementIds: [element.id],sceneIds: [element.sceneId],episodeIds: current.scenes.filter(s => s.id === element.sceneId).map(s => s.episodeId) },elements: current.elements.map(e => e.id === suggestion.elementId ? { ...e,text: suggestion.text,lastEdit: { editedBy: actor.userId,editedAt: at,reason: input.reason.trim() } } : e) };
       }
