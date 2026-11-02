@@ -1,3 +1,4 @@
+import { ConfirmedScriptHandoff } from "@novel-adaptation/script/script-handoff";
 import "reflect-metadata";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -18,11 +19,13 @@ test("authenticated revision API preserves formal content and returns isolated h
   // Public context read gate; generation prerequisites are independently exercised by the production TLS fixture.
   const readContext = Object.create(ScriptContentContext.prototype) as ScriptContentContext;
   readContext.canRead = async (a,p,c) => a.userId !== "outsider" && p === "p" && c === "c";
-  const ref = await Test.createTestingModule({ imports: [ScriptContentApiModule.register({ sessionVerifier: sessions,repository: withImpacts,context: readContext,revision })] }).compile();
+  const ref = await Test.createTestingModule({ imports: [ScriptContentApiModule.register({ sessionVerifier: sessions,repository: withImpacts,context: readContext,handoff: new ConfirmedScriptHandoff(repository,{ findGenerationContext: async () => context }),revision })] }).compile();
   const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
   try {
     const http = request(app.getHttpServer()),base = "/projects/p/chapters/c/script-content";
     const owner = { authorization: `Bearer ${await sessions.issue("owner","w")}` },editor = { authorization: `Bearer ${await sessions.issue("editor","w")}` };
+    await http.get(`${base}/authoritative`).expect(401);
+    assert.equal((await http.get(`${base}/authoritative`).set(owner).expect(200)).body.version.id,version.id);
     await http.get(`${base}/versions/confirmed`).expect(401);
     assert.equal((await http.get(`${base}/versions/${version.id}/impacts`).set(editor).expect(200)).body.impacts[0].target_item_id,"shot");
     await http.get(`${base}/versions/${version.id}/impacts`).expect(401);
@@ -33,6 +36,8 @@ test("authenticated revision API preserves formal content and returns isolated h
     const command = { kind: "decide",requestId: "accept",expectedActiveVersionId: proposed.id,suggestionId: proposed.suggestions[0].id,decision: "accepted",reason: "符合原文" };
     await http.post(`${base}/revision`).set(editor).send(command).expect(403);
     const candidate = (await http.post(`${base}/revision`).set(owner).send(command).expect(201)).body;
+    assert.equal((await http.get(`${base}/authoritative`).set(owner).expect(200)).body.version.id,proposed.id);
+    await http.get(`${base}/authoritative`).set({ authorization: `Bearer ${await sessions.issue("outsider","w")}` }).expect(404);
     assert.equal(candidate.status,"candidate");assert.equal((await http.get(`${base}/versions/confirmed`).set(owner).expect(200)).body.version.id,proposed.id);
     assert.equal((await http.get(`${base}/versions/${formal.id}`).set(owner).expect(200)).body.version.elements[0].text,version.elements[0]!.text);
     await http.get(`${base}/versions/${formal.id}`).set({ authorization: `Bearer ${await sessions.issue("outsider","w")}` }).expect(404);

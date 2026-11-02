@@ -1,3 +1,4 @@
+import type { ConfirmedScriptHandoff } from "@novel-adaptation/script/script-handoff";
 import type { ScriptRevisionService,ScriptRevisionCommand } from "@novel-adaptation/script/script-revision";
 import { ModelTaskError, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
@@ -11,10 +12,17 @@ import { ScriptContentError, type ScriptContentService, type ScriptReviewCommand
 import type { ScriptContentContext } from "./script-content-context.ts";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 const SERVICES = Symbol("SCRIPT_CONTENT_READ");
-type Services = { sessionVerifier: SessionVerifier;repository: ScriptContentRepository;context: ScriptContentContext;revision?: ScriptRevisionService;review?: ScriptContentService;publication?: ScriptPublicationService;qualityTasks?: ModelTaskService;rateLimiter?: ModelRateLimiter };
+type Services = { sessionVerifier: SessionVerifier;repository: ScriptContentRepository;context: ScriptContentContext;handoff?: ConfirmedScriptHandoff;revision?: ScriptRevisionService;review?: ScriptContentService;publication?: ScriptPublicationService;qualityTasks?: ModelTaskService;rateLimiter?: ModelRateLimiter };
 class ScriptContentController {
   private readonly services: Services;
   constructor(services: Services) { this.services = services; }
+  async authoritative(request: { actor: Actor },p: string,c: string) {
+    if (![p,c].every(identifier)) throw new BadRequestException();
+    if (!await this.services.context.canRead(request.actor,p,c)) throw new ScriptContentError("CONTEXT_NOT_FOUND","不可读取剧本");
+    if (!this.services.handoff) throw new ScriptContentError("STORAGE_UNAVAILABLE","交接服务未开放");
+    try { return await this.services.handoff.read(request.actor,p,c); }
+    catch (error) { if (error instanceof ScriptContentError) throw error;throw new ScriptContentError("STORAGE_UNAVAILABLE","正式依据读取失败"); }
+  }
   async view(request: { actor: Actor },p: string,c: string) {
     if (![p,c].every(v => typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v))) throw new BadRequestException();
     try {
@@ -96,7 +104,7 @@ Req()(ScriptContentController.prototype,"view",0); Param("projectId")(ScriptCont
 const commandDescriptor = Object.getOwnPropertyDescriptor(ScriptContentController.prototype,"command")!;
 Post("review")(ScriptContentController.prototype,"command",commandDescriptor); Header("Cache-Control","no-store")(ScriptContentController.prototype,"command",commandDescriptor);
 Req()(ScriptContentController.prototype,"command",0); Param("projectId")(ScriptContentController.prototype,"command",1); Param("chapterId")(ScriptContentController.prototype,"command",2); Body()(ScriptContentController.prototype,"command",3);
-for (const [method,decorator] of [["impacts",Get("versions/:id/impacts")],["revise",Post("revision")],["historical",Get("versions/:id")],["qualityList",Get("quality")],["qualitySubmit",Post("quality")],["qualityRead",Get("quality/:id")],["publish",Post("publication")]] as const) {
+for (const [method,decorator] of [["authoritative",Get("authoritative")],["impacts",Get("versions/:id/impacts")],["revise",Post("revision")],["historical",Get("versions/:id")],["qualityList",Get("quality")],["qualitySubmit",Post("quality")],["qualityRead",Get("quality/:id")],["publish",Post("publication")]] as const) {
   const d = Object.getOwnPropertyDescriptor(ScriptContentController.prototype,method)!;
   decorator(ScriptContentController.prototype,method,d);Header("Cache-Control","no-store")(ScriptContentController.prototype,method,d);
   Req()(ScriptContentController.prototype,method,0);Param("projectId")(ScriptContentController.prototype,method,1);Param("chapterId")(ScriptContentController.prototype,method,2);

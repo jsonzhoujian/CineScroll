@@ -1,3 +1,4 @@
+import { ConfirmedScriptHandoff } from "@novel-adaptation/script/script-handoff";
 import { ScriptRevisionService } from "@novel-adaptation/script/script-revision";
 import { ScriptPublicationService } from "@novel-adaptation/script/script-publication";
 import { ScriptQualityTaskContext, ScriptQualityTaskExecutor, ScriptQualityTaskDispatcher } from "./script-quality-tasks.ts";
@@ -324,7 +325,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       scriptWorker = new StoryKnowledgeTaskWorker({ dispatcher: new ScriptContentTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
       apiModule.imports!.push(ScriptContentTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
-        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,review: service,revision,publication,qualityTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),ScriptContentWorkerModule.forWorker(scriptWorker));
+        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,handoff: new ConfirmedScriptHandoff(contentRepository,context),review: service,revision,publication,qualityTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),ScriptContentWorkerModule.forWorker(scriptWorker));
       apiModule.providers!.push({ provide: "SCRIPT_CONTENT_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertScriptContentDatabase(restrictedPool,taskConfig.workspaceIds),
       } });
