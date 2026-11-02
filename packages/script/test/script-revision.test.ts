@@ -15,6 +15,7 @@ test("explicit unlock precedes formal suggestions and accepted revision preserve
   const proposed = await service.execute({ ...actor,userId: "editor" },"p","c",{ ...suggest,expectedActiveVersionId: unlocked.id });
   const command = { kind: "decide" as const,requestId: "accept",reason: "符合原文",expectedActiveVersionId: proposed.id,suggestionId: proposed.suggestions![0]!.id,decision: "accepted" as const };
   const candidate = await service.execute(actor,"p","c",command);
+  assert.deepEqual(candidate.revisionChanges,{ fromVersionId: proposed.id,acceptedSuggestionId: command.suggestionId,elementIds: ["e1"],sceneIds: ["scene_1"],episodeIds: ["episode_1"] });
   assert.equal(candidate.status,"candidate");assert.equal(candidate.qualityReportId,undefined);assert.equal(candidate.elements[0]?.text,"少年缓缓起身。");
   assert.equal((await repo.findConfirmed(actor,"p","c"))?.id,proposed.id);
   assert.equal((await service.execute(actor,"p","c",command)).id,candidate.id);

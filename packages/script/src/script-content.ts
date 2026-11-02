@@ -35,6 +35,7 @@ export type ScriptRetrySelection = { expectedActiveVersionId: string;scopeKeys: 
 export type ScriptRetrySnapshot = ScriptRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 export type ScriptContentVersion = Readonly<{
   revisionOperation?: ScriptRevisionOperation;revisionOfVersionId?: string;
+  revisionChanges?: { fromVersionId: string;acceptedSuggestionId: string;elementIds: string[];sceneIds: string[];episodeIds: string[] };
   publicationOperation?: PublicationOperation;qualityReportId?: string;qualityBinding?: QualityBinding;
   retry?: ScriptRetrySnapshot;
   reviewOperation?: ScriptReviewOperation;

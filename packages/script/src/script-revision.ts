@@ -45,7 +45,7 @@ export class ScriptRevisionService {
       next = { ...next,suggestions: current.suggestions!.map(s => s.id === suggestion.id ? { ...s,status: input.decision,decidedBy: actor.userId,decidedAt: at } : s) };
       if (input.decision === "accepted") {
         const { confirmedBy: _by,confirmedAt: _at,confirmationCandidateVersionId: _candidate,qualityReportId: _report,qualityBinding: _binding,...candidate } = next;
-        next = { ...candidate,status: "candidate",revisionOfVersionId: current.id,elements: current.elements.map(e => e.id === suggestion.elementId ? { ...e,text: suggestion.text,lastEdit: { editedBy: actor.userId,editedAt: at,reason: input.reason.trim() } } : e) };
+        next = { ...candidate,status: "candidate",revisionOfVersionId: current.id,revisionChanges: { fromVersionId: current.id,acceptedSuggestionId: suggestion.id,elementIds: [element.id],sceneIds: [element.sceneId],episodeIds: current.scenes.filter(s => s.id === element.sceneId).map(s => s.episodeId) },elements: current.elements.map(e => e.id === suggestion.elementId ? { ...e,text: suggestion.text,lastEdit: { editedBy: actor.userId,editedAt: at,reason: input.reason.trim() } } : e) };
       }
     }
     try { return await repository.save(actor,next,current.id); }
