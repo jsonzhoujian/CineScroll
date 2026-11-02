@@ -593,3 +593,45 @@ for (const mode of ["success","editor","failed","stale","unknown-submit","unknow
   if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 });await expect(quality.getByRole("button",{ name: "锁定当前元素" })).toBeHidden(); }
   expect(qualityPosts).toBe(mode === "unknown-submit" ? 2 : 1);expect(publishPosts).toBe(mode === "unknown-confirm" ? 3 : 2);
 });
+
+for (const mode of ["success","unknown"]) test(`正式修订浏览器闭环：${mode}`,async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+
+  const base = `${origin}/projects/p/chapters/c/script-content`;
+  let version = { id: "formal",status: "confirmed",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",jobId: "generation",generationStatus: "succeeded",scenes: [{ id: "scene",title: "庭院" }],elements: [{ id: "action",sceneId: "scene",text: "雨打庭院",elementType: "action",lockedAt: "2026-11-02" as string | undefined,provenance: [{ type: "source_fragment",fragmentId: "f" }] }],suggestions: [] as Array<{ id: string;text: string;reason: string;status: string;submittedBy: string }>,failures: [] };
+  let formal = version,posts = 0,unknownRequest = "";
+  await page.route(base,r => r.fulfill({ headers,json: { current: true,permissions: { canEdit: true,canSuggest: true,canDecide: true },sourceFragments: [{ id: "f",text: "雨落" }],version } }));
+  await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: formal } }));
+  await page.route(`${base}/revision`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    const input = r.request().postDataJSON();posts++;
+    if (input.kind === "unlock") { version = { ...version,id: "unlocked",elements: version.elements.map(e => ({ ...e,lockedAt: undefined })) };formal = version; }
+    if (input.kind === "suggest") {
+      if (unknownRequest) expect(input.requestId).toBe(unknownRequest);else unknownRequest = input.requestId;
+      version = { ...version,id: "proposed",suggestions: [{ id: "suggestion",text: input.text,reason: input.reason,status: "pending",submittedBy: "owner" }] };formal = version;
+      if (mode === "unknown" && posts === 2) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+    }
+    if (input.kind === "decide") version = { ...version,id: "revision-candidate",status: "candidate",elements: version.elements.map(e => ({ ...e,text: "修订后的雨落" })),suggestions: version.suggestions.map(s => ({ ...s,status: "accepted" })) };
+    return r.fulfill({ headers,json: version });
+  });
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "剧本候选生成与追溯" }),revision = page.getByRole("region",{ name: "正式剧本修订" });
+  await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click();await panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true }).click();
+  await revision.getByLabel("正式修订理由").fill("动作节奏");await revision.getByRole("button",{ name: "明确解锁当前元素" }).click();
+  await revision.getByLabel("正式修订理由").fill("动作节奏");await revision.getByLabel("正式修订建议",{ exact: true }).fill("修订后的雨落");await revision.getByRole("button",{ name: "提交正式修订建议" }).click();
+  if (mode === "unknown") {
+    expect(decodeURIComponent(page.url())).not.toContain("修订后的雨落");await page.reload();await login(page);
+    const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+    await revision.getByRole("button",{ name: "核对正式修订原操作" }).click();
+  }
+  await revision.getByLabel("正式修订理由").fill("符合原文");await revision.getByRole("button",{ name: "接受正式建议 suggestion" }).click();
+  await expect(panel.getByRole("button",{ name: "修订后的雨落",exact: true })).toBeVisible();await revision.getByRole("button",{ name: "读取保留正式版" }).click();
+  await expect(revision.getByRole("article",{ name: "保留正式剧本" }).getByText("雨打庭院",{ exact: true })).toBeVisible();
+  expect(posts).toBe(mode === "unknown" ? 4 : 3);
+});
