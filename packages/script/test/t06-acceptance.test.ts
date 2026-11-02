@@ -66,3 +66,17 @@ test("unresolved major adaptation blocks model invocation and candidate writes",
   await assert.rejects(() => runner.run(actor,{ projectId: "p",chapterId: "c",jobId: "blocked",expectedActiveVersionId: null,generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "narration" } }),{ code: "INVALID_REQUEST" });
   assert.equal(calls,0);assert.equal(await repository.findActive(actor,"p","c"),null);
 });
+
+for (const outcome of ["approved","rejected"] as const) test(`decided major adaptation reaches generation with its exact ${outcome} verdict`,async () => {
+  const actor = { userId: "owner",workspaceId: "w" },repository = new InMemoryScriptContentRepository();let calls = 0;
+  const decision = { outcome,reason: "已逐项核对",decidedBy: "reviewer",decidedAt: "2026-11-02T00:00:00.000Z" };
+  const context = { ...template,confirmedPlan: { ...template.confirmedPlan!,majorAdaptationProposals: [{ id: "major",kind: "reorder_events" as const,summary: "调整呈现顺序",rationale: "节奏",affectedFactIds: ["fact_1"],decision }] } };
+  const contextReader = { findGenerationContext: async () => context };
+  const content = new ScriptContentService({ repository,contextReader,idGenerator: () => "generated",clock: () => new Date("2026-11-02") });
+  const result = await new ScriptRunner({ contextReader,service: content,model: { async generate(request) {
+    calls++;assert.deepEqual(request.input.confirmedUpstreamContent[0],context.confirmedPlan);
+    assert.deepEqual(request.input.approvedAdditionIds,[]);
+    return { contractVersion: "0.1.0",jobId: request.jobId,stage: "script",projectId: "p",chapterId: "c",sourceVersionId: "source_1",upstreamConfirmedVersionIds: ["plan_1","bible_1"],status: "succeeded",scenes: [{ id: "scene_1",episodeId: "episode_1",ordinal: 1,title: "起身",environment: "庭院",characters: ["少年"] }],items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene_1",elementType: "action",ordinal: 1,text: "少年起身。",provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "retained" }] } }] };
+  } } }).run(actor,{ projectId: "p",chapterId: "c",jobId: "generation",expectedActiveVersionId: null,generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "narration" } });
+  assert.equal(calls,1);assert.equal(result.generationStatus,"succeeded");assert.equal(result.planVersionId,context.confirmedPlan.id);
+});
