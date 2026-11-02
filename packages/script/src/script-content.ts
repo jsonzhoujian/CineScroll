@@ -45,6 +45,8 @@ export type ScriptContentVersion = Readonly<{
   failures: Array<Readonly<{ scopeKey: string; originJobId?: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
+  findConfirmed?(actor: Actor,p: string,c: string): Promise<ScriptContentVersion | null>;
+  findVersion?(actor: Actor,p: string,c: string,id: string): Promise<ScriptContentVersion | null>;
   findQualityReport?(actor: Actor,p: string,c: string,id: string): Promise<PersistedScriptQualityReport | null>;
   saveQualityReport?(actor: Actor,report: PersistedScriptQualityReport): Promise<PersistedScriptQualityReport>;
   findPublicationOperation?(actor: Actor,p: string,c: string,requestId: string): Promise<ScriptContentVersion | null>;
@@ -64,6 +66,9 @@ export class ScriptContentError extends Error {
   }
 }
 export class InMemoryScriptContentRepository implements ScriptContentRepository {
+  readonly #confirmed = new Map<string,ScriptContentVersion>();
+  async findConfirmed(a: Actor,p: string,c: string) { return structuredClone(this.#confirmed.get(scopeKey(a,p,c)) ?? null); }
+  async findVersion(a: Actor,p: string,c: string,id: string) { return structuredClone(this.#versions.get(JSON.stringify([scopeKey(a,p,c),id])) ?? null); }
   readonly #reports = new Map<string,PersistedScriptQualityReport>();
   async findQualityReport(a: Actor,p: string,c: string,id: string) { return structuredClone(this.#reports.get(JSON.stringify([scopeKey(a,p,c),id])) ?? null); }
   async saveQualityReport(a: Actor,r: PersistedScriptQualityReport) { const key = JSON.stringify([scopeKey(a,r.projectId,r.chapterId),r.id]); const existing = this.#reports.get(key); if (existing) return structuredClone(existing); this.#reports.set(key,structuredClone(r)); return structuredClone(r); }
@@ -91,6 +96,7 @@ export class InMemoryScriptContentRepository implements ScriptContentRepository 
     const generationKey = JSON.stringify([key,version.jobId]);
     if (!this.#generations.has(generationKey)) this.#generations.set(generationKey,saved);
     this.#active.set(key, saved);
+    if (saved.status === "confirmed") this.#confirmed.set(key,saved);
     return structuredClone(saved);
   }
 }

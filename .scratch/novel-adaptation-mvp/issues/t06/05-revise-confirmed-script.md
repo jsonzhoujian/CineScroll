@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: ready
+status: in_progress
 
 **Blocked by:** [04](./04-quality-confirm-lock.md) — completed
 
