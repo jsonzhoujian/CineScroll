@@ -1,3 +1,4 @@
+import { ScriptRevisionService } from "@novel-adaptation/script/script-revision";
 import { ScriptPublicationService } from "@novel-adaptation/script/script-publication";
 import { ScriptQualityTaskContext, ScriptQualityTaskExecutor, ScriptQualityTaskDispatcher } from "./script-quality-tasks.ts";
 import { ScriptContentContext } from "./script-content-context.ts";
@@ -312,6 +313,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       const tasks = new ModelTaskService({ settings,repository,contextReader: context,
         scriptAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
         generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `job_${randomUUID()}` });
+      const revision = new ScriptRevisionService({ repository: contentRepository,contextReader: context,accessReader: projects,idGenerator: () => `scr_${randomUUID()}`,clock: () => new Date() });
       const publication = new ScriptPublicationService({ repository: contentRepository,contextReader: context,accessReader: projects,content: service });
       const qualityTasks = new ModelTaskService({ settings,repository,contextReader: new ScriptQualityTaskContext(context,publication),scriptAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `quality_${randomUUID()}` });
       const qualityExecutor = new ScriptQualityTaskExecutor({ tasks: qualityTasks,publication,...(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
@@ -322,7 +324,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       scriptWorker = new StoryKnowledgeTaskWorker({ dispatcher: new ScriptContentTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
       apiModule.imports!.push(ScriptContentTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
-        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,review: service,publication,qualityTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),ScriptContentWorkerModule.forWorker(scriptWorker));
+        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,review: service,revision,publication,qualityTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),ScriptContentWorkerModule.forWorker(scriptWorker));
       apiModule.providers!.push({ provide: "SCRIPT_CONTENT_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertScriptContentDatabase(restrictedPool,taskConfig.workspaceIds),
       } });

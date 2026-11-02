@@ -1,3 +1,4 @@
+import type { ScriptRevisionService,ScriptRevisionCommand } from "@novel-adaptation/script/script-revision";
 import { ModelTaskError, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
 import type { PublicationCommand, ScriptPublicationService } from "@novel-adaptation/script/script-publication";
@@ -10,7 +11,7 @@ import { ScriptContentError, type ScriptContentService, type ScriptReviewCommand
 import type { ScriptContentContext } from "./script-content-context.ts";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 const SERVICES = Symbol("SCRIPT_CONTENT_READ");
-type Services = { sessionVerifier: SessionVerifier;repository: ScriptContentRepository;context: ScriptContentContext;review?: ScriptContentService;publication?: ScriptPublicationService;qualityTasks?: ModelTaskService;rateLimiter?: ModelRateLimiter };
+type Services = { sessionVerifier: SessionVerifier;repository: ScriptContentRepository;context: ScriptContentContext;revision?: ScriptRevisionService;review?: ScriptContentService;publication?: ScriptPublicationService;qualityTasks?: ModelTaskService;rateLimiter?: ModelRateLimiter };
 class ScriptContentController {
   private readonly services: Services;
   constructor(services: Services) { this.services = services; }
@@ -24,6 +25,22 @@ class ScriptContentController {
       const current = context?.sourceVersionId === version.sourceVersionId && context?.planVersionId === version.planVersionId;
       return { version,current,episodes: current ? context!.confirmedPlan?.episodes.map(({ id,ordinal }) => ({ id,ordinal })) ?? [] : [],permissions: current && this.services.review ? await this.services.review.getReviewPermissions(request.actor,p) : { canEdit: false,canSuggest: false,canDecide: false },sourceFragments: current ? context!.fragments : [] };
     } catch (error) { if (error instanceof ScriptContentError) throw error; throw new ScriptContentError("STORAGE_UNAVAILABLE","剧本读取失败"); }
+  }
+  async revise(request: { actor: Actor },p: string,c: string,body: unknown) {
+    if (![p,c].every(identifier)) throw new BadRequestException();
+    if (!await this.services.context.canRead(request.actor,p,c)) throw new ScriptContentError("CONTEXT_NOT_FOUND","不可读取剧本");
+    if (!this.services.revision) throw new ScriptContentError("STORAGE_UNAVAILABLE","修订服务未开放");
+    try { return await this.services.revision.execute(request.actor,p,c,body as ScriptRevisionCommand); }
+    catch (error) { if (error instanceof ScriptContentError) throw error;throw new ScriptContentError("STORAGE_UNAVAILABLE","修订服务暂不可用"); }
+  }
+  async historical(request: { actor: Actor },p: string,c: string,id: string) {
+    if (![p,c,id].every(identifier)) throw new BadRequestException();
+    if (!await this.services.context.canRead(request.actor,p,c)) throw new ScriptContentError("CONTEXT_NOT_FOUND","不可读取剧本");
+    try {
+      const version = id === "confirmed" ? await this.services.repository.findConfirmed?.(request.actor,p,c) : await this.services.repository.findVersion?.(request.actor,p,c,id);
+      if (!version) throw new ScriptContentError("CONTEXT_NOT_FOUND","版本不存在");
+      return { version };
+    } catch (error) { if (error instanceof ScriptContentError) throw error;throw new ScriptContentError("STORAGE_UNAVAILABLE","版本读取失败"); }
   }
   async qualityList(request: { actor: Actor },p: string,c: string,query: Record<string,unknown>) {
     if (![p,c].every(identifier) || Object.keys(query).some(k => k !== "cursor") || query.cursor !== undefined && !identifier(query.cursor)) throw new BadRequestException();
@@ -69,11 +86,11 @@ Req()(ScriptContentController.prototype,"view",0); Param("projectId")(ScriptCont
 const commandDescriptor = Object.getOwnPropertyDescriptor(ScriptContentController.prototype,"command")!;
 Post("review")(ScriptContentController.prototype,"command",commandDescriptor); Header("Cache-Control","no-store")(ScriptContentController.prototype,"command",commandDescriptor);
 Req()(ScriptContentController.prototype,"command",0); Param("projectId")(ScriptContentController.prototype,"command",1); Param("chapterId")(ScriptContentController.prototype,"command",2); Body()(ScriptContentController.prototype,"command",3);
-for (const [method,decorator] of [["qualityList",Get("quality")],["qualitySubmit",Post("quality")],["qualityRead",Get("quality/:id")],["publish",Post("publication")]] as const) {
+for (const [method,decorator] of [["revise",Post("revision")],["historical",Get("versions/:id")],["qualityList",Get("quality")],["qualitySubmit",Post("quality")],["qualityRead",Get("quality/:id")],["publish",Post("publication")]] as const) {
   const d = Object.getOwnPropertyDescriptor(ScriptContentController.prototype,method)!;
   decorator(ScriptContentController.prototype,method,d);Header("Cache-Control","no-store")(ScriptContentController.prototype,method,d);
   Req()(ScriptContentController.prototype,method,0);Param("projectId")(ScriptContentController.prototype,method,1);Param("chapterId")(ScriptContentController.prototype,method,2);
-  if (method === "qualityList") Query()(ScriptContentController.prototype,method,3);else if (method === "qualityRead") Param("id")(ScriptContentController.prototype,method,3); else Body()(ScriptContentController.prototype,method,3);
+  if (method === "qualityList") Query()(ScriptContentController.prototype,method,3);else if (method === "qualityRead" || method === "historical") Param("id")(ScriptContentController.prototype,method,3); else Body()(ScriptContentController.prototype,method,3);
 }
 export class ScriptContentApiModule {
   static register(services: Services): DynamicModule { return { module: ScriptContentApiModule,providers: [{ provide: SERVICES,useValue: services },{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier }] }; }
