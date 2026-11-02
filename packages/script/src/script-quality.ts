@@ -5,6 +5,7 @@ export interface ScriptQualityModelPort {
 }
 export type ScriptQualityReport = Readonly<{
   versionId: string; passed: boolean; coverage: number; reasons: string[];
+  assessment?: { events: unknown[];facts: unknown[];episodes: unknown[];unsupportedCoreFactElementIds: string[] };
 }>;
 
 /** Semantic verdicts require an external assessor; citations alone never prove coverage. */
@@ -49,7 +50,7 @@ export class ScriptQualityEvaluator {
       || response.unsupportedCoreFactElementIds.some((id) => typeof id !== "string" || !elements.has(id))
       || new Set(response.unsupportedCoreFactElementIds).size !== response.unsupportedCoreFactElementIds.length) return fail("INVALID_ASSESSMENT");
     const seenEvents = new Set<string>();
-    let covered = 0;
+    let covered = 0, uncertainEvent = false;
     for (const event of response.events) {
       if (!record(event) || !keys(event, ["factId", "elementIds", "verdict"]) || typeof event.factId !== "string"
         || !requiredEvents.includes(event.factId) || seenEvents.has(event.factId) || !Array.isArray(event.elementIds)
@@ -57,6 +58,7 @@ export class ScriptQualityEvaluator {
         || new Set(event.elementIds).size !== event.elementIds.length
         || typeof event.verdict !== "string" || !["covered", "missing", "uncertain"].includes(event.verdict)
         || (event.verdict === "covered" && !event.elementIds.length)) return fail("INVALID_ASSESSMENT");
+      if (event.verdict === "uncertain") uncertainEvent = true;
       seenEvents.add(event.factId); if (event.verdict === "covered") covered++;
     }
     const seenFacts = new Set<string>();
@@ -78,10 +80,10 @@ export class ScriptQualityEvaluator {
     }
     if (seenEvents.size !== requiredEvents.length || seenFacts.size !== requiredFacts.length || seenEpisodes.size !== plan.episodes.length) return fail("INCOMPLETE_ASSESSMENT");
     const coverage = covered / requiredEvents.length;
-    const reasons = [coverage < 0.9 ? "LOW_EVENT_COVERAGE" : null, !consistent ? "FACT_CONFLICT_OR_UNCERTAINTY" : null,
+    const reasons = [uncertainEvent ? "UNCERTAIN_EVENT_COVERAGE" : null,coverage < 0.9 ? "LOW_EVENT_COVERAGE" : null, !consistent ? "FACT_CONFLICT_OR_UNCERTAINTY" : null,
       response.unsupportedCoreFactElementIds.length ? "UNSUPPORTED_CORE_FACT" : null,
       !durationValid ? "DURATION_ESTIMATE_OUT_OF_RANGE" : null].filter((reason): reason is string => reason !== null);
-    return { versionId: snapshot.id, passed: !reasons.length, coverage, reasons };
+    return { versionId: snapshot.id, passed: !reasons.length, coverage, reasons,assessment: structuredClone({ events: response.events,facts: response.facts,episodes: response.episodes,unsupportedCoreFactElementIds: response.unsupportedCoreFactElementIds as string[] }) };
   }
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

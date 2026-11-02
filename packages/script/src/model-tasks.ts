@@ -5,7 +5,9 @@ import { ModelSettingsError, type TaskModelSnapshot, type WorkspaceModelSettings
 
 export type StoryRetrySelection = { expectedActiveVersionId: string; scopeKeys: string[] };
 export type StoryRetrySnapshot = StoryRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
-export type TaskInput = { stage: "story_knowledge" | "script"; resultType?: "episodePlan" | "scriptContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
+import { sameQualityBinding, type QualityBinding } from "./script-publication.ts";
+
+export type TaskInput = { qualityTarget?: QualityBinding; stage: "story_knowledge" | "script"; resultType?: "episodePlan" | "scriptContent" | "scriptQuality"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
@@ -27,6 +29,8 @@ export class ModelTaskError extends Error {
 export interface ModelTaskRepository {
   /** Internal workspace-scoped discovery only; scanning is not a claim or authorization. */
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
+  scanScriptQuality?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
+  listScriptQuality?(workspaceId: string,p: string,c: string,page: TaskPageRequest): Promise<TaskPage>;
   scanScriptContent?(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   listScriptContent?(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
@@ -68,12 +72,12 @@ export class ModelTaskService {
     ...(options.episodeAdmission ? { episodeAdmission: { workspaceIds: [...options.episodeAdmission.workspaceIds], providerIds: [...options.episodeAdmission.providerIds] } } : {}) }; }
   #admission(actor: Actor, context: TaskInput, model?: TaskModelSnapshot): TaskAvailability {
     if (context.stage !== "story_knowledge" && !context.resultType) return { available: true, reason: null };
-    const admission = context.resultType === "scriptContent" ? this.#options.scriptAdmission : context.resultType === "episodePlan" ? this.#options.episodeAdmission : this.#options.storyAdmission;
+    const admission = ["scriptContent","scriptQuality"].includes(context.resultType ?? "") ? this.#options.scriptAdmission : context.resultType === "episodePlan" ? this.#options.episodeAdmission : this.#options.storyAdmission;
     if (!admission?.workspaceIds.includes(actor.workspaceId)) return { available: false, reason: "WORKSPACE_TASK_DISABLED" };
     if (model && !admission.providerIds.includes(model.providerId)) return { available: false, reason: "TASK_PROVIDER_UNSUPPORTED" };
     return { available: true, reason: null };
   }
-  async availability(actor: Actor, projectId: string, chapterId: string, selection: { configurationVersionId: string; modelId: string }, expectedResultType?: "episodePlan" | "scriptContent"): Promise<TaskAvailability> {
+  async availability(actor: Actor, projectId: string, chapterId: string, selection: { configurationVersionId: string; modelId: string }, expectedResultType?: "episodePlan" | "scriptContent" | "scriptQuality"): Promise<TaskAvailability> {
     const context = await this.#context(actor, projectId, chapterId);
     if (expectedResultType && context.resultType !== expectedResultType) throw new ModelTaskError("INVALID_CONTEXT");
     const workspace = this.#admission(actor, context);
@@ -104,6 +108,12 @@ export class ModelTaskService {
     } else await this.#context(actor,projectId,chapterId);
     return this.#options.repository.listEpisodePlans(actor.workspaceId,projectId,chapterId,page);
   }
+  async listScriptQuality(actor: Actor,p: string,c: string,page: TaskPageRequest = { limit: 20,cursor: null }) {
+    validateTaskPage(page);
+    if (!await this.#options.contextReader.canRead?.(actor,p,c)) throw new ModelTaskError("TASK_NOT_FOUND");
+    if (!this.#options.repository.listScriptQuality) throw new ModelTaskError("STORAGE_UNAVAILABLE");
+    return this.#options.repository.listScriptQuality(actor.workspaceId,p,c,page);
+  }
   async listScriptContent(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest = { limit: 20,cursor: null }) {
     validateTaskPage(page);
     if (this.#options.contextReader.canRead) {
@@ -115,7 +125,7 @@ export class ModelTaskService {
   async #context(actor: Actor, projectId: string, chapterId: string, retry?: StoryRetrySelection) {
     const input = retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
-    if (input.resultType !== undefined && (!["episodePlan","scriptContent"].includes(input.resultType) || input.stage !== "script" || input.upstreamConfirmedVersionIds.length !== (input.resultType === "scriptContent" ? 2 : 1) || input.retry && input.resultType !== "scriptContent")
+    if (input.resultType !== undefined && (!["episodePlan","scriptContent","scriptQuality"].includes(input.resultType) || input.stage !== "script" || input.upstreamConfirmedVersionIds.length !== (input.resultType === "episodePlan" ? 1 : 2) || input.retry && input.resultType !== "scriptContent")
       || !["story_knowledge", "script"].includes(input.stage) || !input.sourceVersionId
       || (input.stage === "script" && !input.upstreamConfirmedVersionIds.length)
       || (input.stage === "story_knowledge" && input.upstreamConfirmedVersionIds.length !== 0) || input.upstreamConfirmedVersionIds.some(id => !id)
@@ -128,7 +138,8 @@ export class ModelTaskService {
       || input.retry.failureOrigins.some(f => !f || !validIdentifier(f.scopeKey) || !validIdentifier(f.jobId))
       || new Set(input.retry.failureOrigins.map(f => f.scopeKey)).size !== input.retry.scopeKeys.length
       || input.retry.scopeKeys.some(s => !input.retry!.failureOrigins!.some(f => f.scopeKey === s)))) throw new ModelTaskError("INVALID_CONTEXT");
-    return { stage: input.stage, ...(input.resultType ? { resultType: input.resultType } : {}), sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
+    if (input.resultType === "scriptQuality" && (!input.qualityTarget || !validIdentifier(input.qualityTarget.candidateVersionId) || !validIdentifier(input.qualityTarget.ruleVersion) || !/^[a-f0-9]{64}$/.test(input.qualityTarget.contextHash))) throw new ModelTaskError("INVALID_CONTEXT");
+    return { ...(input.qualityTarget ? { qualityTarget: structuredClone(input.qualityTarget) } : {}),stage: input.stage, ...(input.resultType ? { resultType: input.resultType } : {}), sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
       ...(retry && input.retry ? { retry: structuredClone(input.retry) } : {}),
       generationParameters: { targetDurationSeconds: input.generationParameters.targetDurationSeconds,
         aspectRatio: input.generationParameters.aspectRatio, narrativeMode: input.generationParameters.narrativeMode } };
@@ -185,6 +196,31 @@ export class ModelTaskService {
     if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
     const context = await this.#context(actor,input.projectId,input.chapterId);
     if (context.resultType !== "scriptContent") throw new ModelTaskError("INVALID_CONTEXT");
+    await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
+    this.#assertAdmission(actor, context);
+    const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
+    this.#assertAdmission(actor, context, model);
+    try {
+      return await this.#options.repository.insert({ id, workspaceId: actor.workspaceId, createdBy: actor.userId,
+        projectId: input.projectId, chapterId: input.chapterId, parentTaskId: null, input: context, model,
+        state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
+    } catch (error) {
+      if (!(error instanceof ModelTaskError && ["STATE_CONFLICT", "TASK_QUEUE_FULL"].includes(error.code))) throw error;
+      const duplicate = await this.#options.repository.find(actor.workspaceId, id);
+      if (!duplicate || !matches(duplicate)) throw error;
+      return duplicate;
+    }
+  }
+  async submitScriptQuality(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string;expectedActiveVersionId: string }) {
+    if (!validIdentifier(input.requestId)) throw new ModelTaskError("INVALID_CONTEXT");
+    if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+    const id = `quality_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
+    const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId
+      && task.input.qualityTarget?.candidateVersionId === input.expectedActiveVersionId && task.input.resultType === "scriptQuality" && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
+    const existing = await this.#options.repository.find(actor.workspaceId, id);
+    if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
+    const context = await this.#context(actor,input.projectId,input.chapterId);
+    if (context.resultType !== "scriptQuality" || context.qualityTarget?.candidateVersionId !== input.expectedActiveVersionId) throw new ModelTaskError("INVALID_CONTEXT");
     await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
     this.#assertAdmission(actor, context);
     const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
@@ -301,7 +337,7 @@ export class ModelTaskService {
   }
 }
 function sameInput(a: TaskInput, b: TaskInput) {
-  return a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
+  return (!a.qualityTarget && !b.qualityTarget || !!a.qualityTarget && !!b.qualityTarget && sameQualityBinding(a.qualityTarget,b.qualityTarget)) && a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
     && (!a.retry && !b.retry || !!a.retry && !!b.retry && a.retry.expectedActiveVersionId === b.retry.expectedActiveVersionId && a.retry.retryOfJobId === b.retry.retryOfJobId && sameScopes(a.retry.scopeKeys, b.retry.scopeKeys) && sameFailureOrigins(a.retry.failureOrigins,b.retry.failureOrigins))
     && a.upstreamConfirmedVersionIds.length === b.upstreamConfirmedVersionIds.length
     && a.upstreamConfirmedVersionIds.every((id, i) => id === b.upstreamConfirmedVersionIds[i])
@@ -331,12 +367,14 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"story_knowledge");
   }
+  async scanScriptQuality(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"scriptQuality"); }
+  async listScriptQuality(w: string,p: string,c: string,page: TaskPageRequest) { return this.#list(w,p,c,page,"scriptQuality"); }
   async scanScriptContent(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> { return this.#scan(workspaceId,mode,page,"scriptContent"); }
   async listScriptContent(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> { return this.#list(workspaceId,projectId,chapterId,page,"scriptContent"); }
   async scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"episodePlan");
   }
-  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent"): Promise<TaskPage> {
+  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality"): Promise<TaskPage> {
     validateTaskScan(mode, page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId
       && (kind !== "story_knowledge" ? task.input.stage === "script" && task.input.resultType === kind : task.input.stage === "story_knowledge")
@@ -353,7 +391,7 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
-  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent"): Promise<TaskPage> {
+  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality"): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
       && task.chapterId === chapterId && (kind !== "story_knowledge" ? task.input.stage === "script" && task.input.resultType === kind : task.input.stage === "story_knowledge")
@@ -370,6 +408,7 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
     if (task.input.resultType === "scriptContent" && task.input.retry && [...this.#tasks.values()].some(old => old.workspaceId === task.workspaceId && old.projectId === task.projectId && old.chapterId === task.chapterId
       && old.input.resultType === "scriptContent" && old.input.retry?.expectedActiveVersionId === task.input.retry!.expectedActiveVersionId
       && (old.state === "queued" || old.state === "running" || old.state === "paused" && old.reason === "EXECUTION_UNCERTAIN"))) throw new ModelTaskError("STATE_CONFLICT");
+    if (task.input.resultType === "scriptQuality" && [...this.#tasks.values()].some(old => old.workspaceId === task.workspaceId && old.projectId === task.projectId && old.chapterId === task.chapterId && old.input.resultType === "scriptQuality" && old.input.qualityTarget?.candidateVersionId === task.input.qualityTarget?.candidateVersionId && (old.state === "queued" || old.state === "running" || old.state === "paused" && old.reason === "EXECUTION_UNCERTAIN"))) throw new ModelTaskError("STATE_CONFLICT");
     this.#admit(task.workspaceId, "queued");
     this.#tasks.set(this.#key(task.workspaceId, task.id), structuredClone(task)); return structuredClone(task);
   }

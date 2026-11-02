@@ -544,3 +544,52 @@ for (const mode of ["success","unknown-submit","stale","unknown-execution","mobi
   }
   expect(posts).toBe(mode === "unknown-submit" ? 2 : 1);
 });
+
+for (const mode of ["success","editor","failed","stale","unknown-submit","unknown-confirm","conflict","mobile"]) test(`剧本质量确认与锁定：${mode}`,async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const base = `${origin}/projects/p/chapters/c/script-content`;
+  let version = { id: "script",status: "candidate",jobId: "generation",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",generationStatus: "succeeded",scenes: [{ id: "scene",episodeId: "e",ordinal: 1,title: "庭院" }],elements: [{ id: "action",sceneId: "scene",elementType: "action",ordinal: 1,text: "雨打庭院",lockedAt: undefined as string | undefined,provenance: [{ type: "source_fragment",fragmentId: "f",transformation: "retained" }] }],failures: [] };
+  let qualityPosts = 0,publishPosts = 0,qualityRequest = "",publicationRequest = "";
+  const task = { id: "quality-task",state: "queued",reason: null,projectId: "p",chapterId: "c",input: { resultType: "scriptQuality",qualityTarget: { candidateVersionId: "script" } } };
+  const report = { id: task.id,candidateVersionId: "script",ruleVersion: "script-quality/1",passed: mode !== "failed",coverage: mode === "failed" ? 0.8 : 1,reasons: mode === "failed" ? ["LOW_EVENT_COVERAGE"] : [],assessment: { episodes: [{ episodeId: "e",estimatedSeconds: 60 }] } };
+  await page.route(base,r => r.fulfill({ headers,json: { current: true,permissions: { canEdit: mode !== "editor",canSuggest: true,canDecide: mode !== "editor" },sourceFragments: [{ id: "f",text: "雨落" }],version } }));
+  await page.route(`${base}/quality`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    const input = r.request().postDataJSON();qualityPosts++;expect(Object.keys(input).sort()).toEqual(["configurationVersionId","expectedActiveVersionId","modelId","requestId"]);
+    expect(input.expectedActiveVersionId).toBe("script");if (qualityRequest) expect(input.requestId).toBe(qualityRequest);else qualityRequest = input.requestId;
+    if (mode === "unknown-submit" && qualityPosts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });return r.fulfill({ headers,json: task });
+  });
+  await page.route(`${base}/quality/quality-task`,r => { if (mode === "stale") version = { ...version,id: "newer-script" };return r.fulfill({ headers,json: { task: { ...task,state: "succeeded" },report } }); });
+  await page.route(`${base}/publication`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    publishPosts++;const input = r.request().postDataJSON();expect(input.reason).toBe("已核对质量与原文");
+    if (input.kind === "confirm") {
+      if (publicationRequest) expect(input.requestId).toBe(publicationRequest);else publicationRequest = input.requestId;
+      if (mode === "conflict") { version = { ...version,id: "newer-script" };return r.fulfill({ headers,status: 409,json: { code: "VERSION_CONFLICT" } }); }
+      version = { ...version,id: "formal",status: "confirmed" };if (mode === "unknown-confirm" && publishPosts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+    } else { expect(input.elementIds).toEqual(["action"]);version = { ...version,id: "locked",elements: version.elements.map(e => ({ ...e,lockedAt: "2026-11-02" })) }; }return r.fulfill({ headers,json: version });
+  });
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "剧本候选生成与追溯" }),quality = page.getByRole("region",{ name: "剧本质量与确认" });await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click();
+  if (mode === "editor") { await expect(quality.getByRole("button",{ name: "确认正式剧本" })).toHaveCount(0);await expect(quality.getByRole("button",{ name: "评估当前剧本" })).toHaveCount(0);return; }
+  await quality.getByRole("button",{ name: "读取质量模型" }).click();await quality.getByRole("combobox",{ name: "质量评估模型" }).selectOption("model");await quality.getByRole("button",{ name: "评估当前剧本" }).click();
+  async function reloadReview() { await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await page.getByRole("button",{ name: "进入审核",exact: true }).click(); }
+  if (mode === "unknown-submit") { await reloadReview();await quality.getByRole("button",{ name: "核对质量原提交" }).click(); }
+  await quality.getByRole("button",{ name: "读取质量报告" }).click();await quality.getByLabel("正式操作理由").fill("已核对质量与原文");
+  if (mode === "failed") { await expect(quality.getByText("阻断原因：核心事件覆盖率低于 90%")).toBeVisible();await expect(quality.getByRole("button",{ name: "确认正式剧本" })).toBeDisabled();expect(publishPosts).toBe(0);return; }
+  if (mode === "stale") { await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click();await expect(quality.getByText("报告已过期，请评估当前候选。")).toBeVisible();await expect(quality.getByRole("button",{ name: "确认正式剧本" })).toBeDisabled();return; }
+  await quality.getByRole("button",{ name: "确认正式剧本" }).click();
+  if (mode === "conflict") { await expect(quality.getByText("正式操作被拒绝，请读取当前剧本后重新核对。")).toBeVisible();await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click();await expect(quality.getByRole("button",{ name: "读取质量模型" })).toBeEnabled();await expect(quality.getByRole("button",{ name: "核对正式原操作" })).toHaveCount(0);return; }
+  if (mode === "unknown-confirm") { expect(decodeURIComponent(page.url())).not.toContain("已核对质量与原文");await reloadReview();await quality.getByRole("button",{ name: "核对正式原操作" }).click(); }
+  await expect(quality.getByText("剧本状态：正式",{ exact: true })).toBeVisible();await expect(panel.getByRole("button",{ name: "保存候选修改" })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "雨打庭院",exact: true }).click();await quality.getByLabel("正式操作理由").fill("已核对质量与原文");await quality.getByRole("button",{ name: "锁定当前元素" }).click();
+  await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await reloadReview();await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true }).click();await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
+  if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 });await expect(quality.getByRole("button",{ name: "锁定当前元素" })).toBeHidden(); }
+  expect(qualityPosts).toBe(mode === "unknown-submit" ? 2 : 1);expect(publishPosts).toBe(mode === "unknown-confirm" ? 3 : 2);
+});

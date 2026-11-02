@@ -6,11 +6,14 @@ export type ScriptContentTask = StoryKnowledgeTask & { input: { stage: "script";
 export type ScriptContentView = { episodes?: Array<{ id: string;ordinal: number }>;permissions?: { canEdit: boolean;canSuggest: boolean;canDecide: boolean };current: boolean;sourceFragments: Array<{ id: string;text: string }>;version: {
   suggestions?: Array<{ id: string;elementId: string;text: string;reason: string;status: string;submittedBy: string;decidedBy?: string }>;
   reviewOperation?: { requestId: string;kind: string;reason: string };
+  status?: "candidate" | "confirmed";qualityReportId?: string;confirmedBy?: string;confirmedAt?: string;
   id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;planVersionId: string;generationStatus: string;
   retry?: { scopeKeys: string[];expectedActiveVersionId: string;retryOfJobId: string };
-  scenes: Array<{ id: string;title: string;episodeId?: string;ordinal?: number }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;ordinal?: number;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
+  scenes: Array<{ id: string;title: string;episodeId?: string;ordinal?: number }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;ordinal?: number;lockedBy?: string;lockedAt?: string;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
   failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
 } };
+export type ScriptQualityView = { task: { id: string;state: string;reason: string | null;projectId: string;chapterId: string;input: { resultType: string;qualityTarget: { candidateVersionId: string } } };report: null | { id: string;candidateVersionId: string;ruleVersion: string;passed: boolean;coverage: number;reasons: string[];assessment?: { episodes: Array<{ episodeId: string;estimatedSeconds: number }> } } };
+export type ScriptPublicationCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & ({ kind: "confirm";reportId: string } | { kind: "lock";elementIds: string[] });
 export class ApiClientError extends Error {
   readonly status: number;
   readonly code: string | undefined;
@@ -112,6 +115,10 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  listScriptQuality(p: string,c: string,cursor: string | null = null) { return this.request<{ tasks: ScriptQualityView["task"][];nextCursor: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/quality${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,{ method: "GET",cache: "no-store" },"session"); }
+  submitScriptQuality(p: string,c: string,input: { requestId: string;configurationVersionId: string;modelId: string;expectedActiveVersionId: string }) { return this.request<ScriptQualityView["task"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/quality`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  getScriptQuality(p: string,c: string,id: string) { return this.request<ScriptQualityView>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/quality/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
+  publishScriptContent(p: string,c: string,input: ScriptPublicationCommand) { return this.request<ScriptContentView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/publication`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   reviewScriptContent(p: string,c: string,input: { kind: "edit" | "suggest" | "decide";requestId: string;expectedActiveVersionId: string;reason: string;elementId?: string;text?: string;suggestionId?: string;decision?: "accepted" | "rejected" }) { return this.request<ScriptContentView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/review`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   submitScriptContentRetry(p: string,c: string,input: { configurationVersionId: string;modelId: string;requestId: string;expectedActiveVersionId: string;scopeKeys: string[] }) { return this.request<ScriptContentTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks/retries`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   submitScriptContentTask(p: string,c: string,input: { configurationVersionId: string;modelId: string;requestId: string }) { return this.request<ScriptContentTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }

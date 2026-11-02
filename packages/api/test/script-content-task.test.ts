@@ -49,7 +49,7 @@ import { ScriptContentContext } from "../src/script-content-context.ts";
 import { ScriptContentTaskExecutor } from "../src/script-content-task-executor.ts";
 import { ScriptContentTaskApiModule } from "../src/script-content-task-api.ts";
 import { ScriptContentApiModule } from "../src/script-content-api.ts";
-import { InMemoryScriptContentRepository, ScriptContentService } from "@novel-adaptation/script/script-content";
+import { InMemoryScriptContentRepository, ScriptContentService, ScriptContentError } from "@novel-adaptation/script/script-content";
 
 async function fixture() {
   const f = await episodeFixture(); await f.confirm();
@@ -275,4 +275,72 @@ test("successive retries retain each unselected failure's real origin task",asyn
   const final = (await f.contentRepository.findActive(f.actor,"p","c"))!;
   assert.deepEqual(final.retry?.failureOrigins,[{ scopeKey: "sound",jobId: f.base.jobId }]);
   assert.equal(final.failures.find(f => f.scopeKey === "dialogue")?.originJobId,first.id);
+});
+
+import { ScriptPublicationService } from "@novel-adaptation/script/script-publication";
+import { ScriptQualityTaskContext,ScriptQualityTaskExecutor,ScriptQualityTaskDispatcher } from "../src/script-quality-tasks.ts";
+test("quality task API, worker, persisted report and owner publication form one authenticated loop",async () => {
+  const f = await fixture();
+  const generation = await f.tasks.submitScriptContent(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "generation" });
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) { return scriptResponse(r); } } }).run(f.actor,generation.id);
+  await f.projects.saveProject(f.actor,{ ...f.project,members: [...f.project.members,{ userId: "editor",role: "editor" }] });
+  const candidate = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+  const content = new ScriptContentService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,idGenerator: () => `publication-${Math.random()}`,clock: () => new Date("2026-11-02") });
+  const publication = new ScriptPublicationService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,content });
+  const tasks = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: new ScriptQualityTaskContext(f.context,publication),scriptAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },generationPolicy: { isAllowed: async () => true },idGenerator: () => "unused" });
+  let calls = 0;
+  const executor = new ScriptQualityTaskExecutor({ tasks,publication,fetch: async (_url,init) => {
+    calls++; const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
+    return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify({ versionId: input.version.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }) } }] });
+  } });
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [ScriptContentApiModule.register({ sessionVerifier: sessions,repository: f.contentRepository,context: f.context,review: content,publication,qualityTasks: tasks,rateLimiter: availableRateLimiter() })] }).compile();
+  const app = ref.createNestApplication(); await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },base = "/projects/p/chapters/c/script-content";
+    const editorAuth = { authorization: `Bearer ${await sessions.issue("editor","w")}` };
+    const input = { ...await f.settingsSelection(),requestId: "quality",expectedActiveVersionId: candidate.id };
+    await http.post(`${base}/quality`).send(input).expect(401);
+    await http.post(`${base}/quality`).set(auth).send({ ...input,passed: true }).expect(400);
+    await http.post(`${base}/quality`).set(editorAuth).send(input).expect(403);
+    const task = (await http.post(`${base}/quality`).set(auth).send(input).expect(201)).body;
+    assert.equal((await http.post(`${base}/quality`).set(auth).send(input).expect(201)).body.id,task.id);
+    await assert.rejects(() => tasks.submitScriptQuality(f.actor,{ projectId: "p",chapterId: "c",...input,requestId: "another" }),{ code: "STATE_CONFLICT" });
+    const dispatcher = new ScriptQualityTaskDispatcher(f.repository,executor);
+    assert.equal((await dispatcher.tick("w","run")).items[0]?.state,"succeeded");
+    const report = (await http.get(`${base}/quality/${task.id}`).set(auth).expect(200)).body.report;
+    assert.equal(report.passed,true,JSON.stringify(report)); assert.equal(report.assessment.episodes[0].estimatedSeconds,60);
+    const cmd = { kind: "confirm",reason: "已核对",requestId: "confirm",expectedActiveVersionId: candidate.id,reportId: task.id };
+    await http.post(`${base}/publication`).set(editorAuth).send(cmd).expect(403);
+    assert.equal((await http.get(`${base}/quality`).set(auth).expect(200)).body.tasks.length,1);
+    const formal = (await http.post(`${base}/publication`).set(auth).send(cmd).expect(201)).body;
+    assert.equal(formal.status,"confirmed");
+    await http.post(`${base}/publication`).set(editorAuth).send({ kind: "lock",requestId: "editor-lock",reason: "冻结",expectedActiveVersionId: formal.id,elementIds: ["action"] }).expect(403);
+    const locked = (await http.post(`${base}/publication`).set(auth).send({ kind: "lock",reason: "冻结",requestId: "lock",expectedActiveVersionId: formal.id,elementIds: ["action"] }).expect(201)).body;
+    assert.equal(locked.elements[0].lockedBy,"owner");
+    assert.equal((await http.post(`${base}/publication`).set(auth).send(cmd).expect(201)).body.id,formal.id);
+    assert.equal((await http.get(base).set(auth).expect(200)).body.version.id,locked.id);
+    assert.equal(calls,1);
+    await http.get(`${base}/quality/${task.id}`).set({ authorization: `Bearer ${await sessions.issue("outsider","w")}` }).expect(404);
+  } finally { await app.close(); }
+});
+
+test("quality worker recovers a committed report after response loss without another model call",async () => {
+  const f = await fixture();
+  const generation = await f.tasks.submitScriptContent(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "generate" });
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) { return scriptResponse(r); } } }).run(f.actor,generation.id);
+  let calls = 0,lost = false;
+  const saveReport = f.contentRepository.saveQualityReport.bind(f.contentRepository);
+  f.contentRepository.saveQualityReport = async (...args) => { const report = await saveReport(...args);if (!lost) { lost = true;throw new ScriptContentError("STORAGE_UNAVAILABLE","commit response lost"); }return report; };
+  const content = new ScriptContentService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,idGenerator: () => "formal",clock: () => new Date("2026-11-02") });
+  const publication = new ScriptPublicationService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,content });
+  const tasks = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: new ScriptQualityTaskContext(f.context,publication),scriptAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },generationPolicy: { isAllowed: async () => true },idGenerator: () => "unused" });
+  const candidate = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+  const task = await tasks.submitScriptQuality(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "quality",expectedActiveVersionId: candidate.id });
+  const executor = new ScriptQualityTaskExecutor({ tasks,publication,fetch: async () => {
+    calls++;return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify({ versionId: candidate.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }) } }] });
+  } });
+  const result = await executor.run(f.actor,task.id);assert.equal(result.reason,"EXECUTION_UNCERTAIN");
+  await assert.rejects(async () => tasks.submitScriptQuality(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "another",expectedActiveVersionId: candidate.id }),{ code: "STATE_CONFLICT" });
+  const recovered = await executor.recover(f.actor,task.id);assert.equal(recovered.state,"succeeded");assert.equal(recovered.result?.candidateVersionId,task.id);assert.equal(calls,1);
 });

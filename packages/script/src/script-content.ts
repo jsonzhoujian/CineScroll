@@ -1,3 +1,4 @@
+import type { PersistedScriptQualityReport, PublicationOperation, QualityBinding } from "./script-publication.ts";
 import { createHash } from "node:crypto";
 import type { Actor, EpisodePlanVersion, ProjectAccessReader } from "./index.ts";
 
@@ -31,6 +32,7 @@ export type ScriptReviewOperation = { requestId: string;fingerprint: string;kind
 export type ScriptRetrySelection = { expectedActiveVersionId: string;scopeKeys: string[] };
 export type ScriptRetrySnapshot = ScriptRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 export type ScriptContentVersion = Readonly<{
+  publicationOperation?: PublicationOperation;qualityReportId?: string;qualityBinding?: QualityBinding;
   retry?: ScriptRetrySnapshot;
   reviewOperation?: ScriptReviewOperation;
   id: string; parentVersionId: string | null; projectId: string; chapterId: string;
@@ -43,6 +45,9 @@ export type ScriptContentVersion = Readonly<{
   failures: Array<Readonly<{ scopeKey: string; originJobId?: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
+  findQualityReport?(actor: Actor,p: string,c: string,id: string): Promise<PersistedScriptQualityReport | null>;
+  saveQualityReport?(actor: Actor,report: PersistedScriptQualityReport): Promise<PersistedScriptQualityReport>;
+  findPublicationOperation?(actor: Actor,p: string,c: string,requestId: string): Promise<ScriptContentVersion | null>;
   findReviewOperation?(actor: Actor,projectId: string,chapterId: string,requestId: string): Promise<ScriptContentVersion | null>;
   findGeneration?(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<ScriptContentVersion | null>;
   findActive(actor: Actor, projectId: string, chapterId: string): Promise<ScriptContentVersion | null>;
@@ -59,6 +64,10 @@ export class ScriptContentError extends Error {
   }
 }
 export class InMemoryScriptContentRepository implements ScriptContentRepository {
+  readonly #reports = new Map<string,PersistedScriptQualityReport>();
+  async findQualityReport(a: Actor,p: string,c: string,id: string) { return structuredClone(this.#reports.get(JSON.stringify([scopeKey(a,p,c),id])) ?? null); }
+  async saveQualityReport(a: Actor,r: PersistedScriptQualityReport) { const key = JSON.stringify([scopeKey(a,r.projectId,r.chapterId),r.id]); const existing = this.#reports.get(key); if (existing) return structuredClone(existing); this.#reports.set(key,structuredClone(r)); return structuredClone(r); }
+  async findPublicationOperation(a: Actor,p: string,c: string,id: string) { return structuredClone([...this.#versions.entries()].find(([key,v]) => key === JSON.stringify([scopeKey(a,p,c),v.id]) && v.createdBy === a.userId && v.publicationOperation?.requestId === id)?.[1] ?? null); }
   readonly #active = new Map<string, ScriptContentVersion>();
   readonly #versions = new Map<string, ScriptContentVersion>();
   readonly #generations = new Map<string, ScriptContentVersion>();
@@ -94,6 +103,8 @@ export class ScriptContentService {
     confirmationGate?: { validate(version: ScriptContentVersion): Promise<boolean> };
   };
   constructor(dependencies: ScriptContentService["dependencies"]) { this.dependencies = dependencies; }
+
+  withPublication(input: { repository: ScriptContentRepository;validate(version: ScriptContentVersion): Promise<boolean> }) { return new ScriptContentService({ ...this.dependencies,repository: input.repository,confirmationGate: input }); }
 
   async getReviewPermissions(actor: Actor,p: string) {
     const access = await this.dependencies.accessReader?.findProjectAccess(actor,p);

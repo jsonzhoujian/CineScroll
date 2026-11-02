@@ -1,3 +1,4 @@
+import type { PersistedScriptQualityReport } from "./script-publication.ts";
 import { ScriptContentError, type ScriptContentRepository, type ScriptContentVersion } from "./script-content.ts";
 import type { Actor } from "./index.ts";
 import type { ModelSettingsClient, ModelSettingsPool } from "./postgres-model-settings.ts";
@@ -6,6 +7,17 @@ import type { ModelSettingsClient, ModelSettingsPool } from "./postgres-model-se
 export class PostgresScriptContentRepository implements ScriptContentRepository {
   private readonly pool: ModelSettingsPool;
   constructor(pool: ModelSettingsPool) { this.pool = pool; }
+  findQualityReport(a: Actor,p: string,c: string,id: string) {
+    return this.transaction(a,async client => { const row = (await client.query("select report_json from script_quality_reports where workspace_id=$1 and project_id=$2 and chapter_id=$3 and id=$4",[a.workspaceId,p,c,id])).rows[0]; return row ? structuredClone(row.report_json) as PersistedScriptQualityReport : null; });
+  }
+  saveQualityReport(a: Actor,r: PersistedScriptQualityReport) {
+    return this.transaction(a,async client => {
+      await client.query("insert into script_quality_reports(workspace_id,project_id,chapter_id,id,candidate_version_id,report_json) values($1,$2,$3,$4,$5,$6::jsonb) on conflict do nothing",[a.workspaceId,r.projectId,r.chapterId,r.id,r.candidateVersionId,JSON.stringify(r)]);
+      return structuredClone((await client.query("select report_json from script_quality_reports where workspace_id=$1 and project_id=$2 and chapter_id=$3 and id=$4",[a.workspaceId,r.projectId,r.chapterId,r.id])).rows[0]!.report_json) as PersistedScriptQualityReport;
+    });
+  }
+  findPublicationOperation(a: Actor,p: string,c: string,id: string) { return this.transaction(a,client => this.publicationResult(client,a,p,c,id)); }
+  private async publicationResult(client: ModelSettingsClient,a: Actor,p: string,c: string,id: string) { return decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and created_by=$4 and version_json->'publicationOperation'->>'requestId'=$5",[a.workspaceId,p,c,a.userId,id])).rows[0]); }
   findActive(actor: Actor, projectId: string, chapterId: string) {
     return this.transaction(actor,async client => decode((await client.query(`select v.version_json from script_content_heads h
       join script_content_versions v using(workspace_id,project_id,chapter_id)
@@ -26,18 +38,23 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
     const version = structuredClone(input);
     return this.transaction(actor,async client => {
       const key = [actor.workspaceId,version.projectId,version.chapterId];
+      const project = (await client.query("select target_duration_seconds,aspect_ratio,narrative_mode from projects where id=$1 and workspace_id=$2 for share",[version.projectId,actor.workspaceId])).rows[0];
       const chapter = (await client.query("select active_source_version_id from chapters where project_id=$1 and id=$2 for share",[version.projectId,version.chapterId])).rows[0];
       await client.query("select set_config('app.story_knowledge_operation',case when can_review_project($1) then 'confirm' else 'candidate' end,true)",[version.projectId]);
       const knowledge = (await client.query("select confirmed_version_id from story_knowledge_heads where workspace_id=$1 and project_id=$2 and chapter_id=$3 for share",key)).rows[0];
-      const plan = (await client.query(`select h.confirmed_version_id,v.source_version_id,v.story_bible_version_id from episode_plan_heads h
+      const plan = (await client.query(`select h.confirmed_version_id,v.source_version_id,v.story_bible_version_id,v.version_json from episode_plan_heads h
         join episode_plan_versions v on v.workspace_id=h.workspace_id and v.project_id=h.project_id and v.chapter_id=h.chapter_id and v.id=h.confirmed_version_id
         where h.workspace_id=$1 and h.project_id=$2 and h.chapter_id=$3 for share of h`,key)).rows[0];
-      if (!chapter || !plan || chapter.active_source_version_id !== version.sourceVersionId || plan.source_version_id !== version.sourceVersionId
+      const parameters = plan?.version_json as Record<string,unknown> | undefined;
+      if (!project || !parameters || parameters.targetDurationSeconds !== project.target_duration_seconds || parameters.aspectRatio !== project.aspect_ratio || parameters.narrativeMode !== project.narrative_mode || !chapter || !plan || chapter.active_source_version_id !== version.sourceVersionId || plan.source_version_id !== version.sourceVersionId
         || plan.confirmed_version_id !== version.planVersionId || knowledge?.confirmed_version_id !== plan.story_bible_version_id) throw new ScriptContentError("CONTEXT_NOT_FOUND","剧本上游已变化");
-      // Only candidate writes; formal confirmation remains a separate workflow.
-      if (version.status !== "candidate" || version.createdBy !== actor.userId || version.parentVersionId !== expected) throw new ScriptContentError("INVALID_GENERATION","候选元数据无效");
+      if (! ["candidate","confirmed"].includes(version.status) || version.createdBy !== actor.userId || version.parentVersionId !== expected) throw new ScriptContentError("INVALID_GENERATION","候选元数据无效");
       await client.query("insert into script_content_heads(workspace_id,project_id,chapter_id) values($1,$2,$3) on conflict do nothing",key);
       const head = (await client.query("select active_version_id from script_content_heads where workspace_id=$1 and project_id=$2 and chapter_id=$3 for update",key)).rows[0];
+      if (version.publicationOperation) {
+        const replay = await this.publicationResult(client,actor,version.projectId,version.chapterId,version.publicationOperation.requestId);
+        if (replay) { if (replay.publicationOperation?.fingerprint !== version.publicationOperation.fingerprint) throw new ScriptContentError("VERSION_CONFLICT","重复正式操作不一致"); return replay; }
+      }
       if (version.reviewOperation) {
         const replay = await this.reviewResult(client,actor,version.projectId,version.chapterId,version.reviewOperation.requestId);
         if (replay) {

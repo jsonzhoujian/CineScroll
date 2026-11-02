@@ -7,12 +7,14 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) {
     return this.#scan(workspaceId,mode,page,"story_knowledge");
   }
+  scanScriptQuality(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"scriptQuality"); }
+  listScriptQuality(w: string,p: string,c: string,page: TaskPageRequest) { return this.#list(w,p,c,page,"scriptQuality"); }
   scanScriptContent(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) { return this.#scan(workspaceId,mode,page,"scriptContent"); }
   listScriptContent(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) { return this.#list(workspaceId,projectId,chapterId,page,"scriptContent"); }
   scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) {
     return this.#scan(workspaceId,mode,page,"episodePlan");
   }
-  #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent") {
+  #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality") {
     validateTaskScan(mode, page);
     return this.#transaction(workspaceId, async client => {
       const eligibility = mode === "run" ? "state='queued'" : "((state='running' and (lease_expires_at is null or lease_expires_at<=clock_timestamp())) or (state='paused' and reason='EXECUTION_UNCERTAIN'))";
@@ -31,7 +33,7 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
-  #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent") {
+  #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality") {
     validateTaskPage(page);
     return this.#transaction(workspaceId, async client => {
       const taskKind = kind !== "story_knowledge" ? `payload->'input'->>'stage'='script' and payload->'input'->>'resultType'='${kind}'` : "payload->'input'->>'stage'='story_knowledge'";

@@ -3,22 +3,7 @@ import test from "node:test";
 import { ScriptQualityEvaluator } from "../src/script-quality.ts";
 import type { ScriptContentVersion, ScriptGenerationContext } from "../src/script-content.ts";
 
-const version: ScriptContentVersion = {
-  id: "script_1", parentVersionId: null, projectId: "p", chapterId: "c", sourceVersionId: "source_1", planVersionId: "plan_1", jobId: "job",
-  status: "candidate", generationStatus: "succeeded", createdBy: "owner", createdAt: "2026-10-01", failures: [],
-  scenes: [{ id: "scene_1", episodeId: "episode_1", ordinal: 1, title: "庭院", environment: "晨光", characters: ["少年"] }],
-  elements: [{ id: "e1", sceneId: "scene_1", elementType: "action", ordinal: 1, text: "少年起身。",
-    provenance: [{ type: "source_fragment", sourceVersionId: "source_1", fragmentId: "f1", transformation: "retained" }] }],
-};
-const context: ScriptGenerationContext = {
-  planVersionId: "plan_1", sourceVersionId: "source_1", fragments: [{ id: "f1", text: "少年起身。" }], approvedAdditionIds: [],
-  confirmedPlan: { id: "plan_1", parentVersionId: null, projectId: "p", chapterId: "c", sourceVersionId: "source_1", status: "confirmed",
-    storyBibleVersionId: "bible_1", targetDurationSeconds: 60, aspectRatio: "9:16", narrativeMode: "narration", createdBy: "owner", createdAt: "2026-10-01",
-    majorAdaptationProposals: [], episodes: [{ id: "episode_1", ordinal: 1, title: "起身", sourceFragmentIds: ["f1"], coreEventFactIds: ["fact_1"] }] },
-  confirmedStoryKnowledge: { versionId: "bible_1", facts: [{ id: "fact_1", statement: "少年起身。" }] },
-};
-const verdict = { versionId: "script_1", events: [{ factId: "fact_1", elementIds: ["e1"], verdict: "covered" }],
-  facts: [{ factId: "fact_1", verdict: "consistent" }], unsupportedCoreFactElementIds: [], episodes: [{ episodeId: "episode_1", estimatedSeconds: 60 }] };
+import { version,context,verdict } from "./script-quality-fixture.ts";
 
 test("质量评估按证据、核心事件、事实一致性和逐集估算时长决定是否放行", async () => {
   let response: unknown = verdict;
@@ -73,4 +58,26 @@ test("十个核心事件覆盖九个达到边界，八个则拒绝", async () =>
   assert.equal(await evaluator.validate(version), true);
   covered = 8;
   assert.equal(await evaluator.validate(version), false);
+});
+
+test("three fixed synthetic genres exercise acceptance, unsupported facts and incomplete assessment",async () => {
+  const cases = [
+    { genre: "都市",text: "记者在会议室公开证据。",response: { ...verdict },expected: true },
+    { genre: "言情",text: "她在车站归还信件。",response: { ...verdict,unsupportedCoreFactElementIds: ["e1"] },expected: false },
+    { genre: "玄幻",text: "弟子在山门交还令牌。",response: { ...verdict,facts: [] },expected: false },
+  ];
+  for (const sample of cases) {
+    const input = { ...version,elements: [{ ...version.elements[0]!,text: sample.text }] };
+    const sampleContext = { ...context,fragments: [{ id: "f1",text: sample.text }],confirmedStoryKnowledge: { versionId: "bible_1",facts: [{ id: "fact_1",statement: sample.text }] } };
+    const evaluator = new ScriptQualityEvaluator({ context: sampleContext,model: { async assess() { return sample.response; } } });
+    assert.equal(await evaluator.validate(input),sample.expected,sample.genre);
+  }
+  // These are contract/gate fixtures, not a measurement of real semantic model accuracy.
+});
+test("uncertain events at 90 percent and just-outside duration estimates block confirmation",async () => {
+  const facts = Array.from({ length: 10 },(_,i) => ({ id: `event_${i}`,statement: `事件 ${i}` }));
+  const input = { ...context,confirmedStoryKnowledge: { versionId: "bible_1",facts },confirmedPlan: { ...context.confirmedPlan!,episodes: [{ ...context.confirmedPlan!.episodes[0]!,coreEventFactIds: facts.map(f => f.id) }] } };
+  const evaluator = new ScriptQualityEvaluator({ context: input,model: { async assess() { return { ...verdict,events: facts.map((f,i) => ({ factId: f.id,elementIds: i < 9 ? ["e1"] : [],verdict: i < 9 ? "covered" : "uncertain" })),facts: facts.map(f => ({ factId: f.id,verdict: "consistent" })) }; } } });
+  assert.equal((await evaluator.evaluate(version)).coverage,0.9);assert.equal(await evaluator.validate(version),false);
+  for (const seconds of [53.999,66.001]) assert.equal(await new ScriptQualityEvaluator({ context,model: { async assess() { return { ...verdict,episodes: [{ episodeId: "episode_1",estimatedSeconds: seconds }] }; } } }).validate(version),false);
 });

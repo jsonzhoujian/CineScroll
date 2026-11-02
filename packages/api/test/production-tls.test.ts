@@ -43,6 +43,10 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     assert.equal(url, "https://api.deepseek.com/chat/completions");
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
+    if (input.version) {
+      const assessment = { versionId: input.version.id,events: [{ factId: "rain",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "rain",verdict: "consistent" }],episodes: [{ episodeId: "e1",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] };
+      return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(assessment) } }] });
+    }
     if (input.stage === "script" && input.input.retry) {
       assert.deepEqual(input.scopeKeys,["dialogue"]); assert.equal("elements" in input.input,false);
       const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",scenes: [],items: [{ scopeKey: "dialogue",status: "succeeded",value: { id: "recovered-dialogue",sceneId: "scene",elementType: "dialogue",ordinal: 2,text: "下雨了",provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
@@ -94,7 +98,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -271,6 +275,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       scriptReviewedId = merged.body.version.id;
       assert.equal((await scriptApp.http.post(`${path}/retries`).set("authorization",bearer).send(retryInput).expect(201)).body.id,retryTaskId);
     } finally { await scriptApp.close(); assert.equal(scriptApp.scriptWorker!.status().state,"stopped"); }
+    let qualityTaskId: string,lockedScriptId: string;
     const scriptRestart = await start(ca,false,false,true);
     try {
       const task = await scriptRestart.http.get(`/script-content-tasks/${scriptTaskId!}`).set("authorization",bearer).expect(200);
@@ -278,7 +283,35 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(view.body.version.id,scriptReviewedId!); assert.notEqual(view.body.version.id,task.body.result.candidateVersionId); assert.equal(modelCalls,4);
       const retried = await scriptRestart.http.get(`/script-content-tasks/${retryTaskId!}`).set("authorization",bearer).expect(200);
       assert.equal(retried.body.result.candidateVersionId,view.body.version.id);
+      const base = `/projects/${projectId}/chapters/${chapterId}/script-content`;
+      const assessment = { configurationVersionId: version!,modelId: "m",requestId: "tls-quality",expectedActiveVersionId: view.body.version.id };
+      qualityTaskId = (await scriptRestart.http.post(`${base}/quality`).set("authorization",bearer).send(assessment).expect(201)).body.id;
+      let quality;
+      for (let i=0;i<100;i++) {
+        quality = await scriptRestart.http.get(`${base}/quality/${qualityTaskId}`).set("authorization",bearer).expect(200);
+        if (["succeeded","failed","paused"].includes(quality.body.task.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(quality!.body.task.state,"succeeded",JSON.stringify(quality!.body));assert.equal(quality!.body.report.passed,true,JSON.stringify(quality!.body));
+      assert.equal(modelCalls,5);
+      const confirm = { kind: "confirm",requestId: "tls-confirm",reason: "核对合成样本",expectedActiveVersionId: view.body.version.id,reportId: qualityTaskId };
+      const formal = await scriptRestart.http.post(`${base}/publication`).set("authorization",bearer).send(confirm).expect(201);
+      const locked = await scriptRestart.http.post(`${base}/publication`).set("authorization",bearer).send({ kind: "lock",requestId: "tls-lock",reason: "锁定样本",expectedActiveVersionId: formal.body.id,elementIds: ["action"] }).expect(201);
+      lockedScriptId = locked.body.id;
+      assert.equal(locked.body.elements[0].lockedBy,userId);
+      assert.equal((await scriptRestart.http.post(`${base}/publication`).set("authorization",bearer).send(confirm).expect(201)).body.id,formal.body.id);
     } finally { await scriptRestart.close(); }
+    await admin.query("alter table script_quality_reports disable trigger script_quality_reports_immutable");
+    try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter table script_quality_reports enable trigger script_quality_reports_immutable"); }
+    const publicationRestart = await start(ca,false,false,true);
+    try {
+      const base = `/projects/${projectId}/chapters/${chapterId}/script-content`;
+      const view = await publicationRestart.http.get(base).set("authorization",bearer).expect(200);
+      assert.equal(view.body.version.id,lockedScriptId!);assert.equal(view.body.version.status,"confirmed");assert.ok(view.body.version.elements[0].lockedAt);
+      assert.equal((await publicationRestart.http.get(`${base}/quality/${qualityTaskId!}`).set("authorization",bearer).expect(200)).body.report.passed,true);
+      assert.equal(modelCalls,5);
+    } finally { await publicationRestart.close(); }
     const second = await start();
     try {
       const read = await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(200);

@@ -1,3 +1,5 @@
+import { ScriptPublicationService } from "@novel-adaptation/script/script-publication";
+import { ScriptQualityTaskContext, ScriptQualityTaskExecutor, ScriptQualityTaskDispatcher } from "./script-quality-tasks.ts";
 import { ScriptContentContext } from "./script-content-context.ts";
 import { ScriptContentTaskExecutor } from "./script-content-task-executor.ts";
 import { ScriptContentTaskDispatcher } from "./script-content-task-dispatcher.ts";
@@ -201,6 +203,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   let modelPool: Pool | undefined;
   let worker: StoryKnowledgeTaskWorker | undefined;
   let scriptWorker: StoryKnowledgeTaskWorker | undefined;
+  let qualityWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
   let apiModule: DynamicModule = projectModule;
   if (modelKey && config.modelSettings?.enabled === true) {
@@ -309,12 +312,17 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       const tasks = new ModelTaskService({ settings,repository,contextReader: context,
         scriptAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
         generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `job_${randomUUID()}` });
+      const publication = new ScriptPublicationService({ repository: contentRepository,contextReader: context,accessReader: projects,content: service });
+      const qualityTasks = new ModelTaskService({ settings,repository,contextReader: new ScriptQualityTaskContext(context,publication),scriptAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `quality_${randomUUID()}` });
+      const qualityExecutor = new ScriptQualityTaskExecutor({ tasks: qualityTasks,publication,...(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
+      qualityWorker = new StoryKnowledgeTaskWorker({ dispatcher: new ScriptQualityTaskDispatcher(repository,qualityExecutor),enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
+      apiModule.providers!.push({ provide: "SCRIPT_QUALITY_WORKER_LIFECYCLE",useValue: { onApplicationBootstrap() { void qualityWorker!.start().catch(() => {}); },onApplicationShutdown() { return qualityWorker!.stop(); } } });
       const executor = new ScriptContentTaskExecutor({ tasks,context,repository: contentRepository,service,
         model: new DeepSeekScriptContentModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       scriptWorker = new StoryKnowledgeTaskWorker({ dispatcher: new ScriptContentTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
       apiModule.imports!.push(ScriptContentTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
-        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,review: service }),ScriptContentWorkerModule.forWorker(scriptWorker));
+        ScriptContentApiModule.register({ sessionVerifier: sessions,repository: contentRepository,context,review: service,publication,qualityTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),ScriptContentWorkerModule.forWorker(scriptWorker));
       apiModule.providers!.push({ provide: "SCRIPT_CONTENT_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertScriptContentDatabase(restrictedPool,taskConfig.workspaceIds),
       } });
@@ -324,7 +332,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop()]); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop()]); }
       finally { await Promise.all([pool.end(), modelPool?.end()]); }
     })(),
   };

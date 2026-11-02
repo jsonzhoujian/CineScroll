@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: ready
+status: done
 
 **Blocked by:** [02](./02-review-edit-suggestions.md), [03](./03-retry-failed-scopes.md)
 
@@ -10,11 +10,11 @@ status: ready
 
 ## Acceptance criteria
 
-- [ ] 装配已有质量评估规则和受控语义适配，报告持久化并绑定上游、候选及规则版本；模型失败、未知或不完整报告阻止确认。
-- [ ] 核心事件覆盖率至少 90%，无未经批准的核心事实变更，各集估算时长偏差不超过 10%；失败项和待处理建议阻止确认。
-- [ ] 确认使用事务与版本检查，记录不可变审计；旧报告、上游变化及并发变更不能确认当前版本。
-- [ ] 编辑成员不能确认或锁定；锁定保持正式版本及证据可读，重复操作幂等。
-- [ ] 三类合成固定样本、阈值边界和浏览器闭环通过；合成测试不宣称真实模型语义准确率已验证。
+- [x] 装配已有质量评估规则和受控语义适配，报告持久化并绑定上游、候选及规则版本；模型失败、未知或不完整报告阻止确认。
+- [x] 核心事件覆盖率至少 90%，无未经批准的核心事实变更，各集估算时长偏差不超过 10%；失败项和待处理建议阻止确认。
+- [x] 确认使用事务与版本检查，记录不可变审计；旧报告、上游变化及并发变更不能确认当前版本。
+- [x] 编辑成员不能确认或锁定；锁定保持正式版本及证据可读，重复操作幂等。
+- [x] 三类合成固定样本、阈值边界和浏览器闭环通过；合成测试不宣称真实模型语义准确率已验证。
 
 ## Context and boundaries
 
@@ -23,3 +23,5 @@ T04/T05 已按任务记录完成。拆集方案已有持久化、审核、后台
 权威输入为产品规格第 3、7～9、12 节、领域词汇、canonical 契约及 T06 原验收条件。实现须先检查这些输入及现有服务，复用已有边界。用户于本轮确认编辑仅提交建议；负责人和审核人可直接编辑候选；正式修改派生候选重新确认，锁定先解锁。
 
 Reuse existing domain services and canonical contracts. Include persistence, authorization, API, UI and relevant tests in this vertical slice. Follow the approved product specification, domain glossary, architecture decisions and original T06 acceptance criteria. No production rollout or real charging is authorized by ticket publication.
+
+2026-11-02 完成，见[质量确认交付记录](../../../../docs/plans/2026-11-02-script-publication-delivery.md)。392 项 Node 测试通过、22 项数据库条件跳过；独立 PostgreSQL/TLS 与 50 项 Chromium 回归通过，双轴复审无剩余阻断。迁移只在临时隔离实例应用，未部署或启用真实模型/计费。

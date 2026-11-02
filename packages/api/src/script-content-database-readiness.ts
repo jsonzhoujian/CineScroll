@@ -6,14 +6,20 @@ export async function assertScriptContentDatabase(pool: Pool,workspaceIds: reado
   const client = await pool.connect().catch(() => { throw new Error("SCRIPT_CONTENT_DATABASE_NOT_READY"); });
   try {
     await client.query("begin read only"); await client.query("set local statement_timeout='5s'");
-    const result = await client.query(`select count(*)=3 and bool_and(c.relrowsecurity and c.relforcerowsecurity
+    const result = await client.query(`select count(*)=4 and bool_and(c.relrowsecurity and c.relforcerowsecurity
       and not pg_has_role(session_user,c.relowner,'MEMBER')
       and has_table_privilege(current_user,c.oid,'SELECT') and has_table_privilege(current_user,c.oid,'INSERT')
       and not has_table_privilege(current_user,c.oid,'DELETE')
       and not has_table_privilege(current_user,c.oid,'UPDATE')) ready
-      from pg_class c where c.oid in (to_regclass('public.script_content_versions'),to_regclass('public.script_content_heads'),to_regclass('public.script_content_generations'))`);
+      from pg_class c where c.oid in (to_regclass('public.script_content_versions'),to_regclass('public.script_content_heads'),to_regclass('public.script_content_generations'),to_regclass('public.script_quality_reports'))`);
     if (!result.rows[0]?.ready) throw new Error();
-    const guards = await client.query(`select exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_script_retry_active_idx') and indisvalid and indisunique)
+    const guards = await client.query(`select exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_script_quality_active_idx') and indisvalid and indisunique)
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_script_quality_scan_idx') and indisvalid)
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.script_publication_request_idx') and indisvalid and indisunique)
+      and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_publication_operation_valid' and convalidated)
+      and exists(select 1 from pg_trigger where tgrelid='public.script_quality_reports'::regclass and tgname='script_quality_reports_immutable' and tgenabled in ('O','A') and tgfoid='public.reject_immutable_change()'::regprocedure)
+      and exists(select 1 from pg_trigger where tgrelid='public.script_content_versions'::regclass and tgname='script_publication_guard' and tgenabled in ('O','A') and tgfoid='public.guard_script_publication()'::regprocedure)
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_script_retry_active_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_content_retry_valid' and convalidated)
       and exists(select 1 from pg_index where indexrelid=to_regclass('public.script_content_review_request_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_content_review_operation_valid' and convalidated)

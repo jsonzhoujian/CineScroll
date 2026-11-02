@@ -2,9 +2,9 @@
 
 Parent: T06
 
-status: blocked
+status: ready
 
-**Blocked by:** [04](./04-quality-confirm-lock.md)
+**Blocked by:** [04](./04-quality-confirm-lock.md) — completed
 
 **What to build:** 成员针对正式剧本提交建议，负责人或审核人处理后生成修订候选；旧正式版本继续可读，新候选重新评估确认后替代正式指针。
 
