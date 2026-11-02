@@ -134,7 +134,15 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     await assert.rejects(() => content.save(actor,{ ...lockedScript,id: `rewrite-${suffix}`,parentVersionId: lockedScript.id,publicationOperation: { ...lockedScript.publicationOperation!,requestId: "forged-rewrite" },elements: [] },lockedScript.id),{ code: "FORBIDDEN" });
     const revision = new ScriptRevisionService({ repository: rebuilt,contextReader,accessReader,idGenerator: () => `revision-${suffix}-${++sequence}`,clock: () => new Date("2026-11-02") });
     const unlocked = await revision.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock",reason: "修订",expectedActiveVersionId: lockedScript.id,elementId: "action" });
-    const suggestedFormal = await revision.execute({ ...actor,userId: "editor" },projectId,chapterId,{ kind: "suggest",requestId: "formal-suggestion",reason: "节奏",expectedActiveVersionId: unlocked.id,elementId: "action",text: "雨落庭院" });
+    const relocked = await publication.execute(actor,projectId,chapterId,{ kind: "lock",requestId: "relock",reason: "重新锁定",expectedActiveVersionId: unlocked.id,elementIds: ["action"] });
+    assert.ok(relocked.elements.find(e => e.id === "action")?.lockedAt);
+    const unlockedAgain = await revision.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock-again",reason: "继续修订",expectedActiveVersionId: relocked.id,elementId: "action" });
+    const proposedForRejection = await revision.execute(actor,projectId,chapterId,{ kind: "suggest",requestId: "rejection-suggestion",reason: "待核对",expectedActiveVersionId: unlockedAgain.id,elementId: "action",text: "不采用" });
+    const lockedWithSuggestion = await publication.execute(actor,projectId,chapterId,{ kind: "lock",requestId: "lock-pending",reason: "保留原内容",expectedActiveVersionId: proposedForRejection.id,elementIds: ["action"] });
+    const rejected = await revision.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "reject-locked",reason: "不采用建议",expectedActiveVersionId: lockedWithSuggestion.id,suggestionId: proposedForRejection.suggestions!.find(s => s.status === "pending")!.id,decision: "rejected" });
+    assert.deepEqual(rejected.elements,lockedWithSuggestion.elements);
+    const available = await revision.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock-final",reason: "修订",expectedActiveVersionId: rejected.id,elementId: "action" });
+    const suggestedFormal = await revision.execute({ ...actor,userId: "editor" },projectId,chapterId,{ kind: "suggest",requestId: "formal-suggestion",reason: "节奏",expectedActiveVersionId: available.id,elementId: "action",text: "雨落庭院" });
     const pending = suggestedFormal.suggestions!.find(s => s.status === "pending")!;
     const accept = { kind: "decide" as const,requestId: "revision-accept",reason: "符合原文",expectedActiveVersionId: suggestedFormal.id,suggestionId: pending.id,decision: "accepted" as const };
     const revisionCandidate = await revision.execute(actor,projectId,chapterId,accept);

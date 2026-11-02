@@ -301,6 +301,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(locked.body.elements[0].lockedBy,userId);
       assert.equal((await scriptRestart.http.post(`${base}/publication`).set("authorization",bearer).send(confirm).expect(201)).body.id,formal.body.id);
     } finally { await scriptRestart.close(); }
+    await admin.query("alter table script_content_versions disable trigger script_impacts_on_confirmation");
+    try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter table script_content_versions enable trigger script_impacts_on_confirmation"); }
     await admin.query("alter table script_quality_reports disable trigger script_quality_reports_immutable");
     try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
     finally { await admin.query("alter table script_quality_reports enable trigger script_quality_reports_immutable"); }

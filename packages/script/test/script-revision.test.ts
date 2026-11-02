@@ -21,3 +21,14 @@ test("explicit unlock precedes formal suggestions and accepted revision preserve
   assert.equal((await service.execute(actor,"p","c",command)).id,candidate.id);
   await assert.rejects(() => service.execute(actor,"p","c",{ ...command,reason: "其他" }),{ code: "VERSION_CONFLICT" });
 });
+
+import { ScriptContentService } from "../src/script-content.ts";
+test("candidate editing and accepting suggestions cannot bypass inherited element locks",async () => {
+  const actor = { workspaceId: "w",userId: "owner" },repository = new InMemoryScriptContentRepository();
+  const candidate = { ...version,elements: version.elements.map(e => ({ ...e,lockedAt: "2026-11-02",lockedBy: "owner" })),suggestions: [{ id: "sug",elementId: "e1",baseText: version.elements[0]!.text,text: "替换",reason: "节奏",submittedBy: "editor",submittedAt: "2026-11-02",status: "pending" as const }] };
+  await repository.save(actor,candidate,null);
+  const content = new ScriptContentService({ repository,contextReader: { findGenerationContext: async () => context },accessReader: { findProjectAccess: async () => ({ role: "owner" }) },idGenerator: () => "next",clock: () => new Date("2026-11-02") });
+  await assert.rejects(() => content.editElement(actor,"p","c",{ expectedActiveVersionId: candidate.id,elementId: "e1",text: "覆盖",reason: "修改" }),{ code: "INVALID_STATE" });
+  await assert.rejects(() => content.decideSuggestion(actor,"p","c",{ expectedActiveVersionId: candidate.id,suggestionId: "sug",decision: "accepted" }),{ code: "INVALID_STATE" });
+  assert.deepEqual(await repository.findActive(actor,"p","c"),candidate);
+});
