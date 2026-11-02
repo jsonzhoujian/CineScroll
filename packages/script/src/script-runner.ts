@@ -28,7 +28,7 @@ export class ScriptRunner {
     }
     const context = await this.#options.contextReader.findGenerationContext(actor, input.projectId, input.chapterId);
     if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND", "项目不存在或拆集方案尚未确认");
-    if (!context.confirmedPlan || context.confirmedPlan.status !== "confirmed" || context.confirmedPlan.id !== context.planVersionId) {
+    if (!context.confirmedPlan || context.confirmedPlan.status !== "confirmed" || context.confirmedPlan.id !== context.planVersionId || context.confirmedPlan.majorAdaptationProposals.some(p => !p.decision)) {
       throw new ScriptModelError("INVALID_REQUEST", "缺少已确认拆集方案内容");
     }
     if (!context.confirmedStoryKnowledge || context.confirmedStoryKnowledge.versionId !== context.confirmedPlan.storyBibleVersionId) {
