@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: ready
+status: in_progress
 
 **Blocked by:** [05](./05-revise-confirmed-script.md) — completed
 
