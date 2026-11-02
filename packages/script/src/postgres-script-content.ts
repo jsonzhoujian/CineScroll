@@ -18,6 +18,12 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
   }
   findPublicationOperation(a: Actor,p: string,c: string,id: string) { return this.transaction(a,client => this.publicationResult(client,a,p,c,id)); }
   private async publicationResult(client: ModelSettingsClient,a: Actor,p: string,c: string,id: string) { return decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and created_by=$4 and version_json->'publicationOperation'->>'requestId'=$5",[a.workspaceId,p,c,a.userId,id])).rows[0]); }
+  findRevisionOperation(actor: Actor,p: string,c: string,id: string) {
+    return this.transaction(actor,client => this.revisionResult(client,actor,p,c,id));
+  }
+  private async revisionResult(client: ModelSettingsClient,a: Actor,p: string,c: string,id: string) {
+    return decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and created_by=$4 and version_json->'revisionOperation'->>'requestId'=$5",[a.workspaceId,p,c,a.userId,id])).rows[0]);
+  }
   findConfirmed(actor: Actor,p: string,c: string) {
     return this.transaction(actor,async client => decode((await client.query(`select v.version_json from script_content_heads h join script_content_versions v using(workspace_id,project_id,chapter_id) where h.workspace_id=$1 and h.project_id=$2 and h.chapter_id=$3 and v.id=h.confirmed_version_id`,[actor.workspaceId,p,c])).rows[0]));
   }
@@ -57,6 +63,10 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
       if (! ["candidate","confirmed"].includes(version.status) || version.createdBy !== actor.userId || version.parentVersionId !== expected) throw new ScriptContentError("INVALID_GENERATION","候选元数据无效");
       await client.query("insert into script_content_heads(workspace_id,project_id,chapter_id) values($1,$2,$3) on conflict do nothing",key);
       const head = (await client.query("select active_version_id from script_content_heads where workspace_id=$1 and project_id=$2 and chapter_id=$3 for update",key)).rows[0];
+      if (version.revisionOperation) {
+        const replay = await this.revisionResult(client,actor,version.projectId,version.chapterId,version.revisionOperation.requestId);
+        if (replay) { if (replay.revisionOperation?.fingerprint !== version.revisionOperation.fingerprint) throw new ScriptContentError("VERSION_CONFLICT","修订请求不一致");return replay; }
+      }
       if (version.publicationOperation) {
         const replay = await this.publicationResult(client,actor,version.projectId,version.chapterId,version.publicationOperation.requestId);
         if (replay) { if (replay.publicationOperation?.fingerprint !== version.publicationOperation.fingerprint) throw new ScriptContentError("VERSION_CONFLICT","重复正式操作不一致"); return replay; }
