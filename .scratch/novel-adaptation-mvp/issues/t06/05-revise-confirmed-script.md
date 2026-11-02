@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: in_progress
+status: done
 
 **Blocked by:** [04](./04-quality-confirm-lock.md) — completed
 
@@ -10,11 +10,11 @@ status: in_progress
 
 ## Acceptance criteria
 
-- [ ] 已锁定目标必须先明确解锁；直接覆盖正式快照、跨版本建议误用被拒绝。
-- [ ] 建议获批派生候选且保留正式来源、建议及操作记录；拒绝建议仅记录决定。
-- [ ] 新候选未确认前不成为下游生成依据；重新确认复用 04 门禁。
-- [ ] 返回可消费的变更与受影响项记录；已有下游标记受影响且不自动重做。T08 负责跨阶段完整处置界面与统一影响分析，不将其反向设为此票阻塞。
-- [ ] 历史读取、并发修订、确认指针与受影响范围用例通过。
+- [x] 已锁定目标必须先明确解锁；直接覆盖正式快照、跨版本建议误用被拒绝。
+- [x] 建议获批派生候选且保留正式来源、建议及操作记录；拒绝建议仅记录决定。
+- [x] 新候选未确认前不成为下游生成依据；重新确认复用 04 门禁。
+- [x] 返回可消费的变更与受影响项记录；已有下游标记受影响且不自动重做。T08 负责跨阶段完整处置界面与统一影响分析，不将其反向设为此票阻塞。
+- [x] 历史读取、并发修订、确认指针与受影响范围用例通过。
 
 ## Context and boundaries
 
@@ -23,3 +23,5 @@ T04/T05 已按任务记录完成。拆集方案已有持久化、审核、后台
 权威输入为产品规格第 3、7～9、12 节、领域词汇、canonical 契约及 T06 原验收条件。实现须先检查这些输入及现有服务，复用已有边界。用户于本轮确认编辑仅提交建议；负责人和审核人可直接编辑候选；正式修改派生候选重新确认，锁定先解锁。
 
 Reuse existing domain services and canonical contracts. Include persistence, authorization, API, UI and relevant tests in this vertical slice. Follow the approved product specification, domain glossary, architecture decisions and original T06 acceptance criteria. No production rollout or real charging is authorized by ticket publication.
+
+完成记录：[正式修订实施与验收](../../../../docs/plans/2026-11-02-script-revision-plan.md)，接口及依赖登记边界见[修订契约](../../../../docs/contracts/SCRIPT_REVISION.md)。T06父项继续由06验收，T07写入器须登记实际下游依赖。

@@ -28,9 +28,9 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 | T06-02 | [候选编辑与修改建议](./t06/02-review-edit-suggestions.md) | done | T06-01 completed |
 | T06-03 | [失败范围重试](./t06/03-retry-failed-scopes.md) | done | T06-01 completed |
 | T06-04 | [质量报告、确认与锁定](./t06/04-quality-confirm-lock.md) | done | T06-02, T06-03 completed |
-| T06-05 | [正式剧本修订与影响范围](./t06/05-revise-confirmed-script.md) | in_progress | T06-04 completed |
-| T06-06 | [闭环验收与 T07 交接](./t06/06-acceptance-handoff.md) | blocked | T06-05 |
+| T06-05 | [正式剧本修订与影响范围](./t06/05-revise-confirmed-script.md) | done | T06-04 completed |
+| T06-06 | [闭环验收与 T07 交接](./t06/06-acceptance-handoff.md) | ready | T06-05 completed |
 
-T06-01 已完成，见[候选生成记录](../../../docs/plans/2026-10-29-script-candidate-delivery.md)；T06-02 已完成，见[候选审核记录](../../../docs/plans/2026-10-29-script-review-delivery.md)；T06-03 已完成，见[局部重试记录](../../../docs/plans/2026-10-30-script-retry-delivery.md)。T06-04 已完成，见[质量确认交付记录](../../../docs/plans/2026-11-02-script-publication-delivery.md)。当前可领取 T06-05，T06 父项仍进行中。
+T06-01 已完成，见[候选生成记录](../../../docs/plans/2026-10-29-script-candidate-delivery.md)；T06-02 已完成，见[候选审核记录](../../../docs/plans/2026-10-29-script-review-delivery.md)；T06-03 已完成，见[局部重试记录](../../../docs/plans/2026-10-30-script-retry-delivery.md)。T06-04 已完成，见[质量确认交付记录](../../../docs/plans/2026-11-02-script-publication-delivery.md)。T06-05 已完成[正式修订验收](../../../docs/plans/2026-11-02-script-revision-plan.md)。当前可领取 T06-06，T06 父项仍进行中。
 
 T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁见[独立状态页](./T09-infrastructure-status.md)。

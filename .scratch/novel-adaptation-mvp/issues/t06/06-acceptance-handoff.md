@@ -2,9 +2,9 @@
 
 Parent: T06
 
-status: blocked
+status: ready
 
-**Blocked by:** [05](./05-revise-confirmed-script.md)
+**Blocked by:** [05](./05-revise-confirmed-script.md) — completed
 
 **What to build:** 以固定玄幻、都市、悬疑夹具，从确认拆集到正式剧本追溯完成可重复演示，核对 T06 全部原始验收条件。
 

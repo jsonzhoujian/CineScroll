@@ -54,3 +54,5 @@ uvx check-jsonschema --schemafile docs/contracts/json/ai/storyboard.schema.json 
 - AI 编排必须支持条目级部分成功、失败范围重试和幂等 `jobId + scopeKey`。
 
 - [剧本质量报告、正式确认与锁定](./SCRIPT_PUBLICATION.md)：精确报告绑定、后台评估、确认事务、幂等审计与浏览器恢复。
+
+- [正式剧本修订与影响记录](./SCRIPT_REVISION.md)：独立正式指针、不可变修订、重新确认及已登记依赖影响边界。

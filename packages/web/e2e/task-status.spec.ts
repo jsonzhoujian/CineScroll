@@ -566,6 +566,7 @@ for (const mode of ["success","editor","failed","stale","unknown-submit","unknow
     if (mode === "unknown-submit" && qualityPosts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });return r.fulfill({ headers,json: task });
   });
   await page.route(`${base}/quality/quality-task`,r => { if (mode === "stale") version = { ...version,id: "newer-script" };return r.fulfill({ headers,json: { task: { ...task,state: "succeeded" },report } }); });
+  await page.route(`${base}/versions/*/impacts`,r => r.fulfill({ headers,json: { versionId: version.id,impacts: [{ confirmed_version_id: version.id,source_element_id: "action",target_stage: "storyboard",target_item_id: "shot-1",status: "unreviewed" }] } }));
   await page.route(`${base}/publication`,r => {
     if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
     publishPosts++;const input = r.request().postDataJSON();expect(input.reason).toBe("已核对质量与原文");
@@ -589,7 +590,7 @@ for (const mode of ["success","editor","failed","stale","unknown-submit","unknow
   if (mode === "unknown-confirm") { expect(decodeURIComponent(page.url())).not.toContain("已核对质量与原文");await reloadReview();await quality.getByRole("button",{ name: "核对正式原操作" }).click(); }
   await expect(quality.getByText("剧本状态：正式",{ exact: true })).toBeVisible();await expect(panel.getByRole("button",{ name: "保存候选修改" })).toHaveCount(0);
   await panel.getByRole("button",{ name: "雨打庭院",exact: true }).click();await quality.getByLabel("正式操作理由").fill("已核对质量与原文");await quality.getByRole("button",{ name: "锁定当前元素" }).click();
-  await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await reloadReview();await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true }).click();await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
+  await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "读取修订影响范围" }).click();await expect(panel.getByLabel("修订受影响项").getByText(/shot-1/)).toBeVisible();await reloadReview();await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true }).click();await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
   if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 });await expect(quality.getByRole("button",{ name: "锁定当前元素" })).toBeHidden(); }
   expect(qualityPosts).toBe(mode === "unknown-submit" ? 2 : 1);expect(publishPosts).toBe(mode === "unknown-confirm" ? 3 : 2);
 });
