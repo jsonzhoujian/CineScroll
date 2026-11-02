@@ -18,7 +18,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -119,12 +119,16 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     await admin.query("update projects set target_duration_seconds=60 where id=$1",[projectId]);
     const confirmedScript = await publication.execute(actor,projectId,chapterId,confirmation);
     assert.equal(confirmedScript.status,"confirmed");
+    assert.deepEqual(await rebuilt.findConfirmed(actor,projectId,chapterId),confirmedScript);
+    assert.deepEqual(await rebuilt.findVersion(actor,projectId,chapterId,ready.id),ready);
+    assert.equal(await rebuilt.findVersion({ ...actor,workspaceId: "other" },projectId,chapterId,ready.id),null);
     const lockCommand = { kind: "lock" as const,reason: "冻结审核结果",requestId: "formal-lock",expectedActiveVersionId: confirmedScript.id,elementIds: ["action"] };
     const lockedScript = await publication.execute(actor,projectId,chapterId,lockCommand);
     assert.equal(lockedScript.elements.find(e => e.id === "action")?.lockedBy,actor.userId);
     assert.equal((await publication.execute(actor,projectId,chapterId,confirmation)).id,confirmedScript.id);
     assert.equal((await publication.execute(actor,projectId,chapterId,lockCommand)).id,lockedScript.id);
     assert.deepEqual(await new PostgresScriptContentRepository(app).findActive(actor,projectId,chapterId),lockedScript);
+    assert.deepEqual(await new PostgresScriptContentRepository(app).findConfirmed(actor,projectId,chapterId),lockedScript);
     await assert.rejects(() => content.save(actor,{ ...lockedScript,id: `rewrite-${suffix}`,parentVersionId: lockedScript.id,publicationOperation: { ...lockedScript.publicationOperation!,requestId: "forged-rewrite" },elements: [] },lockedScript.id),{ code: "FORBIDDEN" });
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
     const head = await content.findActive(actor,projectId,chapterId);

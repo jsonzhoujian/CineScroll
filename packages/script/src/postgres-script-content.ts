@@ -18,6 +18,12 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
   }
   findPublicationOperation(a: Actor,p: string,c: string,id: string) { return this.transaction(a,client => this.publicationResult(client,a,p,c,id)); }
   private async publicationResult(client: ModelSettingsClient,a: Actor,p: string,c: string,id: string) { return decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and created_by=$4 and version_json->'publicationOperation'->>'requestId'=$5",[a.workspaceId,p,c,a.userId,id])).rows[0]); }
+  findConfirmed(actor: Actor,p: string,c: string) {
+    return this.transaction(actor,async client => decode((await client.query(`select v.version_json from script_content_heads h join script_content_versions v using(workspace_id,project_id,chapter_id) where h.workspace_id=$1 and h.project_id=$2 and h.chapter_id=$3 and v.id=h.confirmed_version_id`,[actor.workspaceId,p,c])).rows[0]));
+  }
+  findVersion(actor: Actor,p: string,c: string,id: string) {
+    return this.transaction(actor,async client => decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and id=$4",[actor.workspaceId,p,c,id])).rows[0]));
+  }
   findActive(actor: Actor, projectId: string, chapterId: string) {
     return this.transaction(actor,async client => decode((await client.query(`select v.version_json from script_content_heads h
       join script_content_versions v using(workspace_id,project_id,chapter_id)
