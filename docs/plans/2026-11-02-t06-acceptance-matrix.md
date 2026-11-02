@@ -6,9 +6,9 @@
 | --- | --- | --- |
 | 1/3/5分钟、拆集原文范围与核心事件、明确确认 | packages/script/test/episode-plan-runner.test.ts；packages/api/test/episode-plan-task-executor.test.ts；packages/web/e2e/task-status.spec.ts | 既有拆集用例；仍须核对三个时长的完整矩阵与三类样本的拆集起点 |
 | 重大改编逐项批准才进入正式内容 | packages/script/test/script-runner.test.ts；拆集审核API/浏览器回归 | 存在门禁测试；三类样本尚无重大改编正反分支 |
-| 场次含环境、人物、动作、对白、旁白和声音 | packages/script/test/script-content.test.ts；docs/contracts/json/ai | 领域类型/校验覆盖；当前三类闭环样本只生成动作和环境，不应宣称六类已闭环 |
+| 场次含环境、人物、动作、对白、旁白和声音 | packages/script/test/script-content.test.ts；docs/contracts/json/ai | 领域类型/校验覆盖；三类闭环样本现含环境、人物、动作、对白、旁白、声音，检查元素类型及对白speaker；固定模拟不证明真实生成质量 |
 | 文学环境、心理转可视动作，保留转换类型 | packages/script/test/t06-acceptance.test.ts | 固定输入/模拟输出包含 actionized、visualized；真实模型语义正确性未测量 |
-| 每条对白/动作对应原文或获批新增 | packages/script/test/t06-acceptance.test.ts；script-content.test.ts；script-runner.test.ts | 三类样本逐元素检查来源；还需加入对白和获批新增的完整演示 |
+| 每条对白/动作对应原文或获批新增 | packages/script/test/t06-acceptance.test.ts；script-content.test.ts；script-runner.test.ts | 三类样本逐元素检查来源；对白已串入；获批新增完整演示仍需补齐 |
 | 追溯/审核切换不丢章节、场次、片段、确认和建议 | packages/web/e2e/task-status.spec.ts 的“剧本候选编辑和建议权限及模式恢复” | 既有模式与刷新恢复；三模式精确游标矩阵尚待核对，未生成的分镜不能虚构可操作数据 |
 | 核心事件覆盖和禁止核心事实变更，固定样本回归 | packages/script/test/script-quality.test.ts；t06-acceptance.test.ts | 90%/时长阈值、冲突/未知/不完整门禁已有回归；语义 verdict 为模拟，不证明模型准确率 |
 | 部分失败重试、成功保留、建议/锁定/修订/重新确认 | packages/script/test/t06-acceptance.test.ts；postgres-script-content.test.ts；task-status.spec.ts | 三类公开服务样本已串联，隔离实库及浏览器另有分层证据；不冒充同一次真实模型端到端 |
