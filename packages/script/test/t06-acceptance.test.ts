@@ -80,3 +80,23 @@ for (const outcome of ["approved","rejected"] as const) test(`decided major adap
   } } }).run(actor,{ projectId: "p",chapterId: "c",jobId: "generation",expectedActiveVersionId: null,generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "narration" } });
   assert.equal(calls,1);assert.equal(result.generationStatus,"succeeded");assert.equal(result.planVersionId,context.confirmedPlan.id);
 });
+
+for (const approved of [false,true]) test(`adaptation additions require independent approval: ${approved}`,async () => {
+  const actor = { userId: "owner",workspaceId: "w" },repository = new InMemoryScriptContentRepository();let seq = 0;
+  const context = { ...template,approvedAdditionIds: approved ? ["addition-1"] : [] };
+  const contextReader = { findGenerationContext: async () => context },accessReader = { findProjectAccess: async () => ({ role: "owner" as const }) };
+  const content = new ScriptContentService({ repository,contextReader,accessReader,idGenerator: () => `addition-v${++seq}`,clock: () => new Date("2026-11-02") });
+  const publication = new ScriptPublicationService({ repository,contextReader,accessReader,content });
+  const candidate = await new ScriptRunner({ contextReader,service: content,model: { async generate(request) {
+    assert.deepEqual(request.input.approvedAdditionIds,approved ? ["addition-1"] : []);
+    return { contractVersion: "0.1.0",jobId: request.jobId,stage: "script",projectId: "p",chapterId: "c",sourceVersionId: "source_1",upstreamConfirmedVersionIds: ["plan_1","bible_1"],status: "succeeded",scenes: [{ id: "scene_1",episodeId: "episode_1",ordinal: 1,title: "起身",environment: "庭院",characters: ["少年"] }],items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene_1",elementType: "action",ordinal: 1,text: "少年起身。",provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "retained" }] } },{ scopeKey: "sound",status: "succeeded",value: { id: "sound",sceneId: "scene_1",elementType: "sound",ordinal: 2,text: "远处钟响。",provenance: [{ type: "approved_addition",additionId: "addition-1" }] } }] };
+  } } }).run(actor,{ projectId: "p",chapterId: "c",jobId: "addition-generation",expectedActiveVersionId: null,generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "narration" } });
+  assert.equal(candidate.generationStatus,approved ? "succeeded" : "partially_succeeded");
+  assert.equal(candidate.elements.some(e => e.id === "sound"),approved);
+  const report = await publication.assess(actor,"p","c",{ jobId: "addition-quality",binding: qualityBinding(candidate,context),model: { async assess() { return { versionId: candidate.id,events: [{ factId: "fact_1",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "fact_1",verdict: "consistent" }],episodes: [{ episodeId: "episode_1",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
+  const command = { kind: "confirm" as const,requestId: "addition-confirm",expectedActiveVersionId: candidate.id,reason: "核对独立批准",reportId: report.id };
+  if (!approved) { assert.equal(report.passed,false);await assert.rejects(() => publication.execute(actor,"p","c",command),{ code: "INVALID_CONFIRMATION" });return; }
+  await publication.execute(actor,"p","c",command);
+  const handoff = await new ConfirmedScriptHandoff(repository,contextReader).read(actor,"p","c");
+  assert.deepEqual(handoff.version.elements.find(e => e.id === "sound")?.provenance,[{ type: "approved_addition",additionId: "addition-1" }]);
+});
