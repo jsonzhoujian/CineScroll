@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Actor,ProjectAccessReader } from "./index.ts";
 import { ScriptContentError,type ScriptContentRepository,type ScriptGenerationContextReader,type ScriptContentVersion } from "./script-content.ts";
 export type ScriptRevisionCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & ({ kind: "suggest";elementId: string;text: string } | { kind: "unlock";elementId: string } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" });
-export type ScriptRevisionOperation = { requestId: string;fingerprint: string;kind: ScriptRevisionCommand["kind"];reason: string };
+export type ScriptRevisionOperation = { requestId: string;fingerprint: string;kind: ScriptRevisionCommand["kind"];targetId: string;reason: string };
 /** Formal revision commands always derive immutable successors and preserve the formal source. */
 export class ScriptRevisionService {
   private readonly options: { repository: ScriptContentRepository;contextReader: ScriptGenerationContextReader;accessReader: ProjectAccessReader;idGenerator(): string;clock(): Date };
@@ -17,7 +17,7 @@ export class ScriptRevisionService {
     const context = await this.options.contextReader.findGenerationContext(actor,p,c);
     if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND","上游已变化");
     const normalized = input.kind === "suggest" ? [input.kind,input.expectedActiveVersionId,input.reason.trim(),input.elementId,input.text.trim()] : input.kind === "unlock" ? [input.kind,input.expectedActiveVersionId,input.reason.trim(),input.elementId] : [input.kind,input.expectedActiveVersionId,input.reason.trim(),input.suggestionId,input.decision];
-    const operation: ScriptRevisionOperation = { requestId: input.requestId,kind: input.kind,reason: input.reason.trim(),fingerprint: createHash("sha256").update(JSON.stringify(normalized)).digest("hex") };
+    const operation: ScriptRevisionOperation = { requestId: input.requestId,kind: input.kind,targetId: input.kind === "decide" ? input.suggestionId : input.elementId,reason: input.reason.trim(),fingerprint: createHash("sha256").update(JSON.stringify(normalized)).digest("hex") };
     const repository = this.options.repository;
     if (!repository.findRevisionOperation) throw new ScriptContentError("STORAGE_UNAVAILABLE","修订存储未就绪");
     const replay = await repository.findRevisionOperation(actor,p,c,input.requestId);
