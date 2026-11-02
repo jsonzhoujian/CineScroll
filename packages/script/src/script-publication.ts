@@ -63,7 +63,7 @@ export class ScriptPublicationService {
     const service = this.options.content.withPublication({
       validate: async v => !!report?.passed && v.id === report.candidateVersionId,
       repository: { findActive: repository.findActive.bind(repository),save: (a,v,expected) => {
-        const { reviewOperation: _review,publicationOperation: _prior,...clean } = v;
+        const { reviewOperation: _review,publicationOperation: _prior,revisionOperation: _revision,...clean } = v;
         return repository.save(a,{ ...clean,publicationOperation: operation,...(report ? { qualityReportId: report.id,qualityBinding: qualityBinding(version,context) } : {}) },expected);
       } },
     });

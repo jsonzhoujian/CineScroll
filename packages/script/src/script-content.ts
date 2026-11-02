@@ -138,7 +138,7 @@ export class ScriptContentService {
     const operation: ScriptReviewOperation = { requestId: input.requestId,fingerprint,kind: input.kind,targetId: input.kind === "decide" ? input.suggestionId : input.elementId,reason: input.reason.trim() };
     const scoped = new ScriptContentService({ ...this.dependencies,repository: {
       findActive: repository.findActive.bind(repository),
-      save: (a,v,expected) => repository.save(a,{ ...v,reviewOperation: operation },expected),
+      save: (a,v,expected) => { const { revisionOperation: _revision,...clean } = v;return repository.save(a,{ ...clean,reviewOperation: operation },expected); },
     } });
     try {
       if (input.kind === "edit") return await scoped.editElement(actor,p,c,{ expectedActiveVersionId: input.expectedActiveVersionId,elementId: input.elementId,text: input.text,reason: input.reason });
