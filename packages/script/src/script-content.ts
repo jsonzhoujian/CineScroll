@@ -1,3 +1,4 @@
+import type { ScriptRevisionOperation } from "./script-revision.ts";
 import type { PersistedScriptQualityReport, PublicationOperation, QualityBinding } from "./script-publication.ts";
 import { createHash } from "node:crypto";
 import type { Actor, EpisodePlanVersion, ProjectAccessReader } from "./index.ts";
@@ -16,6 +17,7 @@ export type ScriptScene = Readonly<{
   id: string; episodeId: string; ordinal: number; title: string; environment: string; characters: string[];
 }>;
 export type ScriptSuggestion = Readonly<{
+  baseVersionId?: string;
   id: string; elementId: string; baseText: string; text: string; reason: string;
   submittedBy: string; submittedAt: string; status: "pending" | "accepted" | "rejected";
   decidedBy?: string; decidedAt?: string;
@@ -32,6 +34,7 @@ export type ScriptReviewOperation = { requestId: string;fingerprint: string;kind
 export type ScriptRetrySelection = { expectedActiveVersionId: string;scopeKeys: string[] };
 export type ScriptRetrySnapshot = ScriptRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 export type ScriptContentVersion = Readonly<{
+  revisionOperation?: ScriptRevisionOperation;revisionOfVersionId?: string;
   publicationOperation?: PublicationOperation;qualityReportId?: string;qualityBinding?: QualityBinding;
   retry?: ScriptRetrySnapshot;
   reviewOperation?: ScriptReviewOperation;
@@ -45,6 +48,7 @@ export type ScriptContentVersion = Readonly<{
   failures: Array<Readonly<{ scopeKey: string; originJobId?: string; code: string; message: string; retryable: boolean }>>;
 }>;
 export interface ScriptContentRepository {
+  findRevisionOperation?(actor: Actor,p: string,c: string,id: string): Promise<ScriptContentVersion | null>;
   findConfirmed?(actor: Actor,p: string,c: string): Promise<ScriptContentVersion | null>;
   findVersion?(actor: Actor,p: string,c: string,id: string): Promise<ScriptContentVersion | null>;
   findQualityReport?(actor: Actor,p: string,c: string,id: string): Promise<PersistedScriptQualityReport | null>;
@@ -66,6 +70,7 @@ export class ScriptContentError extends Error {
   }
 }
 export class InMemoryScriptContentRepository implements ScriptContentRepository {
+  async findRevisionOperation(a: Actor,p: string,c: string,id: string) { return structuredClone([...this.#versions.entries()].find(([key,v]) => key === JSON.stringify([scopeKey(a,p,c),v.id]) && v.createdBy === a.userId && v.revisionOperation?.requestId === id)?.[1] ?? null); }
   readonly #confirmed = new Map<string,ScriptContentVersion>();
   async findConfirmed(a: Actor,p: string,c: string) { return structuredClone(this.#confirmed.get(scopeKey(a,p,c)) ?? null); }
   async findVersion(a: Actor,p: string,c: string,id: string) { return structuredClone(this.#versions.get(JSON.stringify([scopeKey(a,p,c),id])) ?? null); }
