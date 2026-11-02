@@ -18,11 +18,20 @@ for (const sample of samples) test(`T06 synthetic public-boundary acceptance: ${
   const contextReader = { findGenerationContext: async () => context },accessReader = { findProjectAccess: async () => ({ role: "owner" as const }) };
   const content = new ScriptContentService({ repository,contextReader,accessReader,idGenerator: () => `v${++seq}`,clock: () => new Date("2026-11-02") });
   const publication = new ScriptPublicationService({ repository,contextReader,accessReader,content });
-  const candidate = await new ScriptRunner({ contextReader,service: content,model: { async generate(request) { return {
-    contractVersion: "0.1.0",jobId: request.jobId,stage: "script",projectId: "p",chapterId: "c",sourceVersionId: "source_1",upstreamConfirmedVersionIds: ["plan_1","bible_1"],status: "succeeded",
+  const partial = await new ScriptRunner({ contextReader,service: content,model: { async generate(request) { return {
+    contractVersion: "0.1.0",jobId: request.jobId,stage: "script",projectId: "p",chapterId: "c",sourceVersionId: "source_1",upstreamConfirmedVersionIds: ["plan_1","bible_1"],status: "partially_succeeded",
     scenes: [{ id: "scene_1",episodeId: "episode_1",ordinal: 1,title: sample.genre,environment: sample.environment,characters: [] }],
-    items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene_1",elementType: "action",ordinal: 1,text: sample.action,provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "actionized" }] } }],
+    items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene_1",elementType: "action",ordinal: 1,text: sample.action,provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "actionized" }] } },{ scopeKey: "environment",status: "failed",error: { code: "INVALID_ELEMENT",message: "环境待恢复",retryable: true } }],
   }; } } }).run(actor,{ projectId: "p",chapterId: "c",jobId: "generate",expectedActiveVersionId: null,generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "narration" } });
+  assert.equal(partial.generationStatus,"partially_succeeded");
+  const blockedReport = await publication.assess(actor,"p","c",{ jobId: "partial-quality",binding: qualityBinding(partial,context),model: { async assess() { throw new Error("preconditions must block before model invocation"); } } });
+  assert.equal(blockedReport.passed,false);
+  await assert.rejects(() => publication.execute(actor,"p","c",{ kind: "confirm",requestId: "blocked-partial",expectedActiveVersionId: partial.id,reason: "失败项不能确认",reportId: blockedReport.id }),{ code: "INVALID_CONFIRMATION" });
+  const candidate = await new ScriptRunner({ contextReader,service: content,model: { async generate(request) {
+    assert.deepEqual(request.scopeKeys,["environment"]);assert.equal(request.retryOfJobId,partial.jobId);
+    return { contractVersion: "0.1.0",jobId: request.jobId,stage: "script",projectId: "p",chapterId: "c",sourceVersionId: "source_1",upstreamConfirmedVersionIds: ["plan_1","bible_1"],status: "succeeded",scenes: [],items: [{ scopeKey: "environment",status: "succeeded",value: { id: "environment",sceneId: "scene_1",elementType: "environment",ordinal: 2,text: sample.environment,provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "visualized" }] } }] };
+  } } }).run(actor,{ projectId: "p",chapterId: "c",jobId: "retry-environment",expectedActiveVersionId: partial.id,retry: { expectedActiveVersionId: partial.id,retryOfJobId: partial.jobId,scopeKeys: ["environment"] },generationParameters: { targetDurationSeconds: 60,aspectRatio: "9:16",narrativeMode: "narration" } });
+  assert.equal(candidate.generationStatus,"succeeded");assert.deepEqual(candidate.elements[0],partial.elements[0]);assert.equal(candidate.failures.length,0);
   const report = await publication.assess(actor,"p","c",{ jobId: "quality",binding: qualityBinding(candidate,context),model: { async assess() { return { versionId: candidate.id,events: [{ factId: "fact_1",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "fact_1",verdict: "consistent" }],episodes: [{ episodeId: "episode_1",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
   assert.equal(report.passed,true);
   const formal = await publication.execute(actor,"p","c",{ kind: "confirm",requestId: "confirm",expectedActiveVersionId: candidate.id,reason: "核对合成样本",reportId: report.id });
