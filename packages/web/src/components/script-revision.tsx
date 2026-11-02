@@ -1,17 +1,37 @@
 "use client";
-import { useState } from "react";
+import { useEffect,useState } from "react";
 import { ApiClientError,type ApiClient,type ScriptContentView,type ScriptRevisionCommand } from "../lib/api";
 export function ScriptRevision({ api,projectId,chapterId,view,selectedId,disabled,run,onChanged }: { api: ApiClient;projectId: string;chapterId: string;view: ScriptContentView;selectedId: string;disabled: boolean;run(f: () => Promise<void>): Promise<void>;onChanged(): Promise<void> }) {
   const [text,setText] = useState(""),[reason,setReason] = useState(""),[pending,setPending] = useState<ScriptRevisionCommand | null>(null);
   const [formal,setFormal] = useState<ScriptContentView["version"] | null>(null),[notice,setNotice] = useState("正式修改将派生候选，重新确认前保留原正式版。");
-  const selected = view.version.elements.find(e => e.id === selectedId),isFormal = view.version.status === "confirmed",blocked = disabled || !!pending;
+  const [restoreBlocked,setRestoreBlocked] = useState(true);
+  const storageKey = JSON.stringify(["script-revision",projectId,chapterId,view.version.sourceVersionId,view.version.planVersionId]);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      if (saved) {
+        const command = JSON.parse(saved);
+        const identifier = (v: unknown) => typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v);
+        if (!command || typeof command !== "object" || !["suggest","unlock","decide"].includes(command.kind)
+          || !identifier(command.requestId) || !identifier(command.expectedActiveVersionId) || typeof command.reason !== "string" || !command.reason.trim() || command.reason.length > 2000
+          || Object.keys(command).some(k => !["kind","requestId","expectedActiveVersionId","reason",...(command.kind === "suggest" ? ["elementId","text"] : command.kind === "unlock" ? ["elementId"] : ["suggestionId","decision"])].includes(k))
+          || (command.kind === "decide" ? !identifier(command.suggestionId) || !["accepted","rejected"].includes(command.decision) : !identifier(command.elementId))
+          || command.kind === "suggest" && (typeof command.text !== "string" || !command.text.trim() || command.text.length > 20000)) throw new Error();
+        setPending(command);setNotice("有待核对的正式修订，请沿用原操作核对结果。");
+      }
+      setRestoreBlocked(false);
+    } catch { setNotice("保存的修订操作无法读取，请先人工核对，暂停新的修订提交。"); }
+  },[storageKey]);
+  const selected = view.version.elements.find(e => e.id === selectedId),isFormal = view.version.status === "confirmed",blocked = disabled || restoreBlocked || !!pending;
   async function submit(kind: "suggest" | "unlock" | "decide",suggestionId?: string,decision?: "accepted" | "rejected") {
     const command: ScriptRevisionCommand = pending ?? (kind === "suggest" ? { kind,requestId: crypto.randomUUID(),expectedActiveVersionId: view.version.id,elementId: selectedId,text,reason } : kind === "unlock" ? { kind,requestId: crypto.randomUUID(),expectedActiveVersionId: view.version.id,elementId: selectedId,reason } : { kind,requestId: crypto.randomUUID(),expectedActiveVersionId: view.version.id,suggestionId: suggestionId!,decision: decision!,reason });
-    const reconciling = !!pending;setPending(command);
-    try { await api.reviseScriptContent(projectId,chapterId,command);await onChanged();setPending(null);setText("");setReason("");setFormal(null);setNotice("修订操作已保存，请核对当前版本；候选需重新评估确认。"); }
+    const reconciling = !!pending;
+    try { sessionStorage.setItem(storageKey,JSON.stringify(command)); } catch { setRestoreBlocked(true);setNotice("无法保存请求身份，尚未提交修订。");return; }
+    setPending(command);
+    try { await api.reviseScriptContent(projectId,chapterId,command);await onChanged();sessionStorage.removeItem(storageKey);setPending(null);setText("");setReason("");setFormal(null);setNotice("修订操作已保存，请核对当前版本；候选需重新评估确认。"); }
     catch (error) {
-      if (!reconciling && error instanceof ApiClientError && [400,403,404,409].includes(error.status)) { setPending(null);setNotice("操作被拒绝，请读取当前剧本后核对版本或权限。"); }
-      else setNotice("操作结果未知，请核对原操作，不会自动重复提交。刷新前请先完成核对。");
+      if (!reconciling && error instanceof ApiClientError && [400,403,404,409].includes(error.status)) { sessionStorage.removeItem(storageKey);setPending(null);setNotice("操作被拒绝，请读取当前剧本后核对版本或权限。"); }
+      else setNotice("操作结果未知，请核对原操作，不会自动重复提交。刷新后仍可沿用原请求核对。");
     }
   }
   return <section aria-label="正式剧本修订"><h3>正式剧本修订</h3><p role="status">{notice}</p>
@@ -23,6 +43,6 @@ export function ScriptRevision({ api,projectId,chapterId,view,selectedId,disable
       {selected?.lockedAt && view.permissions?.canDecide && <button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => submit("unlock"))}>明确解锁当前元素</button>}
       {view.permissions?.canDecide && view.version.suggestions?.filter(s => s.status === "pending").map(s => <article key={s.id}><p>{s.text}</p><button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => submit("decide",s.id,"accepted"))}>接受正式建议 {s.id}</button><button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => submit("decide",s.id,"rejected"))}>拒绝正式建议 {s.id}</button></article>)}
     </div>}
-    {pending && <div className="desktop-task-action"><button type="button" disabled={disabled} onClick={() => void run(() => submit(pending.kind))}>核对正式修订原操作</button></div>}
+    {pending && <div className="desktop-task-action"><button type="button" disabled={disabled || restoreBlocked} onClick={() => void run(() => submit(pending.kind))}>核对正式修订原操作</button></div>}
   </section>;
 }
