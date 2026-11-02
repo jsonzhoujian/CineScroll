@@ -18,6 +18,9 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
   }
   findPublicationOperation(a: Actor,p: string,c: string,id: string) { return this.transaction(a,client => this.publicationResult(client,a,p,c,id)); }
   private async publicationResult(client: ModelSettingsClient,a: Actor,p: string,c: string,id: string) { return decode((await client.query("select version_json from script_content_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and created_by=$4 and version_json->'publicationOperation'->>'requestId'=$5",[a.workspaceId,p,c,a.userId,id])).rows[0]); }
+  listImpacts(actor: Actor,p: string,c: string,confirmedVersionId: string) {
+    return this.transaction(actor,async client => (await client.query("select confirmed_version_id,source_version_id,source_element_id,target_stage,target_version_id,target_item_id,status from script_impact_links where workspace_id=$1 and project_id=$2 and chapter_id=$3 and confirmed_version_id=$4 order by source_version_id,source_element_id,target_stage,target_version_id,target_item_id",[actor.workspaceId,p,c,confirmedVersionId])).rows);
+  }
   findRevisionOperation(actor: Actor,p: string,c: string,id: string) {
     return this.transaction(actor,client => this.revisionResult(client,actor,p,c,id));
   }
