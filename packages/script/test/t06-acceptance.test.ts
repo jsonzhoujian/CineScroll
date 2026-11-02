@@ -1,3 +1,4 @@
+import { ScriptRevisionService } from "../src/script-revision.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryScriptContentRepository,ScriptContentService } from "../src/script-content.ts";
@@ -25,7 +26,21 @@ for (const sample of samples) test(`T06 synthetic public-boundary acceptance: ${
   const report = await publication.assess(actor,"p","c",{ jobId: "quality",binding: qualityBinding(candidate,context),model: { async assess() { return { versionId: candidate.id,events: [{ factId: "fact_1",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "fact_1",verdict: "consistent" }],episodes: [{ episodeId: "episode_1",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
   assert.equal(report.passed,true);
   const formal = await publication.execute(actor,"p","c",{ kind: "confirm",requestId: "confirm",expectedActiveVersionId: candidate.id,reason: "核对合成样本",reportId: report.id });
-  const handoff = await new ConfirmedScriptHandoff(repository,contextReader).read(actor,"p","c");
-  assert.equal(handoff.version.id,formal.id);assert.equal(handoff.sourceFragments[0]?.text,sample.source);
+  const locked = await publication.execute(actor,"p","c",{ kind: "lock",requestId: "lock",expectedActiveVersionId: formal.id,reason: "锁定已确认动作",elementIds: ["action"] });
+  const revision = new ScriptRevisionService({ repository,contextReader,accessReader,idGenerator: () => `revision${++seq}`,clock: () => new Date("2026-11-02") });
+  const suggestion = { kind: "suggest" as const,requestId: "suggest",expectedActiveVersionId: locked.id,reason: "核对动作节奏",elementId: "action",text: sample.action };
+  await assert.rejects(() => revision.execute(actor,"p","c",suggestion),{ code: "INVALID_STATE" });
+  const unlocked = await revision.execute(actor,"p","c",{ kind: "unlock",requestId: "unlock",expectedActiveVersionId: locked.id,elementId: "action",reason: "明确修订" });
+  const proposed = await revision.execute(actor,"p","c",{ ...suggestion,expectedActiveVersionId: unlocked.id });
+  const revisionCandidate = await revision.execute(actor,"p","c",{ kind: "decide",requestId: "accept",expectedActiveVersionId: proposed.id,reason: "核对原文",suggestionId: proposed.suggestions!.find(s => s.status === "pending")!.id,decision: "accepted" });
+  const reader = new ConfirmedScriptHandoff(repository,contextReader);
+  assert.equal((await reader.read(actor,"p","c")).version.id,proposed.id);
+  await assert.rejects(() => publication.execute(actor,"p","c",{ kind: "confirm",requestId: "stale-report",expectedActiveVersionId: revisionCandidate.id,reason: "旧报告不得复用",reportId: report.id }),{ code: "INVALID_CONFIRMATION" });
+  const revisedReport = await publication.assess(actor,"p","c",{ jobId: "revised-quality",binding: qualityBinding(revisionCandidate,context),model: { async assess() { return { versionId: revisionCandidate.id,events: [{ factId: "fact_1",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "fact_1",verdict: "consistent" }],episodes: [{ episodeId: "episode_1",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
+  const revisedFormal = await publication.execute(actor,"p","c",{ kind: "confirm",requestId: "reconfirm",expectedActiveVersionId: revisionCandidate.id,reason: "重新评估确认",reportId: revisedReport.id });
+  assert.equal((await reader.read(actor,"p","c")).version.id,revisedFormal.id);
+  assert.deepEqual((await repository.findVersion(actor,"p","c",formal.id))?.elements,formal.elements);
+  const handoff = await reader.read(actor,"p","c");
+  assert.equal(handoff.version.id,revisedFormal.id);assert.equal(handoff.sourceFragments[0]?.text,sample.source);
   for (const element of handoff.version.elements) for (const evidence of element.provenance) { assert.equal(evidence.type,"source_fragment");if (evidence.type === "source_fragment") { assert.equal(evidence.sourceVersionId,"source_1");assert.ok(handoff.sourceFragments.some(f => f.id === evidence.fragmentId)); } }
 });
