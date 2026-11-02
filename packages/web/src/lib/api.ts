@@ -13,6 +13,7 @@ export type ScriptContentView = { episodes?: Array<{ id: string;ordinal: number 
   failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
 } };
 export type ScriptQualityView = { task: { id: string;state: string;reason: string | null;projectId: string;chapterId: string;input: { resultType: string;qualityTarget: { candidateVersionId: string } } };report: null | { id: string;candidateVersionId: string;ruleVersion: string;passed: boolean;coverage: number;reasons: string[];assessment?: { episodes: Array<{ episodeId: string;estimatedSeconds: number }> } } };
+export type ScriptRevisionCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & ({ kind: "suggest";elementId: string;text: string } | { kind: "unlock";elementId: string } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" });
 export type ScriptPublicationCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & ({ kind: "confirm";reportId: string } | { kind: "lock";elementIds: string[] });
 export class ApiClientError extends Error {
   readonly status: number;
@@ -115,6 +116,8 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  reviseScriptContent(p: string,c: string,input: ScriptRevisionCommand) { return this.request<ScriptContentView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/revision`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  getScriptVersion(p: string,c: string,id: string) { return this.request<{ version: ScriptContentView["version"] }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/versions/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
   listScriptQuality(p: string,c: string,cursor: string | null = null) { return this.request<{ tasks: ScriptQualityView["task"][];nextCursor: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/quality${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,{ method: "GET",cache: "no-store" },"session"); }
   submitScriptQuality(p: string,c: string,input: { requestId: string;configurationVersionId: string;modelId: string;expectedActiveVersionId: string }) { return this.request<ScriptQualityView["task"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/quality`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   getScriptQuality(p: string,c: string,id: string) { return this.request<ScriptQualityView>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/quality/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }

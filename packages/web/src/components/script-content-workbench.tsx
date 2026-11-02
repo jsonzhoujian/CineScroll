@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ScriptRevision } from "./script-revision";
 import { ScriptPublication } from "./script-publication";
 import { ScriptContentRetry } from "./script-content-retry";
 import { ApiClientError, type ApiClient, type ScriptContentTask, type ScriptContentView, type ModelConfiguration } from "../lib/api";
@@ -136,6 +137,7 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
         {view.permissions?.canEdit && <button type="button" disabled={busy || reviewUnknown || !replacement.trim() || !reason.trim()} onClick={() => void act(() => review("edit"))}>保存候选修改</button>}
         {view.permissions?.canSuggest && <button type="button" disabled={busy || reviewUnknown || !replacement.trim() || !reason.trim()} onClick={() => void act(() => review("suggest"))}>提交剧本建议</button>}
       </div>}
+      <ScriptRevision api={api} projectId={projectId} chapterId={chapterId} view={view} selectedId={elementId} disabled={busy || reviewUnknown || uncertain} run={act} onChanged={readCurrent} />
       <ScriptPublication api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={elementId} disabled={busy || reviewUnknown || uncertain} run={act} onChanged={readCurrent} />
       {view.version.status !== "confirmed" && <ScriptContentRetry key={context} api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={busy || uncertain || !!(task?.input.retry && (task.state === "queued" || task.state === "running" || task.reason === "EXECUTION_UNCERTAIN"))} run={act}
         onSubmitted={next => { setTask(valid(next)); remember(null,next.id); setNotice("局部重试已提交，可刷新任务状态，完成后明确载入结果。"); }} />}
