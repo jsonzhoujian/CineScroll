@@ -1,3 +1,5 @@
+import { SETTINGS_WORKER } from "../src/settings-worker-module.ts";
+import type { ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -43,6 +45,10 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     assert.equal(url, "https://api.deepseek.com/chat/completions");
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
+    if (input.stage === "settings") {
+      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "settings",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",items: [{ scopeKey: "location",status: "succeeded",value: { id: "location",assetType: "location",name: "庭院",visibleDefinition: { weather: "rain" },state: "",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+      return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(result) } }] });
+    }
     if (input.version) {
       const assessment = { versionId: input.version.id,events: [{ factId: "rain",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "rain",verdict: "consistent" }],episodes: [{ episodeId: "e1",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] };
       return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(assessment) } }] });
@@ -72,8 +78,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         evidence: [{ sourceVersionId: input.sourceVersionId, fragmentId: input.input.sourceFragments[0].id }] } }] };
     return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
   };
-  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false) => {
+  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false) => {
     const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa },
+      ...(settingsEnabled ? { settingsTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(tasksEnabled ? { storyTasks: { enabled: true, workspaceIds: [workspaceId], intervalMs: 100 } } : {}),
       ...(scriptsEnabled ? { scriptTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(episodesEnabled ? { episodeTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}) }, { modelFetch });
@@ -83,6 +90,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       try { await app.listen(0, "127.0.0.1"); }
       catch (error) { await app.close(); throw error; }
       return { http: request(app.getHttpServer()), worker: tasksEnabled ? app.get(StoryKnowledgeTaskWorker) : null,
+        settingsTasks: settingsEnabled ? app.get("SETTINGS_TASK_SERVICE") as ModelTaskService : null,
+        settingsWorker: settingsEnabled ? app.get(SETTINGS_WORKER) as StoryKnowledgeTaskWorker : null,
         scriptWorker: scriptsEnabled ? app.get(SCRIPT_CONTENT_WORKER) as StoryKnowledgeTaskWorker : null,
         episodeWorker: episodesEnabled ? app.get(EPISODE_PLAN_WORKER) as StoryKnowledgeTaskWorker : null,
         closeResources: production.close, close: async () => { try { await app.close(); } finally { await production.close(); } } };
@@ -98,7 +107,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -315,6 +324,34 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal((await publicationRestart.http.get(`${base}/quality/${qualityTaskId!}`).set("authorization",bearer).expect(200)).body.report.passed,true);
       assert.equal(modelCalls,5);
     } finally { await publicationRestart.close(); }
+    await admin.query("alter table settings_candidate_versions disable trigger settings_candidates_immutable");
+    try { await assert.rejects(() => start(ca,false,false,false,true),{ message: "SETTINGS_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter table settings_candidate_versions enable trigger settings_candidates_immutable"); }
+    await admin.query("revoke insert on script_downstream_dependencies from novel_app");
+    try { await assert.rejects(() => start(ca,false,false,false,true),{ message: "SETTINGS_DATABASE_NOT_READY" }); }
+    finally { await admin.query("grant insert on script_downstream_dependencies to novel_app"); }
+    const settingsApp = await start(ca,false,false,false,true);
+    let settingsTaskId: string,settingsCandidateId: string;
+    try {
+      const actor = { workspaceId,userId };
+      const task = await settingsApp.settingsTasks!.submitSettings(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-settings" });
+      settingsTaskId = task.id;
+      let completed = task;
+      for (let i=0;i<100;i++) {
+        completed = await settingsApp.settingsTasks!.get(actor,task.id);
+        if (["succeeded","failed","paused"].includes(completed.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(completed.state,"succeeded",JSON.stringify(completed));assert.equal(modelCalls,6);
+      settingsCandidateId = completed.result!.candidateVersionId;
+      const dependencies = await admin.query("select script_version_id,target_item_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1",[settingsCandidateId]);
+      assert.equal(dependencies.rows.length,2);assert.ok(dependencies.rows.every(d => d.script_version_id === lockedScriptId && d.target_item_id === "location"));
+    } finally { await settingsApp.close();assert.equal(settingsApp.settingsWorker!.status().state,"stopped"); }
+    const settingsRestart = await start(ca,false,false,false,true);
+    try {
+      const recovered = await settingsRestart.settingsTasks!.get({ workspaceId,userId },settingsTaskId!);
+      assert.equal(recovered.result?.candidateVersionId,settingsCandidateId!);assert.equal(modelCalls,6);
+    } finally { await settingsRestart.close(); }
     const second = await start();
     try {
       const read = await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(200);

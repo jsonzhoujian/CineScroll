@@ -1,3 +1,9 @@
+import { PostgresSettingsCandidateRepository } from "@novel-adaptation/script/postgres-settings-candidates";
+import { SettingsTaskContext,SettingsTaskExecutor } from "./settings-task-executor.ts";
+import { SettingsTaskDispatcher } from "./settings-task-dispatcher.ts";
+import { DeepSeekSettingsModel } from "./deepseek-settings-model.ts";
+import { SettingsWorkerModule } from "./settings-worker-module.ts";
+import { assertSettingsDatabase } from "./settings-database-readiness.ts";
 import { ConfirmedScriptHandoff } from "@novel-adaptation/script/script-handoff";
 import { ScriptRevisionService } from "@novel-adaptation/script/script-revision";
 import { ScriptPublicationService } from "@novel-adaptation/script/script-publication";
@@ -62,6 +68,7 @@ import { ForwardedClientIpResolver, HmacDeviceTokenService, ProjectImportApiModu
 export interface ProductionApiConfig {
   modelSettings?: ProductionModelSettingsConfig;
   storyTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
+  settingsTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   scriptTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   databaseUrl: string;
@@ -131,6 +138,18 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       const main = new URL(config.databaseUrl), model = new URL(models.databaseUrl);
       if (main.hostname !== model.hostname || (main.port || "5432") !== (model.port || "5432") || main.pathname !== model.pathname || config.databaseTlsCa !== models.databaseTlsCa) throw new Error();
     } catch { throw new Error("INVALID_SCRIPT_TASK_CONFIG"); }
+  }
+  if (config.settingsTasks !== undefined && config.settingsTasks.enabled !== false) {
+    try {
+      const tasks = config.settingsTasks, models = config.modelSettings;
+      if (tasks.enabled !== true || models?.enabled !== true || models.routes.deepseek !== "mainland" ||
+          !Array.isArray(tasks.workspaceIds) || tasks.workspaceIds.length === 0 || tasks.workspaceIds.length > 100 ||
+          tasks.workspaceIds.some(id => typeof id !== "string" || !id.trim() || id.length > 256 || /[\r\n]/.test(id)) ||
+          new Set(tasks.workspaceIds).size !== tasks.workspaceIds.length ||
+          (tasks.intervalMs !== undefined && (!Number.isInteger(tasks.intervalMs) || tasks.intervalMs < 100 || tasks.intervalMs > 60000))) throw new Error();
+      const main = new URL(config.databaseUrl), model = new URL(models.databaseUrl);
+      if (main.hostname !== model.hostname || (main.port || "5432") !== (model.port || "5432") || main.pathname !== model.pathname || config.databaseTlsCa !== models.databaseTlsCa) throw new Error();
+    } catch { throw new Error("INVALID_SETTINGS_TASK_CONFIG"); }
   }
   if (config.storyTasks !== undefined && config.storyTasks.enabled !== false) {
     try {
@@ -204,6 +223,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
     });
   let modelPool: Pool | undefined;
   let worker: StoryKnowledgeTaskWorker | undefined;
+  let settingsWorker: StoryKnowledgeTaskWorker | undefined;
   let scriptWorker: StoryKnowledgeTaskWorker | undefined;
   let qualityWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
@@ -330,12 +350,42 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         onModuleInit: () => assertScriptContentDatabase(restrictedPool,taskConfig.workspaceIds),
       } });
     }
+    if (config.settingsTasks?.enabled === true) {
+      const taskConfig = config.settingsTasks;
+      const projects = new PostgresProjectImportRepository(restrictedPool);
+      const knowledge = new StoryKnowledgeService({ repository: new PostgresStoryKnowledgeRepository(restrictedPool), projectAccessReader: projects,
+        sourceReader: { async findSourceVersion(actor, projectId, chapterId, sourceVersionId) {
+          const chapter = await projects.findChapter(actor,projectId,chapterId);
+          const source = chapter?.versions.find(version => version.id === sourceVersionId);
+          return source ? { id: source.id,fragmentIds: source.fragments.map(fragment => fragment.id) } : null;
+        } },idGenerator: () => `skv_${randomUUID()}`,clock: () => new Date() });
+      const script = new ScriptService({ repository: new PostgresScriptRepository(restrictedPool),
+        upstreamReader: new EpisodePlanUpstreamReader(projects,knowledge),accessReader: projects,
+        idGenerator: () => `epv_${randomUUID()}`,clock: () => new Date() });
+      const contentRepository = new PostgresScriptContentRepository(restrictedPool);
+      const context = new ScriptContentContext(projects,knowledge,script,contentRepository);
+      const handoff = new ConfirmedScriptHandoff(contentRepository,context);
+      const candidates = new PostgresSettingsCandidateRepository(restrictedPool,handoff);
+      const repository = new PostgresModelTaskRepository(restrictedPool);
+      const tasks = new ModelTaskService({ settings,repository,contextReader: new SettingsTaskContext(context,handoff),
+        settingsAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
+        generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `settings_${randomUUID()}` });
+      const executor = new SettingsTaskExecutor({ tasks,context: new SettingsTaskContext(context,handoff),handoff,repository: candidates,
+        idGenerator: () => `settingv_${randomUUID()}`,clock: () => new Date(),model: new DeepSeekSettingsModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
+      settingsWorker = new StoryKnowledgeTaskWorker({ dispatcher: new SettingsTaskDispatcher({ repository,executor }),
+        enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
+      apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker));
+      apiModule.providers!.push({ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
+        onModuleInit: () => assertSettingsDatabase(restrictedPool,taskConfig.workspaceIds),
+      } });
+    }
+
   }
   let closing: Promise<void> | undefined;
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop()]); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop()]); }
       finally { await Promise.all([pool.end(), modelPool?.end()]); }
     })(),
   };

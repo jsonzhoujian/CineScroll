@@ -1,6 +1,6 @@
 import type { Actor } from "./index.ts";
 import type { ConfirmedScriptHandoff } from "./script-handoff.ts";
-import { validateSettingsResponse,type SettingsGenerationResult,type SettingsResponseIdentity } from "./settings-content.ts";
+import { SettingsContentError,validateSettingsResponse,type SettingsGenerationResult,type SettingsResponseIdentity } from "./settings-content.ts";
 export type SettingsCandidate = SettingsGenerationResult & SettingsResponseIdentity & { id: string;status: "candidate";createdBy: string;createdAt: string;scriptVersionId: string };
 export interface SettingsCandidateRepository {
   findGeneration(actor: Actor,p: string,c: string,jobId: string): Promise<SettingsCandidate | null>;
@@ -23,7 +23,7 @@ export class SettingsRunner {
     const identity = { jobId,projectId: p,chapterId: c,sourceVersionId: upstream.version.sourceVersionId,upstreamConfirmedVersionIds: [upstream.version.id,...upstream.upstreamConfirmedVersionIds] };
     const request: SettingsGenerationRequest = structuredClone({ ...identity,contractVersion: "0.1.0",stage: "settings",input: upstream });
     let response: unknown;
-    try { response = await this.options.model.generate(request); } catch { throw new SettingsGenerationError("PROVIDER_UNAVAILABLE"); }
+    try { response = await this.options.model.generate(request); } catch (error) { if (error instanceof SettingsContentError) throw error;throw new SettingsGenerationError("PROVIDER_UNAVAILABLE"); }
     const current = await this.options.handoff.read(actor,p,c);
     if (current.version.id !== upstream.version.id || current.version.sourceVersionId !== upstream.version.sourceVersionId || current.upstreamConfirmedVersionIds.length !== upstream.upstreamConfirmedVersionIds.length || current.upstreamConfirmedVersionIds.some((id,i) => id !== upstream.upstreamConfirmedVersionIds[i])) throw new SettingsGenerationError("UPSTREAM_CHANGED");
     const result = validateSettingsResponse(response,identity,{ sourceVersionId: upstream.version.sourceVersionId,fragmentIds: upstream.sourceFragments.map(f => f.id),approvedAdditionIds: [] });

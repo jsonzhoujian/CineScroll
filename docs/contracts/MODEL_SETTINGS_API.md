@@ -52,3 +52,11 @@ Saving creates an untested configuration version; stale expected versions return
 Stable errors: 401 invalid session; 400 malformed input/INVALID_CONFIGURATION; 403 FORBIDDEN; 409 VERSION_CONFLICT; 429 RATE_LIMITED; 503 NOT_READY/PROVIDER_UNAVAILABLE/STORAGE_UNAVAILABLE. Model-setting errors expose code-only messages, never upstream/internal error details. Shared throttling is implemented as described above.
 
 HTTP fixtures use the actual domain service and in-memory repository, not real Key or paid calls. PostgreSQL adapter validation is separate; live deployment verification, job credentials, revocation/rotation, audit read APIs and UI remain pending.
+
+## Settings worker composition
+
+`settingsTasks` is independently omitted/disabled by default. Explicit `{enabled:true,workspaceIds,intervalMs?}` requires enabled BYOK, a trusted DeepSeek mainland route, the same database host/port/name and CA, 1–100 unique bounded workspace IDs and a 100–60000 ms interval. Invalid configuration fails with `INVALID_SETTINGS_TASK_CONFIG` before pools are created.
+
+Enabling composes the restricted settings candidate repository, task executor, native text-only adapter and a separately registered Worker. It currently does not mount settings Session APIs. The adapter uses the fixed DeepSeek HTTPS endpoint, rejects redirects, bounds request/response bodies, times out, rejects tool calls and never retries. Credentials appear only in the authentication header. Invalid completions are classified as `INVALID_RESPONSE`; network or acknowledgement uncertainty is reconciled from persisted task results without another model call.
+
+A read-only startup guard requires script-stage prerequisites plus settings forced RLS, minimal append-only privileges, immutable triggers, task uniqueness, foreign keys, policies, dependency insert permission and scan indexes. Failure returns `SETTINGS_DATABASE_NOT_READY`; shared model database failures remain `MODEL_DATABASE_NOT_READY`. Trusted administrators apply migrations 0025–0027 separately after prior migrations. Startup never migrates or grants permissions. No Worker starts before initialization succeeds; shutdown waits for the settings Worker before closing pools. Enabling this option is an operational action, not performed by the implementation or its tests.
