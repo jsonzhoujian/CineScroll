@@ -2,6 +2,12 @@ import type { DocumentRequest, ProjectDraft } from "./workflow";
 
 type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: number };
 
+export type SettingsTask = StoryKnowledgeTask & { input: { stage: "settings";resultType: "settingsContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[] } };
+export type SettingsView = { current: boolean;sourceFragments: Array<{ id: string;text: string }>;scriptVersion: ScriptContentView["version"];version: {
+  id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;scriptVersionId: string;upstreamConfirmedVersionIds: string[];status: "candidate";generationStatus: string;
+  assets: Array<{ id: string;assetType: string;name: string;visibleDefinition: Record<string,unknown>;state: string;stateChanges: string[];restrictions: string[];provenance: Array<{ type: string;sourceVersionId?: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
+  failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
+} };
 export type ScriptContentTask = StoryKnowledgeTask & { input: { stage: "script";resultType: "scriptContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[];retry?: { expectedActiveVersionId: string;retryOfJobId: string;scopeKeys: string[] } } };
 export type ScriptContentView = { episodes?: Array<{ id: string;ordinal: number }>;permissions?: { canEdit: boolean;canSuggest: boolean;canDecide: boolean };current: boolean;sourceFragments: Array<{ id: string;text: string }>;version: {
   suggestions?: Array<{ id: string;elementId: string;text: string;reason: string;status: string;submittedBy: string;decidedBy?: string }>;
@@ -117,6 +123,11 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  submitSettingsTask(p: string,c: string,input: { configurationVersionId: string;modelId: string;requestId: string }) { return this.request<SettingsTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  getSettingsTask(id: string) { return this.request<SettingsTask>(`/settings-tasks/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
+  listSettingsTasks(p: string,c: string,cursor: string | null = null) { return this.request<{ tasks: SettingsTask[];nextCursor: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-tasks${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,{ method: "GET",cache: "no-store" },"session"); }
+  settingsAvailability(p: string,c: string,input: { configurationVersionId: string;modelId: string }) { return this.request<{ available: boolean;reason: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-tasks/availability?${new URLSearchParams(input)}`,{ method: "GET",cache: "no-store" },"session"); }
+  getSettingsGeneration(p: string,c: string,jobId: string) { return this.request<SettingsView>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/generations/${encodeURIComponent(jobId)}`,{ method: "GET",cache: "no-store" },"session"); }
   getScriptImpacts(p: string,c: string,id: string) { return this.request<{ versionId: string;impacts: ScriptImpactLink[] }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/versions/${encodeURIComponent(id)}/impacts`,{ method: "GET",cache: "no-store" },"session"); }
   reviseScriptContent(p: string,c: string,input: ScriptRevisionCommand) { return this.request<ScriptContentView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/revision`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   getScriptVersion(p: string,c: string,id: string) { return this.request<{ version: ScriptContentView["version"] }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/script-content/versions/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }

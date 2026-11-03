@@ -650,3 +650,62 @@ for (const mode of ["success","unknown"]) test(`正式修订浏览器闭环：${
   await expect(revision.getByRole("article",{ name: "保留正式剧本" }).getByText("雨打庭院",{ exact: true })).toBeVisible();
   expect(posts).toBe(mode === "unknown" ? 4 : 3);
 });
+
+for (const mode of ["success","uncertain","stale","mismatch","mobile"]) test(`设定生成显式加载与双向追溯：${mode}`,async ({ page }) => {
+  await setup(page);
+  if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [] };
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: true,version: script,sourceFragments: [{ id: "f",text: "雨落" }] } }));
+  const task = { id: "settings-task",projectId: "p",chapterId: "c",input: { stage: "settings",resultType: "settingsContent",sourceVersionId: "s",upstreamConfirmedVersionIds: ["formal","plan","candidate"] },state: "succeeded",reason: null,result: { candidateVersionId: "setting",extractionStatus: "partially_succeeded" } };
+  let posts = 0,requestId = "",loads = 0;
+  await page.route(`${origin}/projects/p/chapters/c/settings-tasks**`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    if (r.request().method() === "POST") {
+      posts++;const body = r.request().postDataJSON();expect(Object.keys(body).sort()).toEqual(["configurationVersionId","modelId","requestId"]);
+      if (requestId) expect(body.requestId).toBe(requestId);else requestId = body.requestId;
+      if (mode === "uncertain" && posts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+      return r.fulfill({ headers,json: task });
+    }
+    return r.fulfill({ headers,json: r.request().url().includes("availability") ? { available: true,reason: null } : { tasks: [task],nextCursor: null } });
+  });
+  await page.route(`${origin}/settings-tasks/settings-task`,r => r.fulfill({ headers,json: task }));
+  await page.route(`${origin}/projects/p/chapters/c/settings/generations/settings-task`,r => {
+    loads++;return r.fulfill({ headers,json: { current: mode !== "stale",sourceFragments: [{ id: "f",text: "雨落" }],scriptVersion: script,version: { id: mode === "mismatch" ? "wrong-setting" : "setting",jobId: task.id,projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: task.input.upstreamConfirmedVersionIds,status: "candidate",generationStatus: "partially_succeeded",assets: [{ id: "location",assetType: "location",name: "雨中庭院设定",visibleDefinition: { weather: "细雨" },state: "雨中",stateChanges: ["地面湿润"],restrictions: ["保留庭院"],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [{ scopeKey: "character",code: "INVALID_ASSET",retryable: true }] } } });
+  });
+  async function enter() {
+    await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+    await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+    await page.getByRole("button",{ name: "读取当前剧本",exact: true }).click();
+  }
+  await enter();const panel = page.getByRole("region",{ name: "设定候选生成与追溯" });
+  await expect(panel).toBeVisible();
+  if (mode === "mobile") {
+    await expect(panel.getByRole("button",{ name: "生成文字设定",exact: true })).not.toBeVisible();
+    await panel.getByRole("button",{ name: "刷新设定任务",exact: true }).click();
+    await panel.getByRole("button",{ name: "settings-task · succeeded",exact: true }).click();
+  } else {
+    await panel.getByRole("button",{ name: "读取设定模型",exact: true }).click();await panel.getByLabel("设定模型",{ exact: true }).selectOption("model");
+    await panel.getByRole("button",{ name: "生成文字设定",exact: true }).click();
+  }
+  if (mode === "uncertain") {
+    await expect(panel.getByRole("status")).toContainText("提交尚未确认");
+    await expect(panel.getByLabel("设定模型",{ exact: true })).toBeDisabled();
+    await page.reload();await login(page);
+    const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();
+    await enter();await panel.getByRole("button",{ name: "核对设定原提交",exact: true }).click();
+  }
+  await expect(panel.getByRole("button",{ name: "载入设定候选",exact: true })).toBeEnabled();expect(loads).toBe(0);
+  await panel.getByRole("button",{ name: "载入设定候选",exact: true }).click();
+  if (mode === "mismatch") { await expect(panel.getByText("结果身份不一致，请重新核对。",{ exact: true })).toBeVisible();await expect(panel.getByRole("button",{ name: "雨中庭院设定",exact: true })).toHaveCount(0);return; }
+  await panel.getByRole("button",{ name: "雨中庭院设定",exact: true }).click();
+  await expect(panel.getByLabel("设定原文依据")).toContainText("雨落");await expect(panel.getByLabel("设定剧本依据")).toContainText("雨点打湿庭院");
+  await expect(panel.getByText("失败范围 character · INVALID_ASSET",{ exact: true })).toBeVisible();
+  if (mode === "stale") await expect(panel.getByText("上游已变化，此候选仅供历史追溯。",{ exact: true })).toBeVisible();
+  expect(posts).toBe(mode === "mobile" ? 0 : mode === "uncertain" ? 2 : 1);
+});

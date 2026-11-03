@@ -2,9 +2,9 @@
 
 Parent: T07
 
-status: blocked
+status: ready
 
-**Blocked by:** T07-01
+**Blocked by:** T07-01 completed
 
 ## What to build
 
