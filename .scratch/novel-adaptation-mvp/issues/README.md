@@ -34,3 +34,15 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 T06-01 已完成，见[候选生成记录](../../../docs/plans/2026-10-29-script-candidate-delivery.md)；T06-02 已完成，见[候选审核记录](../../../docs/plans/2026-10-29-script-review-delivery.md)；T06-03 已完成，见[局部重试记录](../../../docs/plans/2026-10-30-script-retry-delivery.md)。T06-04 已完成，见[质量确认交付记录](../../../docs/plans/2026-11-02-script-publication-delivery.md)。T06-05 已完成[正式修订验收](../../../docs/plans/2026-11-02-script-revision-plan.md)。T06-06与父项T06已完成功能验收，当前可领取T07；见[最终验收](../../../docs/plans/2026-11-03-t06-final-acceptance.md)。
 
 T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁见[独立状态页](./T09-infrastructure-status.md)。
+
+## T07 tickets — 2026-11-03
+
+| ID | Ticket | Status | Blocked by |
+| --- | --- | --- | --- |
+| T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | ready | T06 completed |
+| T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | blocked | T07-01 |
+| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | blocked | T07-02 |
+| T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |
+| T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
+
+盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。本轮完成规划，不宣称设定或分镜功能已实现。
