@@ -13,3 +13,11 @@ test("T07 reads the pinned formal script while a revision candidate is pending a
   current = { ...context,sourceVersionId: "new-source" };await assert.rejects(() => handoff.read(actor,"p","c"),{ code: "INVALID_STATE" });
   await assert.rejects(() => handoff.read({ ...actor,workspaceId: "other" },"p","c"),{ code: "INVALID_STATE" });
 });
+
+test("T07 refuses incomplete knowledge and broken formal evidence instead of omitting upstream identities",async () => {
+  const actor = { workspaceId: "w",userId: "owner" },repo = new InMemoryScriptContentRepository();
+  await repo.save(actor,{ ...version,status: "confirmed",elements: version.elements.map(e => ({ ...e,provenance: [] })) },null);
+  await assert.rejects(() => new ConfirmedScriptHandoff(repo,{ findGenerationContext: async () => context }).read(actor,"p","c"),{ code: "INVALID_STATE" });
+  const { confirmedStoryKnowledge: _knowledge,...incomplete } = context;
+  await assert.rejects(() => new ConfirmedScriptHandoff(repo,{ findGenerationContext: async () => incomplete }).read(actor,"p","c"),{ code: "INVALID_STATE" });
+});

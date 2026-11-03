@@ -597,6 +597,11 @@ for (const mode of ["success","editor","failed","stale","unknown-submit","unknow
   await quality.getByRole("button",{ name: "确认正式剧本" }).click();
   if (mode === "conflict") { await expect(quality.getByText("正式操作被拒绝，请读取当前剧本后重新核对。")).toBeVisible();await panel.getByRole("button",{ name: "读取当前剧本",exact: true }).click();await expect(quality.getByRole("button",{ name: "读取质量模型" })).toBeEnabled();await expect(quality.getByRole("button",{ name: "核对正式原操作" })).toHaveCount(0);return; }
   if (mode === "unknown-confirm") { expect(decodeURIComponent(page.url())).not.toContain("已核对质量与原文");await reloadReview();await quality.getByRole("button",{ name: "核对正式原操作" }).click(); }
+  if (mode === "success") {
+    const writesBeforeSwitch = publishPosts;
+    await page.getByRole("button",{ name: "分镜",exact: true }).click();await page.getByRole("button",{ name: "追溯",exact: true }).click();await page.getByRole("button",{ name: "审核",exact: true }).click();
+    await expect(quality.getByText("剧本状态：正式",{ exact: true })).toBeVisible();expect(publishPosts).toBe(writesBeforeSwitch);
+  }
   await expect(quality.getByText("剧本状态：正式",{ exact: true })).toBeVisible();await expect(panel.getByRole("button",{ name: "保存候选修改" })).toHaveCount(0);
   await panel.getByRole("button",{ name: "雨打庭院",exact: true }).click();await quality.getByLabel("正式操作理由").fill("已核对质量与原文");await quality.getByRole("button",{ name: "锁定当前元素" }).click();
   await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "读取修订影响范围" }).click();await expect(panel.getByLabel("修订受影响项").getByText(/shot-1/)).toBeVisible();await reloadReview();await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true }).click();await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
