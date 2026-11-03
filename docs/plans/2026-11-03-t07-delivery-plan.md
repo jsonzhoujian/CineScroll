@@ -9,3 +9,5 @@
 文字设定沿用现有visibleDefinition非空对象契约，不擅自扩张图片/视频生成；必填字段和引用按canonical及产品规格校验。实际下游写入必须在同事务登记script_downstream_dependencies，以支持后续修订影响标记。
 
 T07父项保持ready，首票启动实现时再改in_progress。T08/T09整体验收依赖不因本次规划解除。未调用真实模型或数据库迁移，不自动提交。
+
+2026-11-03首个实现增量：T07/T07-01改为in_progress。新增SettingAsset规范字段和逐项校验，按服务端原文片段/获批新增名单验证出处，拒绝额外字段、空visibleDefinition、无效类型及越权引用。测试先失败后通过，1项公开校验回归与script类型检查通过。当前仅资产校验边界，完整响应、依赖关系、持久化/Worker/API/UI及整体验收仍待完成；不能宣称文字设定生成已可用。

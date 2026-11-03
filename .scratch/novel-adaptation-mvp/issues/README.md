@@ -13,7 +13,7 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 | T04 | Project creation and chapter import tracer bullet | done | T03 completed |
 | T05 | Story-knowledge extraction and confirmation | done | T04 completed |
 | T06 | Script generation and source traceability | done | T05 completed |
-| T07 | Settings and storyboard workflow | ready | T06 completed |
+| T07 | Settings and storyboard workflow | in_progress | T06 completed |
 | T08 | Versions, impact analysis, and collaboration | blocked | T07 |
 | T09 | Background AI jobs, model routing, and credits | blocked | T07 |
 | T10 | Export, compliance, operations, and closed beta | blocked | T01b, T08, T09 |
@@ -39,7 +39,7 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 
 | ID | Ticket | Status | Blocked by |
 | --- | --- | --- | --- |
-| T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | ready | T06 completed |
+| T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | in_progress | T06 completed |
 | T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | blocked | T07-01 |
 | T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | blocked | T07-02 |
 | T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |

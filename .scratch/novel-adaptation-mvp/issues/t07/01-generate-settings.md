@@ -2,7 +2,7 @@
 
 Parent: T07
 
-status: ready
+status: in_progress
 
 **Blocked by:** T06 completed
 
