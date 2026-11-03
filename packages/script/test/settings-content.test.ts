@@ -11,3 +11,15 @@ test("setting assets retain canonical fields and reject unauthorized evidence or
   assert.equal(validateSettingAsset({ ...asset,provenance: [{ type: "approved_addition",additionId: "unapproved" }] },context),null);
   assert.equal(validateSettingAsset({ ...asset,apiKey: "must-not-be-accepted" },context),null);
 });
+
+import { validateSettingsResponse } from "../src/settings-content.ts";
+test("settings response binds task/upstream identity and quarantines invalid items while preserving valid assets",() => {
+  const identity = { jobId: "job",projectId: "p",chapterId: "c",sourceVersionId: "source",upstreamConfirmedVersionIds: ["formal-script"] };
+  const context = { sourceVersionId: "source",fragmentIds: ["fragment"],approvedAdditionIds: [] };
+  const response = { contractVersion: "0.1.0",stage: "settings",...identity,status: "succeeded",items: [{ scopeKey: "character",status: "succeeded",value: asset },{ scopeKey: "location",status: "succeeded",value: { ...asset,id: "location",provenance: [] } }] };
+  const result = validateSettingsResponse(response,identity,context);
+  assert.equal(result.generationStatus,"partially_succeeded");assert.deepEqual(result.assets,[asset]);assert.deepEqual(result.failures,[{ scopeKey: "location",code: "INVALID_ASSET",retryable: true }]);
+  assert.throws(() => validateSettingsResponse({ ...response,jobId: "other" },identity,context),{ code: "INVALID_RESPONSE" });
+  assert.throws(() => validateSettingsResponse({ ...response,upstreamConfirmedVersionIds: ["candidate"] },identity,context),{ code: "INVALID_RESPONSE" });
+  assert.throws(() => validateSettingsResponse({ ...response,items: [response.items[0],response.items[0]] },identity,context),{ code: "INVALID_RESPONSE" });
+});

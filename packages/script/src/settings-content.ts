@@ -20,3 +20,36 @@ function identifier(v: unknown): v is string { return typeof v === "string" && !
 function text(v: unknown): v is string { return typeof v === "string" && !!v.trim() && v.length <= 20000; }
 function strings(v: unknown): v is string[] { return Array.isArray(v) && v.every(x => typeof x === "string"); }
 function json(v: unknown,depth = 0): boolean { return depth <= 20 && (v === null || typeof v === "string" || typeof v === "boolean" || typeof v === "number" && Number.isFinite(v) || Array.isArray(v) && v.every(x => json(x,depth+1)) || record(v) && Object.values(v).every(x => json(x,depth+1))); }
+
+export class SettingsContentError extends Error {
+  readonly code: "INVALID_RESPONSE";
+  constructor() { super("INVALID_RESPONSE");this.name = "SettingsContentError";this.code = "INVALID_RESPONSE"; }
+}
+export type SettingsResponseIdentity = { jobId: string;projectId: string;chapterId: string;sourceVersionId: string;upstreamConfirmedVersionIds: readonly string[] };
+export type SettingsGenerationResult = { assets: SettingAsset[];failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;generationStatus: "succeeded" | "partially_succeeded" | "failed" };
+/** Envelope identity must match before any item may be consumed. Provider prose never enters failure records. */
+export function validateSettingsResponse(response: unknown,expected: SettingsResponseIdentity,evidence: SettingEvidenceContext): SettingsGenerationResult {
+  if (!record(response) || !keys(response,["contractVersion","jobId","stage","projectId","chapterId","sourceVersionId","upstreamConfirmedVersionIds","status","items"])
+    || response.contractVersion !== "0.1.0" || response.stage !== "settings" || response.jobId !== expected.jobId || response.projectId !== expected.projectId || response.chapterId !== expected.chapterId
+    || response.sourceVersionId !== expected.sourceVersionId || evidence.sourceVersionId !== expected.sourceVersionId
+    || !Array.isArray(response.upstreamConfirmedVersionIds) || !response.upstreamConfirmedVersionIds.length || response.upstreamConfirmedVersionIds.length !== expected.upstreamConfirmedVersionIds.length
+    || response.upstreamConfirmedVersionIds.some((id,i) => id !== expected.upstreamConfirmedVersionIds[i])
+    || !Array.isArray(response.items) || !response.items.length || response.items.length > 1000) throw new SettingsContentError();
+  const assets: SettingAsset[] = [],failures: SettingsGenerationResult["failures"] = [],scopes = new Set<string>(),ids = new Set<string>();
+  let providerFailures = 0;
+  for (const item of response.items) {
+    if (!record(item) || !identifier(item.scopeKey) || scopes.has(item.scopeKey)) throw new SettingsContentError();
+    scopes.add(item.scopeKey);
+    if (item.status === "failed") {
+      if (!keys(item,["scopeKey","status","error"]) || !record(item.error) || !keys(item.error,["code","message","retryable"]) || !identifier(item.error.code) || typeof item.error.message !== "string" || typeof item.error.retryable !== "boolean") throw new SettingsContentError();
+      providerFailures++;failures.push({ scopeKey: item.scopeKey,code: "PROVIDER_ITEM_FAILED",retryable: item.error.retryable });continue;
+    }
+    if (item.status !== "succeeded" || !keys(item,["scopeKey","status","value"])) throw new SettingsContentError();
+    const asset = validateSettingAsset(item.value,evidence);
+    if (!asset || ids.has(asset.id)) { failures.push({ scopeKey: item.scopeKey,code: "INVALID_ASSET",retryable: true });continue; }
+    ids.add(asset.id);assets.push(asset);
+  }
+  const declared = providerFailures === 0 ? "succeeded" : providerFailures === response.items.length ? "failed" : "partially_succeeded";
+  if (response.status !== declared) throw new SettingsContentError();
+  return { assets,failures,generationStatus: !failures.length ? "succeeded" : assets.length ? "partially_succeeded" : "failed" };
+}
