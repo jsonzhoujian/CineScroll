@@ -1,6 +1,6 @@
 # T06 — Script generation and source traceability
 
-status: in_progress
+status: done
 blocked_by: [T05]  
 unlocks: [T07]
 
@@ -122,3 +122,7 @@ Generate and confirm a structured dynamic-comic script while preserving evidence
 - This is a gateway client, NOT a vendor-native adapter or deployed gateway service. Gateway implementation, provider selection/credentials, production wiring and live semantic accuracy tests remain outstanding. Deployment must enforce approved regional egress and content-processing permissions; user-defined endpoints are not supported by this adapter.
 - Added transport tests for prompt/data separation, bad configuration, version mismatch, malformed/oversized responses and cancellation. The package README documents integration and limitations.
 - Rejected upstream response streams are explicitly cancelled; oversized requests fail before network access. Script package 23 tests pass and TypeScript passes; full regression 101 pass with 4 PostgreSQL tests skipped.
+
+## Final functional acceptance — 2026-11-03
+
+T06-01～06完成，Standards/Spec无实质阻断；412 Node通过、22条件跳过、52 Chromium通过。以 docs/plans/2026-11-03-t06-final-acceptance.md 为当前状态；上文增量缺口为历史。真实语义人工验收与生产发布门禁继续保留。T07可开始实现，需保存事务复验正式版本并登记下游依赖。

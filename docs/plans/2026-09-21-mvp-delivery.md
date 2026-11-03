@@ -68,3 +68,5 @@ For each implementation ticket:
 5. Provide a Git commit message with the ticket ID; the user commits manually (2026-10-29 instruction).
 6. Repeat until all ticket acceptance criteria pass.
 7. Run a Standards + Spec code review before closing the ticket.
+
+2026-11-03最终更新：T06功能验收完成、T07 ready；[最终验收与交接](./2026-11-03-t06-final-acceptance.md)覆盖上文历史进行中状态。真实语义发布门禁、目标工作室验证及T09整体验收保持独立，不因本次测试启用生产。

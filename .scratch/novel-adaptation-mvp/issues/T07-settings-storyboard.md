@@ -1,6 +1,6 @@
 # T07 — Settings and storyboard workflow
 
-status: blocked  
+status: ready
 blocked_by: [T06]  
 unlocks: [T08, T09]
 

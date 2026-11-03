@@ -2,7 +2,7 @@
 
 Parent: T06
 
-status: in_progress
+status: done
 
 **Blocked by:** [05](./05-revise-confirmed-script.md) — completed
 
@@ -10,11 +10,11 @@ status: in_progress
 
 ## Acceptance criteria
 
-- [ ] 端到端覆盖生成、部分失败重试、建议处理、质量门禁、确认、锁定、修订及三模式定位一致性。
-- [ ] 回归检验环境/心理描写转换、重大改编裁决、全部对白/动作出处和版本归属。
-- [ ] 测试报告区分模拟传输、隔离实库及真实模型证据；缺少实库或语义质量证明的部分明确保留发布门禁。
-- [ ] T07 可读取当前已确认剧本及其精确版本、场次、元素、原文引用；候选及旧上游不能作为新生成权威。
-- [ ] Standards/Spec 审查与原 T06 验收逐项核对后，才更新父项完成状态。
+- [x] 端到端覆盖生成、部分失败重试、建议处理、质量门禁、确认、锁定、修订及三模式定位一致性。
+- [x] 回归检验环境/心理描写转换、重大改编裁决、全部对白/动作出处和版本归属。
+- [x] 测试报告区分模拟传输、隔离实库及真实模型证据；缺少实库或语义质量证明的部分明确保留发布门禁。
+- [x] T07 可读取当前已确认剧本及其精确版本、场次、元素、原文引用；候选及旧上游不能作为新生成权威。
+- [x] Standards/Spec 审查与原 T06 验收逐项核对后，才更新父项完成状态。
 
 ## Context and boundaries
 
@@ -23,3 +23,5 @@ T04/T05 已按任务记录完成。拆集方案已有持久化、审核、后台
 权威输入为产品规格第 3、7～9、12 节、领域词汇、canonical 契约及 T06 原验收条件。实现须先检查这些输入及现有服务，复用已有边界。用户于本轮确认编辑仅提交建议；负责人和审核人可直接编辑候选；正式修改派生候选重新确认，锁定先解锁。
 
 Reuse existing domain services and canonical contracts. Include persistence, authorization, API, UI and relevant tests in this vertical slice. Follow the approved product specification, domain glossary, architecture decisions and original T06 acceptance criteria. No production rollout or real charging is authorized by ticket publication.
+
+2026-11-03完成，见[最终功能验收与交接](../../../../docs/plans/2026-11-03-t06-final-acceptance.md)。真实模型语义发布门禁独立保留，不代表生产启用。
