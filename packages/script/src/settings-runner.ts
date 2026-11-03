@@ -9,7 +9,7 @@ export interface SettingsCandidateRepository {
 }
 export type SettingsGenerationRequest = SettingsResponseIdentity & { contractVersion: "0.1.0";stage: "settings";input: Awaited<ReturnType<ConfirmedScriptHandoff["read"]>> };
 export class SettingsGenerationError extends Error {
-  readonly code: "INVALID_REQUEST" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "CANDIDATE_EXISTS";
+  readonly code: "INVALID_REQUEST" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "CANDIDATE_EXISTS" | "FORBIDDEN" | "STORAGE_UNAVAILABLE";
   constructor(code: SettingsGenerationError["code"]) { super(code);this.name = "SettingsGenerationError";this.code = code; }
 }
 export class SettingsRunner {

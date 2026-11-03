@@ -1,3 +1,5 @@
+import { PostgresSettingsCandidateRepository } from "../src/postgres-settings-candidates.ts";
+import type { SettingsCandidate } from "../src/settings-runner.ts";
 import { ScriptRevisionService } from "../src/script-revision.ts";
 import { ScriptPublicationService,qualityBinding } from "../src/script-publication.ts";
 import assert from "node:assert/strict";
@@ -19,7 +21,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -159,6 +161,30 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal((await rebuilt.listImpacts({ ...actor,workspaceId: "other" },projectId,chapterId,revisedFormal.id)).length,0);
     assert.equal((await rebuilt.findConfirmed(actor,projectId,chapterId))?.id,revisedFormal.id);
     assert.equal((await rebuilt.findVersion(actor,projectId,chapterId,suggestedFormal.id))?.elements.find(e => e.id === "action")?.text,"edited after retry");
+    const settingsHandoff = { async read() { return { version: revisedFormal,sourceFragments: [{ id: "f",text: "rain" }],upstreamConfirmedVersionIds: [confirmed.id,bibleId] }; } };
+    const settingsRepo = new PostgresSettingsCandidateRepository(app,settingsHandoff);
+    const generatedSettings: SettingsCandidate = { id: `generated-settings-${suffix}`,projectId,chapterId,sourceVersionId: sourceId,scriptVersionId: revisedFormal.id,jobId: `generated-settings-job-${suffix}`,createdBy: actor.userId,createdAt: "2026-11-03T00:00:00Z",status: "candidate",generationStatus: "succeeded",assets: [{ id: "rain-location",assetType: "location",name: "courtyard",visibleDefinition: { weather: "rain" },state: "",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: sourceId,fragmentId: "f",transformation: "retained" }] }],failures: [],upstreamConfirmedVersionIds: [revisedFormal.id,confirmed.id,bibleId] };
+    await admin.query("create function fail_settings_dependency_test() returns trigger language plpgsql as $$ begin raise exception 'simulated storage failure'; end $$");
+    await admin.query("create trigger fail_settings_dependency_test before insert on script_downstream_dependencies for each row execute function fail_settings_dependency_test()");
+    await assert.rejects(() => settingsRepo.saveGeneration(actor,generatedSettings),{ code: "STORAGE_UNAVAILABLE" });
+    assert.equal(await settingsRepo.findGeneration(actor,projectId,chapterId,generatedSettings.jobId),null);
+    assert.equal(await settingsRepo.findActive(actor,projectId,chapterId),null);
+    await admin.query("drop trigger fail_settings_dependency_test on script_downstream_dependencies; drop function fail_settings_dependency_test()");
+    await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
+    await assert.rejects(() => settingsRepo.saveGeneration(actor,generatedSettings),{ code: "UPSTREAM_CHANGED" });
+    await admin.query("update chapters set active_source_version_id=$3 where project_id=$1 and id=$2",[projectId,chapterId,sourceId]);
+    const results = await Promise.allSettled([settingsRepo.saveGeneration(actor,generatedSettings),settingsRepo.saveGeneration(actor,{ ...generatedSettings,id: `competing-settings-${suffix}`,jobId: `competing-settings-job-${suffix}` })]);
+    assert.equal(results.filter(r => r.status === "fulfilled").length,1);
+    assert.equal(results.filter(r => r.status === "rejected" && r.reason.code === "CANDIDATE_EXISTS").length,1);
+    const savedSettings = results.find(r => r.status === "fulfilled")!.value;
+    const reopenedSettings = new PostgresSettingsCandidateRepository(app,settingsHandoff);
+    assert.deepEqual(await reopenedSettings.findGeneration(actor,projectId,chapterId,savedSettings.jobId),savedSettings);
+    assert.deepEqual(await reopenedSettings.findActive(actor,projectId,chapterId),savedSettings);
+    assert.deepEqual(await reopenedSettings.saveGeneration(actor,{ ...savedSettings,id: "replayed-id" }),savedSettings);
+    assert.equal(await reopenedSettings.findActive({ ...actor,workspaceId: "other" },projectId,chapterId),null);
+    assert.equal(await reopenedSettings.findGeneration({ ...actor,userId: "outsider" },projectId,chapterId,savedSettings.jobId),null);
+    await assert.rejects(() => reopenedSettings.saveGeneration(actor,{ ...generatedSettings,scriptVersionId: lockedScript.id }),{ code: "UPSTREAM_CHANGED" });
+    assert.deepEqual((await admin.query("select target_item_id,script_element_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1 order by script_element_id",[savedSettings.id])).rows,[{ target_item_id: "rain-location",script_element_id: "action" },{ target_item_id: "rain-location",script_element_id: "dialogue" }]);
     // Settings persistence constraints use the application role, not the migration owner.
     const settings = { id: `settings-${suffix}`,projectId,chapterId,sourceVersionId: sourceId,scriptVersionId: revisedFormal.id,jobId: `settings-job-${suffix}`,createdBy: actor.userId,status: "candidate",generationStatus: "succeeded",assets: [],failures: [],upstreamConfirmedVersionIds: [revisedFormal.id,confirmed.id,bibleId] };
     const settingsClient = await app.connect();
@@ -167,12 +193,15 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
       await settingsClient.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
       const insertSettings = (value: typeof settings) => settingsClient.query("insert into settings_candidate_versions(workspace_id,project_id,chapter_id,id,source_version_id,script_version_id,job_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)",[actor.workspaceId,projectId,chapterId,value.id,sourceId,revisedFormal.id,value.jobId,actor.userId,JSON.stringify(value)]);
       await insertSettings(settings);
-      await settingsClient.query("insert into settings_candidate_heads values($1,$2,$3,$4)",[actor.workspaceId,projectId,chapterId,settings.id]);
+
       const rejectWrite = async (action: () => Promise<unknown>,code: string) => {
         await settingsClient.query("savepoint settings_constraint");
         await assert.rejects(action,{ code });
         await settingsClient.query("rollback to savepoint settings_constraint");
       };
+      await rejectWrite(() => settingsClient.query("insert into script_downstream_dependencies values($1,$2,$3,'storyboard',$4,'rain-location',$5,'action')",[actor.workspaceId,projectId,chapterId,savedSettings.id,revisedFormal.id]),"42501");
+      await rejectWrite(() => settingsClient.query("insert into script_downstream_dependencies values($1,$2,$3,'settings',$4,'rain-location',$5,'action')",[actor.workspaceId,projectId,chapterId,savedSettings.id,lockedScript.id]),"42501");
+      await rejectWrite(() => settingsClient.query("insert into script_downstream_dependencies values($1,$2,$3,'settings',$4,'invented-item',$5,'action')",[actor.workspaceId,projectId,chapterId,savedSettings.id,revisedFormal.id]),"42501");
       await rejectWrite(() => insertSettings({ ...settings,id: `duplicate-${suffix}` }),"23505");
       await rejectWrite(() => insertSettings({ ...settings,id: `invalid-${suffix}`,jobId: `invalid-job-${suffix}`,status: null as unknown as string }),"23514");
       await rejectWrite(() => settingsClient.query("update settings_candidate_versions set version_json='{}'"),"42501");
