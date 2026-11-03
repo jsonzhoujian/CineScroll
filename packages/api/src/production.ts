@@ -1,3 +1,5 @@
+import { SettingsTaskApiModule } from "./settings-task-api.ts";
+import { SettingsApiModule } from "./settings-api.ts";
 import { PostgresSettingsCandidateRepository } from "@novel-adaptation/script/postgres-settings-candidates";
 import { SettingsTaskContext,SettingsTaskExecutor } from "./settings-task-executor.ts";
 import { SettingsTaskDispatcher } from "./settings-task-dispatcher.ts";
@@ -374,7 +376,9 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         idGenerator: () => `settingv_${randomUUID()}`,clock: () => new Date(),model: new DeepSeekSettingsModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       settingsWorker = new StoryKnowledgeTaskWorker({ dispatcher: new SettingsTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
-      apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker));
+      apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker),
+        SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
+        SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository }));
       apiModule.providers!.push({ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertSettingsDatabase(restrictedPool,taskConfig.workspaceIds),
       } });

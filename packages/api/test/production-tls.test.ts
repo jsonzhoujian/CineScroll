@@ -334,23 +334,29 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     let settingsTaskId: string,settingsCandidateId: string;
     try {
       const actor = { workspaceId,userId };
-      const task = await settingsApp.settingsTasks!.submitSettings(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-settings" });
+      const base = `/projects/${projectId}/chapters/${chapterId}/settings-tasks`;
+      await settingsApp.http.post(base).send({ configurationVersionId: version!,modelId: "m",requestId: "tls-settings" }).expect(401);
+      const task = (await settingsApp.http.post(base).set("authorization",bearer).send({ configurationVersionId: version!,modelId: "m",requestId: "tls-settings" }).expect(201)).body;
       settingsTaskId = task.id;
       let completed = task;
       for (let i=0;i<100;i++) {
-        completed = await settingsApp.settingsTasks!.get(actor,task.id);
+        completed = (await settingsApp.http.get(`/settings-tasks/${task.id}`).set("authorization",bearer).expect(200)).body;
         if (["succeeded","failed","paused"].includes(completed.state)) break;
         await new Promise(resolve => setTimeout(resolve,20));
       }
       assert.equal(completed.state,"succeeded",JSON.stringify(completed));assert.equal(modelCalls,6);
       settingsCandidateId = completed.result!.candidateVersionId;
+      const view = await settingsApp.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${task.id}`).set("authorization",bearer).expect(200);
+      assert.equal(view.body.version.id,settingsCandidateId);assert.equal(view.body.current,true);assert.equal(view.body.scriptVersion.id,lockedScriptId!);assert.equal(view.body.sourceFragments[0].text,"雨落");
       const dependencies = await admin.query("select script_version_id,target_item_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1",[settingsCandidateId]);
       assert.equal(dependencies.rows.length,2);assert.ok(dependencies.rows.every(d => d.script_version_id === lockedScriptId && d.target_item_id === "location"));
     } finally { await settingsApp.close();assert.equal(settingsApp.settingsWorker!.status().state,"stopped"); }
     const settingsRestart = await start(ca,false,false,false,true);
     try {
-      const recovered = await settingsRestart.settingsTasks!.get({ workspaceId,userId },settingsTaskId!);
+      const recovered = (await settingsRestart.http.get(`/settings-tasks/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body;
       assert.equal(recovered.result?.candidateVersionId,settingsCandidateId!);assert.equal(modelCalls,6);
+      const view = await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings`).set("authorization",bearer).expect(200);
+      assert.equal(view.body.version.id,settingsCandidateId!);
     } finally { await settingsRestart.close(); }
     const second = await start();
     try {

@@ -403,3 +403,55 @@ test("settings admission defaults closed and malformed item evidence is quaranti
   const outcome = await executor.run(f.actor,task.id);assert.equal(outcome.state,"succeeded");assert.equal(outcome.result?.extractionStatus,"partially_succeeded");
   const candidate = await f.candidates.findGeneration(f.actor,"p","c",task.id);assert.deepEqual(candidate?.assets.map(a => a.id),["location"]);assert.equal(candidate?.failures[0]?.code,"INVALID_ASSET");
 });
+
+import { SettingsTaskApiModule } from "../src/settings-task-api.ts";
+import { SettingsApiModule } from "../src/settings-api.ts";
+test("settings Session APIs bind task identity and return pinned manuscript and script evidence",async () => {
+  const f = await settingsFixture();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() }),SettingsApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,repository: f.candidates,context: f.context,handoff: f.handoff,projects: f.projects,scripts: f.contentRepository })] }).compile();
+  const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },outsider = { authorization: `Bearer ${await sessions.issue("outsider","w")}` },base = "/projects/p/chapters/c/settings-tasks";
+    const input = { ...await f.settingsSelection(),requestId: "settings-api" };
+    await http.post(base).send(input).expect(401);
+    await http.post(base).set(auth).send({ ...input,sourceVersionId: "forged" }).expect(400);
+    await http.post(base).set(outsider).send(input).expect(404);
+    const created = await http.post(base).set(auth).send(input).expect(201);
+    assert.equal((await http.post(base).set(auth).send(input).expect(201)).body.id,created.body.id);
+    assert.equal((await http.get(base).set(auth).expect(200)).body.tasks.length,1);
+    assert.equal((await http.get(`${base}/availability`).set(auth).query(await f.settingsSelection()).expect(200)).body.available,true);
+    await http.get(base).set(auth).query({ limit: "51" }).expect(400);
+    const executor = new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "settings-api-candidate",clock: () => new Date("2026-11-03"),model: { async generate(r) { return settingsResponse(r); } } });
+    await executor.run(f.actor,created.body.id);
+    const path = "/projects/p/chapters/c/settings";
+    const view = await http.get(`${path}/generations/${created.body.id}`).set(auth).expect(200);
+    assert.equal(view.headers["cache-control"],"no-store");assert.equal(view.body.current,true);assert.equal(view.body.sourceFragments[0].text,"雨落");assert.equal(view.body.scriptVersion.status,"confirmed");
+    assert.equal(view.body.version.scriptVersionId,view.body.scriptVersion.id);
+    await http.get(path).set(outsider).expect(404);
+    await http.get(`/settings-tasks/${created.body.id}`).set(outsider).expect(404);
+    await http.get(`/settings-tasks/${created.body.id}`).set(auth).expect(200);
+    const scriptTask = (await f.repository.listScriptContent("w","p","c",{ limit: 20,cursor: null })).tasks[0]!;
+    await http.get(`/settings-tasks/${scriptTask.id}`).set(auth).expect(404);
+    await http.get(`${path}/generations/${scriptTask.id}`).set(auth).expect(404);
+    await http.post(`/settings-tasks/${created.body.id}/run`).set(auth).expect(404);
+    await http.post(`/settings-tasks/${created.body.id}/recover`).set(auth).expect(404);
+    const project = (await f.projects.findProject(f.actor,"p"))!;project.chapters[0]!.activeSourceVersionId = "missing-source";await f.projects.saveProject(f.actor,project);
+    const stale = await http.get(path).set(auth).expect(200);
+    assert.equal(stale.body.current,false);assert.equal(stale.body.sourceFragments[0].text,"雨落");assert.equal(stale.body.scriptVersion.id,view.body.scriptVersion.id);
+    assert.equal((await http.get(base).set(auth).expect(200)).body.tasks.length,1);
+  } finally { await app.close(); }
+});
+test("settings submissions fail closed on rate denial or limiter failure without queuing tasks",async () => {
+  const f = await settingsFixture();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  for (const fail of [false,true]) {
+    const ref = await Test.createTestingModule({ imports: [SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: { async consume() { if (fail) throw new Error("private-storage-details");return { allowed: false,retryAfterSeconds: 17 }; } } })] }).compile();
+    const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
+    try {
+      const response = await request(app.getHttpServer()).post("/projects/p/chapters/c/settings-tasks").set("authorization",`Bearer ${await sessions.issue("owner","w")}`).send({ ...await f.settingsSelection(),requestId: "rate-settings" }).expect(fail ? 503 : 429);
+      if (!fail) assert.equal(response.headers["retry-after"],"17");
+      assert.ok(!JSON.stringify(response.body).includes("private-storage-details"));assert.equal((await f.repository.scanSettings("w","run",{ limit: 20,cursor: null })).tasks.length,0);
+    } finally { await app.close(); }
+  }
+});

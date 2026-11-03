@@ -42,6 +42,8 @@ test("关闭BYOK不挂载路由；开启但数据库未就绪阻止应用初始�
     await app.listen(0, "127.0.0.1");
     await request(app.getHttpServer()).get("/workspace/model-settings").expect(404);
     await request(app.getHttpServer()).post("/projects/p/chapters/c/story-knowledge-tasks").expect(404);
+    await request(app.getHttpServer()).post("/projects/p/chapters/c/settings-tasks").expect(404);
+    await request(app.getHttpServer()).get("/projects/p/chapters/c/settings").expect(404);
   } finally { await app.close(); await disabled.close(); }
   const enabled = createProductionApi({ ...base, modelSettings: {
     enabled: true, encryptionKeyBase64: Buffer.alloc(32, 7).toString("base64"),
