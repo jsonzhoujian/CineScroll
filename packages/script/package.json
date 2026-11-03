@@ -24,7 +24,10 @@
     "./model-tasks": "./src/model-tasks.ts",
     "./postgres-model-tasks": "./src/postgres-model-tasks.ts",
     "./postgres-script-content": "./src/postgres-script-content.ts",
-    "./postgres-episode-plan": "./src/postgres-episode-plan.ts"
+    "./postgres-episode-plan": "./src/postgres-episode-plan.ts",
+    "./settings-runner": "./src/settings-runner.ts",
+    "./settings-content": "./src/settings-content.ts",
+    "./postgres-settings-candidates": "./src/postgres-settings-candidates.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

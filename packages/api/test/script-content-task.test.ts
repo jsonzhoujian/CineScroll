@@ -277,7 +277,7 @@ test("successive retries retain each unselected failure's real origin task",asyn
   assert.equal(final.failures.find(f => f.scopeKey === "dialogue")?.originJobId,first.id);
 });
 
-import { ScriptPublicationService } from "@novel-adaptation/script/script-publication";
+import { qualityBinding,ScriptPublicationService } from "@novel-adaptation/script/script-publication";
 import { ScriptQualityTaskContext,ScriptQualityTaskExecutor,ScriptQualityTaskDispatcher } from "../src/script-quality-tasks.ts";
 test("quality task API, worker, persisted report and owner publication form one authenticated loop",async () => {
   const f = await fixture();
@@ -343,4 +343,63 @@ test("quality worker recovers a committed report after response loss without ano
   const result = await executor.run(f.actor,task.id);assert.equal(result.reason,"EXECUTION_UNCERTAIN");
   await assert.rejects(async () => tasks.submitScriptQuality(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "another",expectedActiveVersionId: candidate.id }),{ code: "STATE_CONFLICT" });
   const recovered = await executor.recover(f.actor,task.id);assert.equal(recovered.state,"succeeded");assert.equal(recovered.result?.candidateVersionId,task.id);assert.equal(calls,1);
+});
+
+import { ConfirmedScriptHandoff } from "@novel-adaptation/script/script-handoff";
+import { InMemorySettingsCandidateRepository } from "@novel-adaptation/script/settings-runner";
+import { SettingsTaskDispatcher } from "../src/settings-task-dispatcher.ts";
+import { SettingsTaskContext,SettingsTaskExecutor } from "../src/settings-task-executor.ts";
+async function settingsFixture() {
+  const f = await fixture();
+  const task = await f.tasks.submitScriptContent(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "settings-upstream" });
+  await new ScriptContentTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.contentRepository,service: f.service,model: { async generate(r) { return scriptResponse(r); } } }).run(f.actor,task.id);
+  const candidate = (await f.contentRepository.findActive(f.actor,"p","c"))!;
+  const content = new ScriptContentService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,idGenerator: () => "settings-formal",clock: () => new Date("2026-11-03") });
+  const publication = new ScriptPublicationService({ repository: f.contentRepository,contextReader: f.context,accessReader: f.projects,content });
+  const report = await publication.assess(f.actor,"p","c",{ jobId: "settings-report",binding: qualityBinding(candidate,(await f.context.findGenerationContext(f.actor,"p","c"))!),model: { async assess() { return { versionId: candidate.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
+  await publication.execute(f.actor,"p","c",{ kind: "confirm",requestId: "settings-formal",reason: "verified",expectedActiveVersionId: candidate.id,reportId: report.id });
+  const handoff = new ConfirmedScriptHandoff(f.contentRepository,f.context),context = new SettingsTaskContext(f.context,handoff);
+  const candidates = new InMemorySettingsCandidateRepository(handoff);
+  const tasks = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: context,settingsAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },generationPolicy: { isAllowed: async () => true },idGenerator: () => "settings-job" });
+  return { ...f,handoff,context,candidates,tasks };
+}
+function settingsResponse(r: import("@novel-adaptation/script/settings-runner").SettingsGenerationRequest) {
+  return { contractVersion: r.contractVersion,stage: r.stage,jobId: r.jobId,projectId: r.projectId,chapterId: r.chapterId,sourceVersionId: r.sourceVersionId,upstreamConfirmedVersionIds: r.upstreamConfirmedVersionIds,status: "succeeded",items: [{ scopeKey: "location",status: "succeeded",value: { id: "location",assetType: "location",name: "雨中庭院",visibleDefinition: { weather: "rain" },state: "",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "retained" }] } }] };
+}
+test("settings worker binds formal script, preserves task replay and recovers saved results without another model call",async () => {
+  const f = await settingsFixture();let calls = 0;
+  const input = { projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "settings" };
+  const task = await f.tasks.submitSettings(f.actor,input);
+  assert.equal((await f.tasks.submitSettings(f.actor,input)).id,task.id);
+  const save = f.candidates.saveGeneration.bind(f.candidates);
+  f.candidates.saveGeneration = async (a,v) => { await save(a,v);throw new Error("lost storage acknowledgement"); };
+  const executor = new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "settings-candidate",clock: () => new Date("2026-11-03"),model: { async generate(r) { calls++;return settingsResponse(r); } } });
+  const outcome = await executor.run(f.actor,task.id);assert.equal(outcome.reason,"EXECUTION_UNCERTAIN");
+  await assert.rejects(() => executor.run(f.actor,task.id),{ code: "STATE_CONFLICT" });
+  const dispatcher = new SettingsTaskDispatcher({ repository: f.repository,executor });
+  const sweep = await dispatcher.tick("w","recover");assert.equal(sweep.items.length,1);assert.equal(sweep.items[0]?.state,"succeeded");
+  const recovered = await f.tasks.get(f.actor,task.id);assert.equal(recovered.state,"succeeded");assert.equal(recovered.result?.candidateVersionId,"settings-candidate");assert.equal(calls,1);
+  assert.equal((await dispatcher.tick("other","run")).items.length,0);
+  assert.equal((await f.repository.scanSettings("w","run",{ limit: 20,cursor: null })).tasks.length,0);
+  await assert.rejects(() => f.tasks.get({ ...f.actor,workspaceId: "other" },task.id),{ code: "TASK_NOT_FOUND" });
+});
+test("settings worker rejects changed upstream and does not save provider output",async () => {
+  const f = await settingsFixture();
+  const task = await f.tasks.submitSettings(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "stale-settings" });
+  const executor = new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "stale-settings",clock: () => new Date("2026-11-03"),model: { async generate(r) {
+    const project = (await f.projects.findProject(f.actor,"p"))!;project.chapters[0]!.activeSourceVersionId = "missing-source";await f.projects.saveProject(f.actor,project);return settingsResponse(r);
+  } } });
+  const outcome = await executor.run(f.actor,task.id);assert.equal(outcome.reason,"UPSTREAM_CHANGED");assert.equal(await f.candidates.findGeneration(f.actor,"p","c",task.id),null);
+});
+test("settings admission defaults closed and malformed item evidence is quarantined",async () => {
+  const f = await settingsFixture();
+  const input = { projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "settings-validation" };
+  const disabled = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: f.context,generationPolicy: { isAllowed: async () => true },idGenerator: () => "disabled-settings" });
+  await assert.rejects(() => disabled.submitSettings(f.actor,input),{ code: "WORKSPACE_TASK_DISABLED" });
+  const task = await f.tasks.submitSettings(f.actor,input);
+  const executor = new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "partial-settings",clock: () => new Date("2026-11-03"),model: { async generate(r) {
+    const response = settingsResponse(r);response.items.push({ ...response.items[0]!,scopeKey: "invalid-location",value: { ...response.items[0]!.value,id: "invalid-location",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "not-in-source",transformation: "retained" }] } });return response;
+  } } });
+  const outcome = await executor.run(f.actor,task.id);assert.equal(outcome.state,"succeeded");assert.equal(outcome.result?.extractionStatus,"partially_succeeded");
+  const candidate = await f.candidates.findGeneration(f.actor,"p","c",task.id);assert.deepEqual(candidate?.assets.map(a => a.id),["location"]);assert.equal(candidate?.failures[0]?.code,"INVALID_ASSET");
 });
