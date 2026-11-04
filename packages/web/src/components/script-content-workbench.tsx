@@ -49,6 +49,7 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
     finally { if (alive.current) { locked.current = false; setBusy(false); } }
   }
   async function submit() {
+    if (view && !view.current) return;
     const reconciling = !!pending.current;
     if (!pending.current) {
       if (!config || !model || task || view) return;
@@ -95,8 +96,8 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
   }
   async function readCurrent() {
     const next = await api.getScriptContent(projectId,chapterId);
-    if (!next.current || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.sourceVersionId !== sourceVersionId || next.version.planVersionId !== planVersionId) throw new Error("stale context");
-    if (alive.current) { setView(next); setReviewUnknown(false); setReplacement(""); setReason(""); rememberCursor(next,new URL(window.location.href).searchParams.get("scriptElement") ?? elementId); }
+    if (next.version.projectId !== projectId || next.version.chapterId !== chapterId || !next.current && next.version.status !== "confirmed" || next.current && (next.version.sourceVersionId !== sourceVersionId || next.version.planVersionId !== planVersionId)) throw new Error("stale context");
+    if (alive.current) { if (!next.current) setNotice("历史正式剧本仅供追溯，写入已关闭。");setView(next); setReviewUnknown(false); setReplacement(""); setReason(""); rememberCursor(next,new URL(window.location.href).searchParams.get("scriptElement") ?? elementId); }
   }
   async function review(kind: "edit" | "suggest" | "decide",suggestionId?: string,decision?: "accepted" | "rejected") {
     if (!view || reviewUnknown || !reason.trim()) return;
@@ -121,7 +122,7 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
     <div className="desktop-task-action">
       <button type="button" disabled={busy || uncertain || !!task || !!view} onClick={() => void act(async () => { const next = (await api.modelConfiguration()).configuration; if (alive.current) { setConfig(next?.tested && next.processingRegion === "mainland" ? next : null); setModel(""); } })}>读取剧本模型</button>
       <label>剧本模型<select disabled={busy || uncertain || !!task || !!view} value={model} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{config?.availableModelIds.map(id => <option key={id}>{id}</option>)}</select></label>
-      <button type="button" disabled={busy || (!uncertain && (!model || !!task || !!view))} onClick={() => void act(submit)}>{uncertain ? "核对剧本原提交" : "生成剧本候选"}</button>
+      <button type="button" disabled={!!view && !view.current || busy || (!uncertain && (!model || !!task || !!view))} onClick={() => void act(submit)}>{uncertain ? "核对剧本原提交" : "生成剧本候选"}</button>
     </div>
     <button type="button" disabled={busy} onClick={() => void act(refresh)}>刷新剧本任务</button>
     {history.map(t => <button type="button" key={t.id} disabled={busy || uncertain} onClick={() => { setTask(t); setView(null); remember(null,t.id); }}>{t.id} · {t.state}</button>)}
@@ -138,9 +139,9 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
         {view.permissions?.canEdit && <button type="button" disabled={busy || reviewUnknown || !replacement.trim() || !reason.trim()} onClick={() => void act(() => review("edit"))}>保存候选修改</button>}
         {view.permissions?.canSuggest && <button type="button" disabled={busy || reviewUnknown || !replacement.trim() || !reason.trim()} onClick={() => void act(() => review("suggest"))}>提交剧本建议</button>}
       </div>}
-      {view.current && view.version.status === "confirmed" && <SettingsWorkbench key={JSON.stringify([context,view.version.id])} api={api} projectId={projectId} chapterId={chapterId} sourceVersionId={sourceVersionId} scriptVersionId={view.version.id} planVersionId={planVersionId} knowledgeVersionId={knowledgeVersionId} />}
-      <ScriptRevision api={api} projectId={projectId} chapterId={chapterId} view={view} selectedId={elementId} disabled={busy || reviewUnknown || uncertain} run={act} onChanged={readCurrent} />
-      <ScriptPublication api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={elementId} disabled={busy || reviewUnknown || uncertain} run={act} onChanged={readCurrent} />
+      {view.version.status === "confirmed" && <SettingsWorkbench readOnly={!view.current} key={JSON.stringify([context,view.version.id])} api={api} projectId={projectId} chapterId={chapterId} sourceVersionId={sourceVersionId} scriptVersionId={view.version.id} planVersionId={planVersionId} knowledgeVersionId={knowledgeVersionId} />}
+      <ScriptRevision api={api} projectId={projectId} chapterId={chapterId} view={view} selectedId={elementId} disabled={!view.current || busy || reviewUnknown || uncertain} run={act} onChanged={readCurrent} />
+      <ScriptPublication api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={elementId} disabled={!view.current || busy || reviewUnknown || uncertain} run={act} onChanged={readCurrent} />
       {view.version.status !== "confirmed" && <ScriptContentRetry key={context} api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={busy || uncertain || !!(task?.input.retry && (task.state === "queued" || task.state === "running" || task.reason === "EXECUTION_UNCERTAIN"))} run={act}
         onSubmitted={next => { setTask(valid(next)); remember(null,next.id); setNotice("局部重试已提交，可刷新任务状态，完成后明确载入结果。"); }} />}
       <section aria-label="剧本修改建议">{view.version.suggestions?.map(s => <article key={s.id}><p>{s.text}</p><small>{s.reason} · {s.status} · {s.submittedBy}</small>

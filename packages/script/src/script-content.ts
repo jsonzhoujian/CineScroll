@@ -50,6 +50,7 @@ export type ScriptContentVersion = Readonly<{
 }>;
 export type ScriptImpactLink = { confirmed_version_id: string;source_version_id: string;source_element_id: string;target_stage: string;target_version_id: string;target_item_id: string;status: string };
 export interface ScriptContentRepository {
+  listSettingsImpacts?(actor: Actor,p: string,c: string,id: string): Promise<ScriptImpactLink[]>;
   listImpacts?(actor: Actor,p: string,c: string,id: string): Promise<ScriptImpactLink[]>;
   findRevisionOperation?(actor: Actor,p: string,c: string,id: string): Promise<ScriptContentVersion | null>;
   findConfirmed?(actor: Actor,p: string,c: string): Promise<ScriptContentVersion | null>;

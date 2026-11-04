@@ -472,6 +472,8 @@ test("settings review Session API enforces roles and preserves formal version wi
   const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
   try {
     const http = request(app.getHttpServer()),base = "/projects/p/chapters/c/settings",auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },editor = { authorization: `Bearer ${await sessions.issue("editor","w")}` },reviewer = { authorization: `Bearer ${await sessions.issue("reviewer","w")}` };
+    const impacts = await http.get(`${base}/versions/${candidate.id}/impacts`).set(auth).expect(200);
+    assert.deepEqual(impacts.body,{ versionId: candidate.id,impacts: null });
     const command = { kind: "edit",requestId: "api-edit",expectedActiveVersionId: candidate.id,reason: "visible",assetId: "location",value: { ...candidate.assets[0],name: "new courtyard" } };
     await http.post(`${base}/review`).send(command).expect(401);await http.post(`${base}/review`).set(editor).send(command).expect(403);
     await http.post(`${base}/review`).set(auth).send({ ...command,createdBy: "forged" }).expect(400);

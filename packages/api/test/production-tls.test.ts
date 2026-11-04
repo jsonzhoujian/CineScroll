@@ -432,6 +432,34 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(regenerated.result?.candidateVersionId,regenerationVersionId!);assert.equal(modelCalls,8);
       assert.equal((await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body.version.id,settingsCandidateId!);
     } finally { await settingsRestart.close(); }
+    const impactApp = await start(ca,false,false,true,true);
+    try {
+      const settingsBase = `/projects/${projectId}/chapters/${chapterId}/settings`,scriptBase = `/projects/${projectId}/chapters/${chapterId}/script-content`;
+      const setting = (await impactApp.http.get(settingsBase).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(setting.impacts,[]);
+      let locked = (await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "impact-setting-confirm",reason: "checked",expectedActiveVersionId: setting.version.id }).expect(201)).body;
+      locked = (await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "lock",requestId: "impact-setting-lock",reason: "preserve",expectedActiveVersionId: locked.id,assetId: "location" }).expect(201)).body;
+      let revised = (await impactApp.http.post(`${scriptBase}/revision`).set("authorization",bearer).send({ kind: "unlock",requestId: "impact-script-unlock",reason: "revision",expectedActiveVersionId: lockedScriptId!,elementId: "action" }).expect(201)).body;
+      revised = (await impactApp.http.post(`${scriptBase}/revision`).set("authorization",bearer).send({ kind: "suggest",requestId: "impact-script-suggest",reason: "revision",expectedActiveVersionId: revised.id,elementId: "action",text: "细雨洒落庭院" }).expect(201)).body;
+      revised = (await impactApp.http.post(`${scriptBase}/revision`).set("authorization",bearer).send({ kind: "decide",requestId: "impact-script-decide",reason: "checked",expectedActiveVersionId: revised.id,suggestionId: revised.suggestions.find((s: { status: string }) => s.status === "pending").id,decision: "accepted" }).expect(201)).body;
+      const qualityId = (await impactApp.http.post(`${scriptBase}/quality`).set("authorization",bearer).send({ configurationVersionId: version!,modelId: "m",requestId: "impact-quality",expectedActiveVersionId: revised.id }).expect(201)).body.id;
+      let quality;
+      for (let i=0;i<100;i++) {
+        quality = (await impactApp.http.get(`${scriptBase}/quality/${qualityId}`).set("authorization",bearer).expect(200)).body;
+        if (["succeeded","failed","paused"].includes(quality.task.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(quality.task.state,"succeeded");
+      const confirmed = (await impactApp.http.post(`${scriptBase}/publication`).set("authorization",bearer).send({ kind: "confirm",requestId: "impact-script-confirm",reason: "checked",expectedActiveVersionId: revised.id,reportId: qualityId }).expect(201)).body;
+      const impacted = await impactApp.http.get(settingsBase).set("authorization",bearer).expect(200);
+      assert.deepEqual(impacted.body.version,locked);assert.equal(impacted.body.current,false);assert.equal(impacted.body.permissions.canEdit,false);
+      assert.deepEqual(impacted.body.impacts,[{ confirmed_version_id: confirmed.id,source_version_id: lockedScriptId,source_element_id: "action",target_stage: "settings",target_version_id: locked.id,target_item_id: "location",status: "unreviewed" }]);
+      const history = await impactApp.http.get(`${settingsBase}/versions/${locked.id}/impacts`).set("authorization",bearer).expect(200);
+      assert.deepEqual(history.body,{ versionId: locked.id,impacts: impacted.body.impacts });assert.equal(history.headers["cache-control"],"no-store");
+      await impactApp.http.get(`${settingsBase}/versions/missing/impacts`).set("authorization",bearer).expect(404);
+      await impactApp.http.get(`${settingsBase}/versions/${locked.id}/impacts`).expect(401);
+      assert.equal((await impactApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,locked.id);
+    } finally { await impactApp.close(); }
     const second = await start();
     try {
       const read = await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(200);

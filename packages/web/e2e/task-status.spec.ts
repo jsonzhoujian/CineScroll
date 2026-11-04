@@ -710,7 +710,8 @@ for (const mode of ["success","uncertain","stale","mismatch","mobile"]) test(`�
   expect(posts).toBe(mode === "mobile" ? 0 : mode === "uncertain" ? 2 : 1);
 });
 
-for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mobile","read-failure","definition"]) test(`文字设定单项审核与正式修订：${mode}`,async ({ page }) => {
+for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mobile","read-failure","definition","impact","impact-parent"]) test(`文字设定单项审核与正式修订：${mode}`,async ({ page }) => {
+  const impacted = mode === "impact" || mode === "impact-parent";
   await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
@@ -719,14 +720,15 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
   await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
   await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
   const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [] };
-  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: true,version: script,sourceFragments: [{ id: "f",text: "雨落" }] } }));
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: mode !== "impact-parent",version: mode === "impact" ? { ...script,id: "new-formal" } : script,sourceFragments: [{ id: "f",text: "雨落" }] } }));
   type Version = import("../src/lib/api").SettingsView["version"];
   let version: Version = { id: "setting",jobId: "settings-task",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: "candidate",generationStatus: "succeeded",assets: [{ id: "location",assetType: "location",name: "庭院",visibleDefinition: { weather: "细雨" },state: "雨中",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [],suggestions: [],locks: {} };
+  if (impacted) { version.status = "confirmed";version.locks = { location: { lockedBy: "owner",lockedAt: "2026-11-04" } }; }
   let formal: Version | null = null,posts = 0,readFailed = false;
   const operations = new Map<string,Version>(),base = `${origin}/projects/p/chapters/c/settings`;
   await page.route(base,r => {
     if (mode === "read-failure" && posts === 1 && !readFailed) { readFailed = true;return r.fulfill({ headers,status: 403,json: { code: "FORBIDDEN" } }); }
-    return r.fulfill({ headers,json: { current: mode !== "stale",active: true,permissions: { canEdit: mode !== "editor" && version.status === "candidate",canSuggest: true,canDecide: mode !== "editor",canConfirm: mode !== "editor" && version.status === "candidate",canLock: mode !== "editor" && version.status === "confirmed" },version,scriptVersion: script,sourceFragments: [{ id: "f",text: "雨落" }] } }); });
+    return r.fulfill({ headers,json: { current: mode !== "stale" && !impacted,active: true,impacts: impacted ? [{ confirmed_version_id: "new-formal",source_version_id: "formal",source_element_id: "action",target_stage: "settings",target_version_id: "setting",target_item_id: "location",status: "unreviewed" }] : null,permissions: { canEdit: mode !== "editor" && version.status === "candidate",canSuggest: true,canDecide: mode !== "editor",canConfirm: mode !== "editor" && version.status === "candidate",canLock: mode !== "editor" && version.status === "confirmed" },version,scriptVersion: script,sourceFragments: [{ id: "f",text: "雨落" }] } }); });
   await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,status: formal ? 200 : 404,json: formal ? { version: formal } : { code: "NOT_FOUND" } }));
   await page.route(`${base}/operations/*`,r => { const saved = operations.get(decodeURIComponent(new URL(r.request().url()).pathname.split("/").at(-1)!));return r.fulfill({ headers,status: saved ? 200 : 404,json: saved ? { version: saved } : { code: "NOT_FOUND" } }); });
   await page.route(`${base}/review`,r => {
@@ -755,6 +757,7 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
   await enter();const workbench = page.getByRole("region",{ name: "设定候选生成与追溯" });
   await workbench.getByRole("button",{ name: "读取当前设定",exact: true }).click();await workbench.getByRole("button",{ name: "庭院",exact: true }).click();
   const review = page.getByRole("region",{ name: "文字设定审核" });
+  if (impacted) { const impact = workbench.getByLabel("设定上游影响");await expect(impact).toContainText("新确认剧本 new-formal");await expect(impact).toContainText("已锁定，替换前需明确解锁");await expect(workbench.getByLabel("设定剧本依据")).toContainText("正式剧本依据 · formal");await expect(review.getByRole("button",{ name: "明确解锁当前设定",exact: true })).toBeDisabled();await expect(workbench.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
   if (["stale","mobile"].includes(mode)) {
     if (mode === "mobile") await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).not.toBeVisible();
     else await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
@@ -817,6 +820,7 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
   await page.route(base,r => r.fulfill({ headers,json: response() }));
   await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: { ...formal,status: "confirmed",generationStatus: "succeeded",failures: [] } } }));
   await page.route(`${base}/versions/setting`,r => r.fulfill({ headers,json: { version: formal } }));
+  await page.route(`${base}/versions/setting/impacts`,r => r.fulfill({ headers,json: { versionId: "setting",impacts: [] } }));
   await page.route(`${tasks}/availability`,r => r.fulfill({ headers,json: { available: true,reason: null } }));
   await page.route(`${tasks}/submissions/*`,r => r.fulfill({ headers,status: task ? 200 : 404,json: task ?? { code: "TASK_NOT_FOUND" } }));
   await page.route(tasks,r => {

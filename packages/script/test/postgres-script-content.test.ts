@@ -400,6 +400,20 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
       assert.deepEqual((await settingsRead.query("select version_json from settings_candidate_versions where id=$1",[settings.id])).rows[0].version_json,settings);
       await settingsRead.query("commit");
     } finally { await settingsRead.query("rollback");settingsRead.release(); }
+    const beforeImpact = (await settingsReviewRepo.findActive(actor,projectId,chapterId))!;
+    const confirmedSetting = await settingsReview.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "impact-confirm-setting",expectedActiveVersionId: beforeImpact.id,reason: "checked" });
+    const lockedSetting = await settingsReview.execute(actor,projectId,chapterId,{ kind: "lock",requestId: "impact-lock-setting",expectedActiveVersionId: confirmedSetting.id,assetId: settingAsset.id,reason: "preserve" });
+    const upstreamSuggestion = await revision.execute(actor,projectId,chapterId,{ kind: "suggest",requestId: "settings-impact-suggest",reason: "节奏",expectedActiveVersionId: revisedFormal.id,elementId: "action",text: "细雨洒落庭院" });
+    const upstreamCandidate = await revision.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "settings-impact-accept",reason: "checked",expectedActiveVersionId: upstreamSuggestion.id,suggestionId: upstreamSuggestion.suggestions!.find(s => s.status === "pending")!.id,decision: "accepted" });
+    assert.equal((await rebuilt.listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id)).length,0);
+    const upstreamReport = await publication.assess(actor,projectId,chapterId,{ jobId: `settings-impact-report-${suffix}`,binding: qualityBinding(upstreamCandidate,qualityContext),model: { async assess() { return { versionId: upstreamCandidate.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
+    const upstreamConfirmed = await publication.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "settings-impact-confirm",reason: "checked",expectedActiveVersionId: upstreamCandidate.id,reportId: upstreamReport.id });
+    const settingsImpacts = await new PostgresScriptContentRepository(app).listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id);
+    assert.deepEqual(settingsImpacts,[{ confirmed_version_id: upstreamConfirmed.id,source_version_id: revisedFormal.id,source_element_id: "action",target_stage: "settings",target_version_id: lockedSetting.id,target_item_id: settingAsset.id,status: "unreviewed" }]);
+    assert.deepEqual(await settingsReviewRepo.findActive(actor,projectId,chapterId),lockedSetting);
+    assert.deepEqual(await settingsReviewRepo.findConfirmed(actor,projectId,chapterId),lockedSetting);
+    assert.equal((await rebuilt.listSettingsImpacts({ ...actor,workspaceId: "other" },projectId,chapterId,lockedSetting.id)).length,0);
+    assert.equal((await rebuilt.listSettingsImpacts({ ...actor,userId: "outsider" },projectId,chapterId,lockedSetting.id)).length,0);
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
     const head = await content.findActive(actor,projectId,chapterId);
     await assert.rejects(() => content.save(actor,{ ...candidate,id: `stale-${suffix}`,parentVersionId: head!.id },head!.id),{ code: "CONTEXT_NOT_FOUND" });

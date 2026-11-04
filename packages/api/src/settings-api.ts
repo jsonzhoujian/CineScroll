@@ -4,14 +4,14 @@ import { BadRequestException,Controller,Get,Header,Inject,Module,NotFoundExcepti
 import type { Actor,SessionVerifier } from "@novel-adaptation/identity";
 import type { ProjectImportRepository } from "@novel-adaptation/project-import";
 import { ModelTaskError,type ModelTaskService } from "@novel-adaptation/script/model-tasks";
-import { ScriptContentError,type ScriptContentRepository } from "@novel-adaptation/script/script-content";
+import { ScriptContentError,type ScriptContentRepository,type ScriptImpactLink } from "@novel-adaptation/script/script-content";
 import type { ConfirmedScriptHandoff } from "@novel-adaptation/script/script-handoff";
 import type { SettingsCandidate,SettingsCandidateRepository } from "@novel-adaptation/script/settings-runner";
 import type { SettingsTaskContext } from "./settings-task-executor.ts";
 import { SESSION_VERIFIER,SessionGuard } from "./index.ts";
 const SERVICES = Symbol("SETTINGS_READ");
 type Services = { regeneration?: { tasks: ModelTaskService;repository: SettingsRegenerationRepository };reviews?: SettingsReviewRepository;review?: SettingsReviewService;sessionVerifier: SessionVerifier;tasks: ModelTaskService;repository: SettingsCandidateRepository & { findActive(a: Actor,p: string,c: string): Promise<SettingsCandidate | null> };
-  context: Pick<SettingsTaskContext,"canRead">;handoff: Pick<ConfirmedScriptHandoff,"read">;projects: Pick<ProjectImportRepository,"findChapter">;scripts: Pick<ScriptContentRepository,"findVersion"> };
+  context: Pick<SettingsTaskContext,"canRead">;handoff: Pick<ConfirmedScriptHandoff,"read">;projects: Pick<ProjectImportRepository,"findChapter">;scripts: Pick<ScriptContentRepository,"findVersion" | "listSettingsImpacts"> };
 function identifier(v: unknown) { return typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v); }
 class SettingsController {
   private readonly services: Services;
@@ -27,6 +27,22 @@ class SettingsController {
   async regeneration(request: { actor: Actor },p: string,c: string,id: string) {
     if (!identifier(id) || !this.services.regeneration) throw new NotFoundException();
     return this.read(request.actor,p,c,id,true);
+  }
+  private async impactRecords(a: Actor,p: string,c: string,id: string): Promise<ScriptImpactLink[] | null> {
+    if (!this.services.scripts.listSettingsImpacts) return null;
+    const impacts = await this.services.scripts.listSettingsImpacts(a,p,c,id);
+    if (impacts.some(i => i.target_stage !== "settings" || i.target_version_id !== id || i.status !== "unreviewed")) throw new Error("INVALID_IMPACTS");
+    return impacts;
+  }
+  async impacts(request: { actor: Actor },p: string,c: string,id: string) {
+    if (![p,c,id].every(identifier)) throw new BadRequestException();
+    try {
+      if (!await this.services.context.canRead(request.actor,p,c) || !await this.services.reviews?.findVersion(request.actor,p,c,id)) throw new NotFoundException();
+      return { versionId: id,impacts: await this.impactRecords(request.actor,p,c,id) };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new ServiceUnavailableException({ code: "STORAGE_UNAVAILABLE",message: "STORAGE_UNAVAILABLE" });
+    }
   }
   private async read(a: Actor,p: string,c: string,jobId?: string,regeneration = false) {
     if (![p,c].every(identifier)) throw new BadRequestException();
@@ -52,7 +68,7 @@ class SettingsController {
       const active = !!this.services.reviews && (!jobId || (await this.services.reviews.findActive(a,p,c))?.id === version.id);
       const allowed = current && active && this.services.review ? await this.services.review.permissions(a,p) : { canEdit: false,canSuggest: false,canDecide: false,canConfirm: false,canLock: false };
       const permissions = { ...allowed,canEdit: allowed.canEdit && version.status === "candidate",canConfirm: allowed.canConfirm && version.status === "candidate",canLock: allowed.canLock && version.status === "confirmed" };
-      return { version,current,active,permissions,sourceFragments: source.fragments.map(({ id,text }) => ({ id,text })),scriptVersion };
+      return { version,current,active,permissions,impacts: await this.impactRecords(a,p,c,version.id),sourceFragments: source.fragments.map(({ id,text }) => ({ id,text })),scriptVersion };
     } catch (error) {
       if (error instanceof NotFoundException) throw error;
       if (error instanceof ModelTaskError && error.code === "TASK_NOT_FOUND") throw new NotFoundException();
@@ -61,7 +77,7 @@ class SettingsController {
   }
 }
 Controller("projects/:projectId/chapters/:chapterId/settings")(SettingsController);UseGuards(SessionGuard)(SettingsController);Inject(SERVICES)(SettingsController,undefined,0);
-for (const [method,path] of [["view",""],["generation","generations/:id"],["regeneration","regenerations/:id"]] as const) {
+for (const [method,path] of [["view",""],["generation","generations/:id"],["regeneration","regenerations/:id"],["impacts","versions/:id/impacts"]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(SettingsController.prototype,method)!;
   Get(path)(SettingsController.prototype,method,descriptor);Header("Cache-Control","no-store")(SettingsController.prototype,method,descriptor);
   Req()(SettingsController.prototype,method,0);Param("projectId")(SettingsController.prototype,method,1);Param("chapterId")(SettingsController.prototype,method,2);
