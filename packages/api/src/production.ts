@@ -1,3 +1,6 @@
+import { PostgresSettingsReviewRepository } from "@novel-adaptation/script/postgres-settings-review";
+import { SettingsReviewService } from "@novel-adaptation/script/settings-review";
+import { SettingsReviewApiModule } from "./settings-review-api.ts";
 import { SettingsTaskApiModule } from "./settings-task-api.ts";
 import { SettingsApiModule } from "./settings-api.ts";
 import { PostgresSettingsCandidateRepository } from "@novel-adaptation/script/postgres-settings-candidates";
@@ -376,9 +379,12 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         idGenerator: () => `settingv_${randomUUID()}`,clock: () => new Date(),model: new DeepSeekSettingsModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       settingsWorker = new StoryKnowledgeTaskWorker({ dispatcher: new SettingsTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
+      const reviews = new PostgresSettingsReviewRepository(restrictedPool,handoff);
+      const review = new SettingsReviewService({ repository: reviews,handoff,access: projects,idGenerator: () => `settingr_${randomUUID()}`,clock: () => new Date() });
       apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker),
         SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
-        SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository }));
+        SettingsReviewApiModule.register({ sessionVerifier: sessions,repository: reviews,review,context: new SettingsTaskContext(context,handoff) }),
+        SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,reviews,review,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository }));
       apiModule.providers!.push({ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertSettingsDatabase(restrictedPool,taskConfig.workspaceIds),
       } });

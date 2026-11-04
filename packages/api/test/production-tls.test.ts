@@ -107,7 +107,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -330,8 +330,14 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query("revoke insert on script_downstream_dependencies from novel_app");
     try { await assert.rejects(() => start(ca,false,false,false,true),{ message: "SETTINGS_DATABASE_NOT_READY" }); }
     finally { await admin.query("grant insert on script_downstream_dependencies to novel_app"); }
+    await admin.query("alter table settings_review_heads disable trigger settings_review_head_transition");
+    try { await assert.rejects(() => start(ca,false,false,false,true),{ message: "SETTINGS_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter table settings_review_heads enable trigger settings_review_head_transition"); }
+    await admin.query("revoke execute on function lock_settings_review_authority(text,text,text) from novel_app");
+    try { await assert.rejects(() => start(ca,false,false,false,true),{ message: "SETTINGS_DATABASE_NOT_READY" }); }
+    finally { await admin.query("grant execute on function lock_settings_review_authority(text,text,text) to novel_app"); }
     const settingsApp = await start(ca,false,false,false,true);
-    let settingsTaskId: string,settingsCandidateId: string;
+    let settingsTaskId: string,settingsCandidateId: string,settingsActiveId: string;
     try {
       const actor = { workspaceId,userId };
       const base = `/projects/${projectId}/chapters/${chapterId}/settings-tasks`;
@@ -350,13 +356,24 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(view.body.version.id,settingsCandidateId);assert.equal(view.body.current,true);assert.equal(view.body.scriptVersion.id,lockedScriptId!);assert.equal(view.body.sourceFragments[0].text,"雨落");
       const dependencies = await admin.query("select script_version_id,target_item_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1",[settingsCandidateId]);
       assert.equal(dependencies.rows.length,2);assert.ok(dependencies.rows.every(d => d.script_version_id === lockedScriptId && d.target_item_id === "location"));
+      const settingsBase = `/projects/${projectId}/chapters/${chapterId}/settings`;
+      let reviewed = (await settingsApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "edit",requestId: "tls-settings-edit",expectedActiveVersionId: settingsCandidateId,reason: "visible",assetId: "location",value: { ...view.body.version.assets[0],name: "雨中庭院" } }).expect(201)).body;
+      assert.equal((await settingsApp.http.get(`${settingsBase}/operations/tls-settings-edit`).set("authorization",bearer).expect(200)).body.version.id,reviewed.id);
+      reviewed = (await settingsApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "tls-settings-confirm",expectedActiveVersionId: reviewed.id,reason: "checked" }).expect(201)).body;
+      reviewed = (await settingsApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "lock",requestId: "tls-settings-lock",expectedActiveVersionId: reviewed.id,reason: "freeze",assetId: "location" }).expect(201)).body;
+      assert.equal(reviewed.locks.location.lockedBy,userId);
+      reviewed = (await settingsApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "unlock",requestId: "tls-settings-unlock",expectedActiveVersionId: reviewed.id,reason: "revision",assetId: "location" }).expect(201)).body;
+      settingsActiveId = reviewed.id;
+      assert.equal((await settingsApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,settingsActiveId);
+      assert.equal(modelCalls,6);
     } finally { await settingsApp.close();assert.equal(settingsApp.settingsWorker!.status().state,"stopped"); }
     const settingsRestart = await start(ca,false,false,false,true);
     try {
       const recovered = (await settingsRestart.http.get(`/settings-tasks/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body;
       assert.equal(recovered.result?.candidateVersionId,settingsCandidateId!);assert.equal(modelCalls,6);
       const view = await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings`).set("authorization",bearer).expect(200);
-      assert.equal(view.body.version.id,settingsCandidateId!);
+      assert.equal(view.body.version.id,settingsActiveId!);assert.equal(view.body.version.status,"confirmed");
+      assert.equal((await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body.version.id,settingsCandidateId!);
     } finally { await settingsRestart.close(); }
     const second = await start();
     try {

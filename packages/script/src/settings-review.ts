@@ -26,6 +26,12 @@ export class SettingsReviewError extends Error {
 export class SettingsReviewService {
   private readonly options: { repository: SettingsReviewRepository;handoff: Pick<ConfirmedScriptHandoff,"read">;access: ProjectAccessReader;idGenerator(): string;clock(): Date };
   constructor(options: SettingsReviewService["options"]) { this.options = options; }
+  async permissions(a: Actor,p: string) {
+    const access = await this.options.access.findProjectAccess(a,p);
+    if (!access) throw new SettingsReviewError("NOT_FOUND");
+    const reviewer = access.role === "owner" || access.role === "reviewer";
+    return { canEdit: reviewer,canSuggest: true,canDecide: reviewer,canConfirm: reviewer,canLock: reviewer };
+  }
   async execute(a: Actor,p: string,c: string,input: SettingsReviewCommand) {
     const command = parse(input);
     if (![p,c].every(identifier)) throw new SettingsReviewError("INVALID_COMMAND");

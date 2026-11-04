@@ -1,3 +1,4 @@
+import type { SettingsReviewRepository,SettingsReviewService } from "@novel-adaptation/script/settings-review";
 import { BadRequestException,Controller,Get,Header,Inject,Module,NotFoundException,Param,Query,Req,ServiceUnavailableException,UseGuards,type DynamicModule } from "@nestjs/common";
 import type { Actor,SessionVerifier } from "@novel-adaptation/identity";
 import type { ProjectImportRepository } from "@novel-adaptation/project-import";
@@ -8,7 +9,7 @@ import type { SettingsCandidate,SettingsCandidateRepository } from "@novel-adapt
 import type { SettingsTaskContext } from "./settings-task-executor.ts";
 import { SESSION_VERIFIER,SessionGuard } from "./index.ts";
 const SERVICES = Symbol("SETTINGS_READ");
-type Services = { sessionVerifier: SessionVerifier;tasks: ModelTaskService;repository: SettingsCandidateRepository & { findActive(a: Actor,p: string,c: string): Promise<SettingsCandidate | null> };
+type Services = { reviews?: SettingsReviewRepository;review?: SettingsReviewService;sessionVerifier: SessionVerifier;tasks: ModelTaskService;repository: SettingsCandidateRepository & { findActive(a: Actor,p: string,c: string): Promise<SettingsCandidate | null> };
   context: Pick<SettingsTaskContext,"canRead">;handoff: Pick<ConfirmedScriptHandoff,"read">;projects: Pick<ProjectImportRepository,"findChapter">;scripts: Pick<ScriptContentRepository,"findVersion"> };
 function identifier(v: unknown) { return typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v); }
 class SettingsController {
@@ -30,7 +31,7 @@ class SettingsController {
         const task = await this.services.tasks.get(a,jobId);
         if (task.projectId !== p || task.chapterId !== c || task.input.stage !== "settings" || task.input.resultType !== "settingsContent") throw new NotFoundException();
       }
-      const version = jobId ? await this.services.repository.findGeneration(a,p,c,jobId) : await this.services.repository.findActive(a,p,c);
+      const version = jobId ? await this.services.repository.findGeneration(a,p,c,jobId) : await (this.services.reviews ?? this.services.repository).findActive(a,p,c);
       if (!version) throw new NotFoundException();
       const chapter = await this.services.projects.findChapter(a,p,c),source = chapter?.versions.find(v => v.id === version.sourceVersionId);
       const scriptVersion = await this.services.scripts.findVersion?.(a,p,c,version.scriptVersionId);
@@ -43,7 +44,10 @@ class SettingsController {
       } catch (error) {
         if (!(error instanceof ScriptContentError && ["CONTEXT_NOT_FOUND","INVALID_STATE"].includes(error.code))) throw error;
       }
-      return { version,current,sourceFragments: source.fragments.map(({ id,text }) => ({ id,text })),scriptVersion };
+      const active = !!this.services.reviews && (!jobId || (await this.services.reviews.findActive(a,p,c))?.id === version.id);
+      const allowed = current && active && this.services.review ? await this.services.review.permissions(a,p) : { canEdit: false,canSuggest: false,canDecide: false,canConfirm: false,canLock: false };
+      const permissions = { ...allowed,canEdit: allowed.canEdit && version.status === "candidate",canConfirm: allowed.canConfirm && version.status === "candidate",canLock: allowed.canLock && version.status === "confirmed" };
+      return { version,current,active,permissions,sourceFragments: source.fragments.map(({ id,text }) => ({ id,text })),scriptVersion };
     } catch (error) {
       if (error instanceof NotFoundException) throw error;
       if (error instanceof ModelTaskError && error.code === "TASK_NOT_FOUND") throw new NotFoundException();

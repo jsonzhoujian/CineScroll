@@ -455,3 +455,49 @@ test("settings submissions fail closed on rate denial or limiter failure without
     } finally { await app.close(); }
   }
 });
+
+import { InMemorySettingsReviewRepository,SettingsReviewService } from "@novel-adaptation/script/settings-review";
+import { SettingsReviewApiModule } from "../src/settings-review-api.ts";
+test("settings review Session API enforces roles and preserves formal version with auditable request recovery",async () => {
+  const f = await settingsFixture();
+  const project = (await f.projects.findProject(f.actor,"p"))!;project.members.push({ userId: "editor",role: "editor" },{ userId: "reviewer",role: "reviewer" });await f.projects.saveProject(f.actor,project);
+  const task = await f.tasks.submitSettings(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "review-seed" });
+  await new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "review-seed",clock: () => new Date("2026-11-04"),model: { async generate(r) { return settingsResponse(r); } } }).run(f.actor,task.id);
+  const candidate = (await f.candidates.findGeneration(f.actor,"p","c",task.id))!,repository = new InMemorySettingsReviewRepository(f.actor,candidate);
+  let sequence = 0;
+  const review = new SettingsReviewService({ repository,handoff: f.handoff,access: f.projects,idGenerator: () => `settings-review-${++sequence}`,clock: () => new Date("2026-11-04") });
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [SettingsReviewApiModule.register({ sessionVerifier: sessions,repository,review,context: f.context }),SettingsApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,repository: f.candidates,context: f.context,handoff: f.handoff,projects: f.projects,scripts: f.contentRepository,reviews: repository,review })] }).compile();
+  const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),base = "/projects/p/chapters/c/settings",auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },editor = { authorization: `Bearer ${await sessions.issue("editor","w")}` },reviewer = { authorization: `Bearer ${await sessions.issue("reviewer","w")}` };
+    const command = { kind: "edit",requestId: "api-edit",expectedActiveVersionId: candidate.id,reason: "visible",assetId: "location",value: { ...candidate.assets[0],name: "new courtyard" } };
+    await http.post(`${base}/review`).send(command).expect(401);await http.post(`${base}/review`).set(editor).send(command).expect(403);
+    await http.post(`${base}/review`).set(auth).send({ ...command,createdBy: "forged" }).expect(400);
+    const saved = repository.save.bind(repository);let dropped = false;
+    repository.save = async (a,v,expected) => { const result = await saved(a,v,expected);if (!dropped) { dropped = true;throw new Error("private-storage-ack"); }return result; };
+    const unknown = await http.post(`${base}/review`).set(reviewer).send(command).expect(503);assert.ok(!JSON.stringify(unknown.body).includes("private-storage-ack"));
+    const recovered = await http.get(`${base}/operations/api-edit`).set(reviewer).expect(200);let version = recovered.body.version;
+    assert.equal(recovered.headers["cache-control"],"no-store");assert.equal((await http.post(`${base}/review`).set(reviewer).send(command).expect(201)).body.id,version.id);
+    await http.get(`${base}/operations/api-edit`).set(editor).expect(404);
+    const view = await http.get(base).set(editor).expect(200);assert.equal(view.body.version.id,version.id);assert.equal(view.body.permissions.canEdit,false);assert.equal(view.body.permissions.canSuggest,true);
+    version = (await http.post(`${base}/review`).set(editor).send({ kind: "suggest",requestId: "api-suggest",expectedActiveVersionId: version.id,reason: "detail",assetId: "location",value: candidate.assets[0] }).expect(201)).body;
+    await http.post(`${base}/review`).set(auth).send({ kind: "confirm",requestId: "blocked-confirm",expectedActiveVersionId: version.id,reason: "check" }).expect(409);
+    version = (await http.post(`${base}/review`).set(auth).send({ kind: "decide",requestId: "api-accept",expectedActiveVersionId: version.id,reason: "checked",suggestionId: version.suggestions[0].id,decision: "accepted" }).expect(201)).body;
+    version = (await http.post(`${base}/review`).set(reviewer).send({ kind: "confirm",requestId: "api-confirm",expectedActiveVersionId: version.id,reason: "checked" }).expect(201)).body;
+    const formalId = version.id;assert.equal((await http.get(`${base}/versions/confirmed`).set(auth).expect(200)).body.version.id,formalId);
+    version = (await http.post(`${base}/review`).set(auth).send({ kind: "lock",requestId: "api-lock",expectedActiveVersionId: version.id,reason: "freeze",assetId: "location" }).expect(201)).body;
+    await http.post(`${base}/review`).set(editor).send({ ...command,kind: "suggest",requestId: "locked-suggest",expectedActiveVersionId: version.id }).expect(409);
+    version = (await http.post(`${base}/review`).set(auth).send({ kind: "unlock",requestId: "api-unlock",expectedActiveVersionId: version.id,reason: "revision",assetId: "location" }).expect(201)).body;
+    const retained = version.id;
+    version = (await http.post(`${base}/review`).set(editor).send({ ...command,kind: "suggest",requestId: "formal-suggest",expectedActiveVersionId: version.id }).expect(201)).body;
+    const pending = version.suggestions.find((s: { status: string }) => s.status === "pending");const formalWithSuggestion = version.id;
+    version = (await http.post(`${base}/review`).set(auth).send({ kind: "decide",requestId: "formal-accept",expectedActiveVersionId: version.id,reason: "checked",suggestionId: pending.id,decision: "accepted" }).expect(201)).body;
+    assert.equal(version.status,"candidate");assert.equal((await http.get(`${base}/versions/confirmed`).set(auth).expect(200)).body.version.id,formalWithSuggestion);
+    assert.equal((await http.get(`${base}/versions/${retained}`).set(auth).expect(200)).body.version.status,"confirmed");
+    await http.get(base).set({ authorization: `Bearer ${await sessions.issue("outsider","w")}` }).expect(404);
+    await http.get(`${base}/versions/confirmed`).set({ authorization: `Bearer ${await sessions.issue("outsider","w")}` }).expect(404);
+    const original = await http.get(`${base}/generations/${task.id}`).set(auth).expect(200);
+    assert.equal(original.body.version.id,candidate.id);assert.equal(original.body.active,false);assert.equal(original.body.permissions.canEdit,false);
+  } finally { await app.close(); }
+});

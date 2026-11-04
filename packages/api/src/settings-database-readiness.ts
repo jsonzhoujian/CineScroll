@@ -24,6 +24,29 @@ export async function assertSettingsDatabase(pool: Pool,workspaceIds: readonly s
       and exists(select 1 from pg_policy where polrelid='public.script_downstream_dependencies'::regclass and polname='script_settings_dependencies_insert' and polcmd='a')
       and (select count(*)=3 from pg_index where indisvalid and indexrelid in (to_regclass('public.model_tasks_settings_queued_idx'),to_regclass('public.model_tasks_settings_recovery_idx'),to_regclass('public.model_tasks_settings_chapter_idx'))) ready`);
     if (!guards.rows[0]?.ready) throw new Error();
+    const review = await client.query(`select
+      (select count(*)=2 and bool_and(relrowsecurity and relforcerowsecurity and not pg_has_role(session_user,relowner,'MEMBER')
+        and has_table_privilege(current_user,oid,'SELECT') and has_table_privilege(current_user,oid,'INSERT')
+        and not has_table_privilege(current_user,oid,'UPDATE') and not has_table_privilege(current_user,oid,'DELETE'))
+        from pg_class where oid in (to_regclass('public.settings_review_versions'),to_regclass('public.settings_review_heads')))
+      and has_column_privilege(current_user,'public.settings_review_heads','active_version_id','UPDATE')
+      and not has_column_privilege(current_user,'public.settings_review_heads','confirmed_version_id','UPDATE')
+      and (select count(*)=4 from pg_constraint where conrelid in ('public.settings_review_versions'::regclass,'public.settings_review_heads'::regclass) and contype='f' and convalidated)
+      and exists(select 1 from pg_constraint where conrelid='public.settings_review_versions'::regclass and contype='c' and convalidated)
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.settings_review_request_idx') and indisvalid and indisunique)
+      and (select count(*)=3 from pg_trigger where tgenabled in ('O','A') and ((tgrelid='public.settings_review_versions'::regclass and tgname='settings_review_immutable' and tgfoid='public.reject_immutable_change()'::regprocedure)
+        or (tgrelid='public.settings_review_versions'::regclass and tgname='settings_review_transition' and tgfoid='public.guard_settings_review_version()'::regprocedure)
+        or (tgrelid='public.settings_review_heads'::regclass and tgname='settings_review_head_transition' and tgfoid='public.guard_settings_review_head()'::regprocedure)))
+      and (select count(*)=5 from pg_policy where (polrelid='public.settings_review_versions'::regclass and polname in ('settings_review_read','settings_review_insert'))
+        or (polrelid='public.settings_review_heads'::regclass and polname in ('settings_review_heads_read','settings_review_heads_insert','settings_review_heads_update')))
+      and exists(select 1 from pg_policy where polrelid='public.script_downstream_dependencies'::regclass and polname='script_settings_review_dependencies_insert' and polcmd='a')
+      and has_function_privilege(current_user,'public.valid_settings_review_asset(jsonb,text,text,text)','EXECUTE')
+      and exists(select 1 from pg_proc p where p.oid=to_regprocedure('public.lock_settings_review_authority(text,text,text)') and p.prosecdef
+        and p.proconfig @> array['search_path=public, pg_temp'] and not pg_has_role(session_user,p.proowner,'MEMBER')
+        and has_function_privilege(current_user,p.oid,'EXECUTE')
+        and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl where acl.grantee=0 and acl.privilege_type='EXECUTE'))
+      ready`);
+    if (!review.rows[0]?.ready) throw new Error();
     await client.query("commit");
   } catch { await client.query("rollback").catch(() => {});throw new Error("SETTINGS_DATABASE_NOT_READY"); }
   finally { client.release(); }
