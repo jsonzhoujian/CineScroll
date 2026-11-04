@@ -709,3 +709,88 @@ for (const mode of ["success","uncertain","stale","mismatch","mobile"]) test(`�
   if (mode === "stale") await expect(panel.getByText("上游已变化，此候选仅供历史追溯。",{ exact: true })).toBeVisible();
   expect(posts).toBe(mode === "mobile" ? 0 : mode === "uncertain" ? 2 : 1);
 });
+
+for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mobile","read-failure","definition"]) test(`文字设定单项审核与正式修订：${mode}`,async ({ page }) => {
+  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [] };
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: true,version: script,sourceFragments: [{ id: "f",text: "雨落" }] } }));
+  type Version = import("../src/lib/api").SettingsView["version"];
+  let version: Version = { id: "setting",jobId: "settings-task",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: "candidate",generationStatus: "succeeded",assets: [{ id: "location",assetType: "location",name: "庭院",visibleDefinition: { weather: "细雨" },state: "雨中",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [],suggestions: [],locks: {} };
+  let formal: Version | null = null,posts = 0,readFailed = false;
+  const operations = new Map<string,Version>(),base = `${origin}/projects/p/chapters/c/settings`;
+  await page.route(base,r => {
+    if (mode === "read-failure" && posts === 1 && !readFailed) { readFailed = true;return r.fulfill({ headers,status: 403,json: { code: "FORBIDDEN" } }); }
+    return r.fulfill({ headers,json: { current: mode !== "stale",active: true,permissions: { canEdit: mode !== "editor" && version.status === "candidate",canSuggest: true,canDecide: mode !== "editor",canConfirm: mode !== "editor" && version.status === "candidate",canLock: mode !== "editor" && version.status === "confirmed" },version,scriptVersion: script,sourceFragments: [{ id: "f",text: "雨落" }] } }); });
+  await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,status: formal ? 200 : 404,json: formal ? { version: formal } : { code: "NOT_FOUND" } }));
+  await page.route(`${base}/operations/*`,r => { const saved = operations.get(decodeURIComponent(new URL(r.request().url()).pathname.split("/").at(-1)!));return r.fulfill({ headers,status: saved ? 200 : 404,json: saved ? { version: saved } : { code: "NOT_FOUND" } }); });
+  await page.route(`${base}/review`,r => {
+    if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
+    const command = r.request().postDataJSON();posts++;
+    if (mode === "conflict") return r.fulfill({ headers,status: 409,json: { code: "VERSION_CONFLICT" } });
+    expect(command.expectedActiveVersionId).toBe(version.id);expect(command.reason).toBeTruthy();
+    const old = version;
+    version = structuredClone({ ...version,id: `setting-${posts}`,parentVersionId: old.id,operation: { ...command,targetId: command.assetId ?? command.suggestionId ?? old.id } });
+    if (command.kind === "edit") version.assets = [command.value];
+    if (command.kind === "suggest") version.suggestions = [...version.suggestions!,{ id: `suggestion-${posts}`,assetId: "location",value: command.value,reason: command.reason,status: "pending",submittedBy: mode === "editor" ? "editor" : "owner" }];
+    if (command.kind === "decide") {
+      const suggestion = version.suggestions!.find(s => s.id === command.suggestionId)!;
+      suggestion.status = command.decision;
+      if (command.decision === "accepted") { version.assets = [suggestion.value];version.status = "candidate"; }
+    }
+    if (command.kind === "confirm") version.status = "confirmed";
+    if (command.kind === "lock") version.locks = { location: { lockedBy: "owner",lockedAt: "2026-11-04" } };
+    if (command.kind === "unlock") version.locks = {};
+    if (version.status === "confirmed") formal = structuredClone(version);
+    operations.set(command.requestId,structuredClone(version));
+    if (mode === "unknown" && posts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+    return r.fulfill({ headers,json: version });
+  });
+  async function enter() { await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();await page.getByRole("button",{ name: "读取当前剧本",exact: true }).click(); }
+  await enter();const workbench = page.getByRole("region",{ name: "设定候选生成与追溯" });
+  await workbench.getByRole("button",{ name: "读取当前设定",exact: true }).click();await workbench.getByRole("button",{ name: "庭院",exact: true }).click();
+  const review = page.getByRole("region",{ name: "文字设定审核" });
+  if (["stale","mobile"].includes(mode)) {
+    if (mode === "mobile") await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).not.toBeVisible();
+    else await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
+    await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");expect(posts).toBe(0);return;
+  }
+  if (mode === "definition") {
+    await review.getByLabel("可见特征 weather").fill("雪覆盖地面");await review.getByLabel("设定操作理由",{ exact: true }).fill("核对可见定义");
+    await review.getByRole("button",{ name: "提交设定建议",exact: true }).click();
+    await review.getByText("查看建议内容 suggestion-1",{ exact: true }).click();await expect(review.getByText("雪覆盖地面",{ exact: true })).toBeVisible();
+    await review.getByLabel("设定操作理由",{ exact: true }).fill("核对采纳");await review.getByRole("button",{ name: "接受设定建议 suggestion-1",exact: true }).click();
+    await expect(workbench.getByLabel("文字设定内容")).toContainText("雪覆盖地面");expect(posts).toBe(2);return;
+  }
+  await review.getByLabel("设定名称",{ exact: true }).fill("修改后的庭院");await review.getByLabel("设定操作理由",{ exact: true }).fill("可见特征");
+  if (mode === "editor") {
+    await expect(review.getByRole("button",{ name: "保存设定修改",exact: true })).toHaveCount(0);
+    await review.getByRole("button",{ name: "提交设定建议",exact: true }).click();await expect(review.getByText("pending",{ exact: false })).toBeVisible();expect(posts).toBe(1);return;
+  }
+  await review.getByRole("button",{ name: "保存设定修改",exact: true }).click();
+  if (mode === "conflict") { await expect(review.getByRole("status")).toContainText("操作被拒绝");expect(posts).toBe(1);return; }
+  if (mode === "read-failure") {
+    await expect(review.getByRole("status")).toContainText("操作已保存");
+    await review.getByRole("button",{ name: "核对设定原操作",exact: true }).click();await expect(review.getByRole("status")).toContainText("原操作已核对");expect(posts).toBe(1);
+  }
+  if (mode === "unknown") {
+    await expect(review.getByRole("status")).toContainText("操作结果未知");expect(decodeURIComponent(page.url())).not.toContain("修改后的庭院");
+    await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await enter();
+    await review.getByRole("button",{ name: "核对设定原操作",exact: true }).click();await expect(review.getByRole("status")).toContainText("原操作已核对");expect(posts).toBe(1);
+  }
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("核对完成");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();
+  await workbench.getByRole("button",{ name: "修改后的庭院",exact: true }).click();await review.getByLabel("设定操作理由",{ exact: true }).fill("冻结");await review.getByRole("button",{ name: "锁定当前设定",exact: true }).click();
+  await expect(review.getByRole("button",{ name: "提交设定建议",exact: true })).toBeDisabled();
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("修订");await review.getByRole("button",{ name: "明确解锁当前设定",exact: true }).click();
+  await review.getByLabel("设定名称",{ exact: true }).fill("修订候选庭院");await review.getByLabel("设定操作理由",{ exact: true }).fill("修订");await review.getByRole("button",{ name: "提交设定建议",exact: true }).click();
+  const suggestionId = version.suggestions!.find(s => s.status === "pending")!.id;
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("采纳");await review.getByRole("button",{ name: `接受设定建议 ${suggestionId}`,exact: true }).click();await expect(review.getByText("设定状态：候选",{ exact: true })).toBeVisible();
+  await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("修改后的庭院");
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("重新核对");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();
+  await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("修订候选庭院");
+});

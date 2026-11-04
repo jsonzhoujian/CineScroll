@@ -1,4 +1,5 @@
 "use client";
+import { SettingsReview } from "./settings-review";
 import { useEffect,useRef,useState } from "react";
 import { ApiClientError,type ApiClient,type ModelConfiguration,type SettingsTask,type SettingsView } from "../lib/api";
 type Pending = { requestId: string;configurationVersionId: string;modelId: string };
@@ -18,6 +19,7 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
       const values = ["settingsRequest","settingsConfig","settingsModel"].map(k => url.searchParams.get(k));
       if (values.every(Boolean)) { pending.current = { requestId: values[0]!,configurationVersionId: values[1]!,modelId: values[2]! };setUncertain(true); }
     }
+    if (url.searchParams.get("settingsReviewContext") === context) void act(readCurrent);
     return () => { alive.current = false; };
   },[context]);
   function remember(value: Pending | null,id?: string) {
@@ -76,6 +78,16 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
     }
     if (alive.current) { setView(next);setAssetId("");setNotice(next.current ? "已载入文字设定候选，尚未审核确认。" : "上游已变化，此候选仅供历史追溯。"); }
   }
+  async function readCurrent() {
+    const next = await api.getSettings(projectId,chapterId),v = next.version;
+    if (v.projectId !== projectId || v.chapterId !== chapterId || v.sourceVersionId !== sourceVersionId || v.scriptVersionId !== scriptVersionId
+      || v.upstreamConfirmedVersionIds.length !== 3 || v.upstreamConfirmedVersionIds.some((id,i) => id !== [scriptVersionId,planVersionId,knowledgeVersionId][i])
+      || next.scriptVersion.id !== v.scriptVersionId || next.scriptVersion.status !== "confirmed" || next.scriptVersion.sourceVersionId !== v.sourceVersionId) throw new Error("WRONG_CONTEXT");
+    if (alive.current) {
+      setView(next);setAssetId(old => v.assets.some(a => a.id === old) ? old : "");
+      const url = new URL(window.location.href);url.searchParams.set("settingsReviewContext",context);window.history.replaceState(null,"",url);
+    }
+  }
   const selected = view?.version.assets.find(a => a.id === assetId);
   const fragments = selected?.provenance.filter(p => p.type === "source_fragment" && p.sourceVersionId === view?.version.sourceVersionId).map(p => p.fragmentId) ?? [];
   const elements = view?.scriptVersion.elements.filter(e => e.provenance.some(p => p.type === "source_fragment" && fragments.includes(p.fragmentId))) ?? [];
@@ -91,7 +103,9 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多设定任务</button>}
     {task && <p>设定任务：{task.state} {task.reason} {task.result?.extractionStatus}{task.reason === "EXECUTION_UNCERTAIN" ? " · 结果待后台核对，请勿重复生成。" : ""}</p>}
     <button type="button" disabled={busy || uncertain || task?.state !== "succeeded" || !task.result} onClick={() => void act(load)}>载入设定候选</button>
+    <button type="button" disabled={busy} onClick={() => void act(readCurrent)}>读取当前设定</button>
     {view && <><p>设定版本 {view.version.id} · {view.version.generationStatus}</p>{view.version.failures.map(f => <p key={f.scopeKey}>失败范围 {f.scopeKey} · {f.code}</p>)}
+      <SettingsReview api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={assetId} disabled={busy || uncertain} run={act} onChanged={readCurrent} />
       {view.version.assets.map(a => <button type="button" key={a.id} aria-pressed={a.id === assetId} onClick={() => setAssetId(a.id)}>{a.name}</button>)}
       {selected && <><article aria-label="文字设定内容"><h3>{selected.name}</h3><dl>{Object.entries(selected.visibleDefinition).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}</dl><p>{selected.state}</p><p>状态变化：{selected.stateChanges.join("；") || "无"}</p><p>限制：{selected.restrictions.join("；") || "无"}</p></article>
         <aside aria-label="设定原文依据"><h3>原文依据</h3>{fragments.map((id,i) => <p key={i}>{view.sourceFragments.find(f => f.id === id)?.text ?? "原文不可用"}</p>)}</aside>

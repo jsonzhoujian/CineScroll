@@ -15,7 +15,7 @@ Submission shares the existing workspace generation rate budget and task capacit
 
 Candidate reads return `{version,current,active,permissions,sourceFragments,scriptVersion}`. The source fragments and immutable formal script are read by the candidate's stored source/script IDs. They remain available for historical tracing after an active upstream changes; `current` becomes false. Historical readability grants no generation authority. If pinned evidence cannot be read, return a sanitized 503 instead of substituting current evidence. Editing, suggestion, confirmation and locking APIs are documented in the T07-02 section below.
 
-Unauthenticated requests return 401; inaccessible projects/results or wrong-stage task IDs return 404. Task configuration, policy and workspace admission failures retain the controlled 400/403/409/429/503 mappings used by existing task APIs. Unexpected read failures return only `STORAGE_UNAVAILABLE`, never storage messages or credentials. Browser explicit loading and trace interactions remain pending until their separate regression is complete.
+Unauthenticated requests return 401; inaccessible projects/results or wrong-stage task IDs return 404. Task configuration, policy and workspace admission failures retain the controlled 400/403/409/429/503 mappings used by existing task APIs. Unexpected read failures return only `STORAGE_UNAVAILABLE`, never storage messages or credentials. Browser explicit loading and trace interactions passed the T07-01 regression; review controls are described below.
 
 ## T07-02 review API
 
@@ -34,4 +34,13 @@ Owners/reviewers may edit candidates, decide suggestions, confirm, lock and unlo
 
 Active/generation candidate reads additionally return `active` and `permissions` (`canEdit`, `canSuggest`, `canDecide`, `canConfirm`, `canLock`). `current` still describes upstream validity; `active` identifies the current review head. Inactive generation results and stale upstream results have no review action permissions. The active read follows review history, while the generation read always preserves the original result. Version/operation routes return `{version}` as read-only history.
 
-Review errors use controlled codes: `INVALID_COMMAND` 400, `NOT_FOUND` 404, `FORBIDDEN` 403, `VERSION_CONFLICT`/`SUGGESTION_CONFLICT`/`INVALID_STATE`/`LOCKED`/`UPSTREAM_CHANGED` 409, and `STORAGE_UNAVAILABLE` 503. Responses are `no-store`. After an uncertain write, clients can read the original operation or reconcile the identical command; they must preserve request identity and avoid submitting a different operation. Browser review controls and local regeneration remain pending.
+Review errors use controlled codes: `INVALID_COMMAND` 400, `NOT_FOUND` 404, `FORBIDDEN` 403, `VERSION_CONFLICT`/`SUGGESTION_CONFLICT`/`INVALID_STATE`/`LOCKED`/`UPSTREAM_CHANGED` 409, and `STORAGE_UNAVAILABLE` 503. Responses are `no-store`. After an uncertain write, clients can read the original operation or reconcile the identical command; they must preserve request identity and avoid submitting a different operation. Browser review controls are implemented as described below; local regeneration remains pending.
+
+
+## Browser review behavior
+
+The desktop workbench explicitly reads the current settings head before enabling review. Controls follow server permissions, upstream validity, active-head identity and each asset's lock. Editors can draft suggestions; owners/reviewers can edit candidates and decide suggestions. The form edits existing visible characteristics, state, state changes and restrictions while preserving asset identity and provenance. Suggestion details expose the complete proposed content and source evidence before a decision.
+
+Confirmation is blocked for failure scopes, empty assets or pending suggestions. Formal changes proceed through suggestions and derive a candidate; the retained formal version remains readable until explicit reconfirmation. Mobile continues to provide read-only tracing.
+
+Before a write, the exact command is saved to sessionStorage under its project/chapter/upstream context. An unknown outcome blocks new review actions; refresh restores the command but never automatically posts it. “核对设定原操作” reads the actor-scoped original operation; explicit resend preserves the same request ID/body. A successful write followed by a failed current-head read retains its reconciliation entry and reports that the write was saved. Command content is not placed in the URL. Missing/corrupt local recovery data fails closed. Browser review does not invoke a model or regenerate assets.
