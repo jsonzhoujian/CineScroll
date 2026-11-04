@@ -21,7 +21,7 @@ export class SettingsRegenerationRunner {
   private readonly options: { repository: SettingsRegenerationRepository;handoff: Pick<ConfirmedScriptHandoff,"read">;access: ProjectAccessReader;model: { generate(r: SettingsRegenerationRequest): Promise<unknown> };idGenerator(): string;clock(): Date };
   constructor(options: SettingsRegenerationRunner["options"]) { this.options = options; }
   async run(a: Actor,p: string,c: string,jobId: string,input: SettingsRegenerationSelection) {
-    const selection = normalize(input);
+    const selection = normalizeSettingsRegenerationSelection(input);
     if (![p,c,jobId].every(identifier)) throw new SettingsRegenerationError("INVALID_REQUEST");
     await reviewer(this.options.access,a,p);
     const fingerprint = digest(JSON.stringify(selection));
@@ -73,7 +73,7 @@ export class SettingsRegenerationRunner {
     if (!base) throw new SettingsReviewError("NOT_FOUND");
     if (base.id !== selection.expectedActiveVersionId) throw new SettingsReviewError("VERSION_CONFLICT");
     const formal = await this.options.handoff.read(a,p,c);authority(base,formal);
-    return { base,formal,targets: selectTargets(base,selection) };
+    return { base,formal,targets: selectSettingsRegenerationTargets(base,selection) };
   }
 }
 /** Reference adapter only; production must implement the same checks inside its save transaction. */
@@ -97,11 +97,11 @@ export class InMemorySettingsRegenerationRepository implements SettingsRegenerat
     if (replay) { if (replay.regeneration?.fingerprint !== v.regeneration.fingerprint) throw new SettingsReviewError("VERSION_CONFLICT");return replay; }
     const base = await this.reviews.findActive(a,v.projectId,v.chapterId);
     if (!base || base.id !== expected) throw new SettingsReviewError("VERSION_CONFLICT");
-    selectTargets(base,{ ...v.regeneration,expectedActiveVersionId: expected });
+    selectSettingsRegenerationTargets(base,{ ...v.regeneration,expectedActiveVersionId: expected });
     return this.reviews.save(a,v,expected);
   }
 }
-function selectTargets(base: SettingsVersion,s: SettingsRegenerationSelection): SettingsRegenerationTarget[] {
+export function selectSettingsRegenerationTargets(base: SettingsVersion,s: SettingsRegenerationSelection): SettingsRegenerationTarget[] {
   const targets: SettingsRegenerationTarget[] = [],ids = new Set<string>();
   const add = (asset: SettingAsset | undefined,failureScopeKey?: string) => {
     if (asset) {
@@ -133,7 +133,7 @@ function authority(v: SettingsVersion,formal: Awaited<ReturnType<ConfirmedScript
   if (v.scriptVersionId !== formal.version.id || v.sourceVersionId !== formal.version.sourceVersionId || v.upstreamConfirmedVersionIds.length !== ids.length || ids.some((id,i) => id !== v.upstreamConfirmedVersionIds[i])) throw new SettingsReviewError("UPSTREAM_CHANGED");
 }
 function identifier(v: unknown): v is string { return typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v); }
-function normalize(v: SettingsRegenerationSelection): SettingsRegenerationSelection {
+export function normalizeSettingsRegenerationSelection(v: SettingsRegenerationSelection): SettingsRegenerationSelection {
   if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).some(k => !["expectedActiveVersionId","assetIds","failureScopeKeys","reason"].includes(k))
     || !identifier(v.expectedActiveVersionId) || typeof v.reason !== "string" || !v.reason.trim() || v.reason.length > 2000
     || !Array.isArray(v.assetIds) || !Array.isArray(v.failureScopeKeys) || v.assetIds.length+v.failureScopeKeys.length < 1 || v.assetIds.length+v.failureScopeKeys.length > 100
@@ -142,3 +142,5 @@ function normalize(v: SettingsRegenerationSelection): SettingsRegenerationSelect
 }
 function digest(v: string) { return createHash("sha256").update(v).digest("hex"); }
 function operationId(id: string) { return `regenerate_${digest(id)}`; }
+
+export function settingsRegenerationFingerprint(selection: SettingsRegenerationSelection) { return digest(JSON.stringify(normalizeSettingsRegenerationSelection(selection))); }

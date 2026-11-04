@@ -16,7 +16,9 @@
     "./deepseek-episode-model": "./src/deepseek-episode-model.ts",
     "./settings-tasks": "./src/settings-task-api.ts",
     "./settings": "./src/settings-api.ts",
-    "./settings-review": "./src/settings-review-api.ts"
+    "./settings-review": "./src/settings-review-api.ts",
+    "./settings-regeneration-task-executor": "./src/settings-regeneration-task-executor.ts",
+    "./settings-regeneration-task-dispatcher": "./src/settings-regeneration-task-dispatcher.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

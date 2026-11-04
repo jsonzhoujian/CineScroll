@@ -1,3 +1,4 @@
+import { SettingsRegenerationTaskDispatcher } from "../src/settings-regeneration-task-dispatcher.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import "reflect-metadata";
@@ -500,4 +501,59 @@ test("settings review Session API enforces roles and preserves formal version wi
     const original = await http.get(`${base}/generations/${task.id}`).set(auth).expect(200);
     assert.equal(original.body.version.id,candidate.id);assert.equal(original.body.active,false);assert.equal(original.body.permissions.canEdit,false);
   } finally { await app.close(); }
+});
+
+import { InMemorySettingsRegenerationRepository,type SettingsRegenerationRequest } from "@novel-adaptation/script/settings-regeneration";
+import { SettingsRegenerationTaskContext,SettingsRegenerationTaskExecutor } from "../src/settings-regeneration-task-executor.ts";
+async function regenerationTaskFixture() {
+  const f = await settingsFixture();
+  const initial = await f.tasks.submitSettings(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "regeneration-base" });
+  await new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "regeneration-base",clock: () => new Date("2026-11-04"),model: { async generate(r) { return settingsResponse(r); } } }).run(f.actor,initial.id);
+  const candidate = (await f.candidates.findGeneration(f.actor,"p","c",initial.id))!,reviews = new InMemorySettingsReviewRepository(f.actor,candidate);
+  const results = new InMemorySettingsRegenerationRepository(reviews,f.handoff,f.projects),context = new SettingsRegenerationTaskContext(f.context,results,f.projects);
+  const tasks = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: context,settingsAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },generationPolicy: { isAllowed: async () => true },idGenerator: () => "unused" });
+  const input = { projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "regeneration",selection: { expectedActiveVersionId: candidate.id,assetIds: ["location"],failureScopeKeys: [],reason: "visible" } };
+  return { ...f,results,context,tasks,input,reviews };
+}
+function regenerationResponse(r: SettingsRegenerationRequest) {
+  return { ...settingsResponse(r),items: r.regeneration.targets.map(t => ({ scopeKey: t.scopeKey,status: "succeeded",value: { ...t.asset!,name: "regenerated courtyard" } })) };
+}
+test("settings regeneration task recovers a saved result after lost acknowledgement without another model invocation",async () => {
+  const f = await regenerationTaskFixture();let calls = 0;
+  const task = await f.tasks.submitSettingsRegeneration(f.actor,f.input);
+  assert.equal((await f.tasks.submitSettingsRegeneration(f.actor,f.input)).id,task.id);
+  const save = f.results.saveGeneration.bind(f.results);
+  f.results.saveGeneration = async (a,v,expected) => { await save(a,v,expected);throw new Error("lost acknowledgement"); };
+  const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.results,access: f.projects,idGenerator: () => "regenerated-version",clock: () => new Date("2026-11-04"),model: { async generate(r) { calls++;return regenerationResponse(r); } } });
+  const result = await executor.run(f.actor,task.id);assert.equal(result.reason,"EXECUTION_UNCERTAIN");
+  await assert.rejects(() => executor.run(f.actor,task.id),{ code: "STATE_CONFLICT" });
+  const find = f.results.findGeneration.bind(f.results);
+  f.results.findGeneration = async (a,p,c,id) => { const v = await find(a,p,c,id);return v ? { ...v,parentVersionId: "forged-base" } : null; };
+  await assert.rejects(() => executor.recover(f.actor,task.id),{ code: "STATE_CONFLICT" });
+  f.results.findGeneration = find;
+  const recovered = await new SettingsRegenerationTaskDispatcher({ repository: f.repository,executor }).tick("w","recover");
+  assert.equal(recovered.items[0]?.state,"succeeded");assert.equal((await f.tasks.get(f.actor,task.id)).result?.candidateVersionId,"regenerated-version");assert.equal(calls,1);
+  assert.equal((await f.repository.scanSettingsRegeneration("w","run",{ limit: 20,cursor: null })).tasks.length,0);
+});
+test("unknown regeneration without a saved result cannot run, resubmit or bypass the guard with a new request",async () => {
+  const f = await regenerationTaskFixture();let calls = 0;
+  const task = await f.tasks.submitSettingsRegeneration(f.actor,f.input);
+  const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.results,access: f.projects,idGenerator: () => "never-saved",clock: () => new Date("2026-11-04"),model: { async generate() { calls++;throw new Error("unknown provider execution"); } } });
+  const result = await executor.run(f.actor,task.id);assert.equal(result.state,"paused");assert.equal(result.reason,"EXECUTION_UNCERTAIN");
+  await assert.rejects(() => executor.run(f.actor,task.id),{ code: "STATE_CONFLICT" });
+  await assert.rejects(async () => f.tasks.resubmit(f.actor,task.id,await f.settingsSelection()),{ code: "STATE_CONFLICT" });
+  await assert.rejects(() => f.tasks.submitSettingsRegeneration(f.actor,{ ...f.input,requestId: "bypass" }),{ code: "STATE_CONFLICT" });
+  await assert.rejects(() => executor.recover(f.actor,task.id),{ code: "STATE_CONFLICT" });assert.equal(calls,1);
+  assert.equal((await f.repository.scanSettingsRegeneration("w","recover",{ limit: 20,cursor: null })).tasks[0]?.id,task.id);
+  assert.equal((await f.repository.scanSettings("w","recover",{ limit: 20,cursor: null })).tasks.length,0);
+});
+test("regeneration task admission stays closed by default and changed project parameters discard generated output",async () => {
+  const f = await regenerationTaskFixture();
+  const disabled = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: f.context,generationPolicy: { isAllowed: async () => true },idGenerator: () => "disabled" });
+  await assert.rejects(() => disabled.submitSettingsRegeneration(f.actor,f.input),{ code: "WORKSPACE_TASK_DISABLED" });
+  const task = await f.tasks.submitSettingsRegeneration(f.actor,f.input);let calls = 0;
+  const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.results,access: f.projects,idGenerator: () => "stale-regeneration",clock: () => new Date("2026-11-04"),model: { async generate(r) {
+    calls++;const project = (await f.projects.findProject(f.actor,"p"))!;project.targetDurationSeconds = 180;await f.projects.saveProject(f.actor,project);return regenerationResponse(r);
+  } } });
+  const result = await executor.run(f.actor,task.id);assert.equal(result.reason,"UPSTREAM_CHANGED");assert.equal(calls,1);assert.equal(await f.results.findGeneration(f.actor,"p","c",task.id),null);
 });

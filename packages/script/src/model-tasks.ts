@@ -1,3 +1,4 @@
+import { normalizeSettingsRegenerationSelection,type SettingsRegenerationSelection } from "./settings-regeneration.ts";
 import type { Actor, AspectRatio, NarrativeMode, TargetDurationSeconds } from "./index.ts";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -7,7 +8,7 @@ export type StoryRetrySelection = { expectedActiveVersionId: string; scopeKeys: 
 export type StoryRetrySnapshot = StoryRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 import { sameQualityBinding, type QualityBinding } from "./script-publication.ts";
 
-export type TaskInput = { qualityTarget?: QualityBinding; stage: "story_knowledge" | "script" | "settings"; resultType?: "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
+export type TaskInput = { regeneration?: SettingsRegenerationSelection;qualityTarget?: QualityBinding; stage: "story_knowledge" | "script" | "settings"; resultType?: "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
@@ -29,6 +30,8 @@ export class ModelTaskError extends Error {
 export interface ModelTaskRepository {
   /** Internal workspace-scoped discovery only; scanning is not a claim or authorization. */
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
+  scanSettingsRegeneration?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
+  listSettingsRegeneration?(workspaceId: string,p: string,c: string,page: TaskPageRequest): Promise<TaskPage>;
   scanSettings?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
   listSettings?(workspaceId: string,p: string,c: string,page: TaskPageRequest): Promise<TaskPage>;
   scanScriptQuality?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
@@ -59,6 +62,7 @@ export interface ModelTaskContextReader {
   canRead?(actor: Actor, projectId: string, chapterId: string): Promise<boolean>;
   /** Must verify project membership, stage prerequisites and confirmed upstream versions. */
   read(actor: Actor, projectId: string, chapterId: string): Promise<TaskInput | null>;
+  readRegeneration?(actor: Actor,projectId: string,chapterId: string,selection: SettingsRegenerationSelection): Promise<TaskInput | null>;
   readRetry?(actor: Actor, projectId: string, chapterId: string, selection: StoryRetrySelection): Promise<TaskInput | null>;
 }
 export interface ModelTaskGenerationPolicy { isAllowed(actor: Actor, projectId: string, chapterId: string, sourceVersionId: string): Promise<boolean> }
@@ -75,12 +79,12 @@ export class ModelTaskService {
     ...(options.episodeAdmission ? { episodeAdmission: { workspaceIds: [...options.episodeAdmission.workspaceIds], providerIds: [...options.episodeAdmission.providerIds] } } : {}) }; }
   #admission(actor: Actor, context: TaskInput, model?: TaskModelSnapshot): TaskAvailability {
     if (context.stage !== "story_knowledge" && !context.resultType) return { available: true, reason: null };
-    const admission = context.resultType === "settingsContent" ? this.#options.settingsAdmission : ["scriptContent","scriptQuality"].includes(context.resultType ?? "") ? this.#options.scriptAdmission : context.resultType === "episodePlan" ? this.#options.episodeAdmission : this.#options.storyAdmission;
+    const admission = ["settingsContent","settingsRegeneration"].includes(context.resultType ?? "") ? this.#options.settingsAdmission : ["scriptContent","scriptQuality"].includes(context.resultType ?? "") ? this.#options.scriptAdmission : context.resultType === "episodePlan" ? this.#options.episodeAdmission : this.#options.storyAdmission;
     if (!admission?.workspaceIds.includes(actor.workspaceId)) return { available: false, reason: "WORKSPACE_TASK_DISABLED" };
     if (model && !admission.providerIds.includes(model.providerId)) return { available: false, reason: "TASK_PROVIDER_UNSUPPORTED" };
     return { available: true, reason: null };
   }
-  async availability(actor: Actor, projectId: string, chapterId: string, selection: { configurationVersionId: string; modelId: string }, expectedResultType?: "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent"): Promise<TaskAvailability> {
+  async availability(actor: Actor, projectId: string, chapterId: string, selection: { configurationVersionId: string; modelId: string }, expectedResultType?: "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration"): Promise<TaskAvailability> {
     const context = await this.#context(actor, projectId, chapterId);
     if (expectedResultType && context.resultType !== expectedResultType) throw new ModelTaskError("INVALID_CONTEXT");
     const workspace = this.#admission(actor, context);
@@ -131,17 +135,23 @@ export class ModelTaskService {
     if (!this.#options.repository.listScriptContent) throw new ModelTaskError("STORAGE_UNAVAILABLE");
     return this.#options.repository.listScriptContent(actor.workspaceId,projectId,chapterId,page);
   }
-  async #context(actor: Actor, projectId: string, chapterId: string, retry?: StoryRetrySelection) {
-    const input = retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
+  async #context(actor: Actor, projectId: string, chapterId: string, retry?: StoryRetrySelection, regeneration?: SettingsRegenerationSelection) {
+    if (retry && regeneration) throw new ModelTaskError("INVALID_CONTEXT");
+    const input = regeneration ? await this.#options.contextReader.readRegeneration?.(actor,projectId,chapterId,regeneration) : retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
-    if (input.resultType !== undefined && (!["episodePlan","scriptContent","scriptQuality","settingsContent"].includes(input.resultType) || input.stage !== (input.resultType === "settingsContent" ? "settings" : "script") || input.upstreamConfirmedVersionIds.length !== (input.resultType === "settingsContent" ? 3 : input.resultType === "episodePlan" ? 1 : 2) || input.retry && input.resultType !== "scriptContent")
+    if (input.resultType !== undefined && (!["episodePlan","scriptContent","scriptQuality","settingsContent","settingsRegeneration"].includes(input.resultType) || input.stage !== (["settingsContent","settingsRegeneration"].includes(input.resultType) ? "settings" : "script") || input.upstreamConfirmedVersionIds.length !== (["settingsContent","settingsRegeneration"].includes(input.resultType) ? 3 : input.resultType === "episodePlan" ? 1 : 2) || input.retry && input.resultType !== "scriptContent")
       || !["story_knowledge", "script", "settings"].includes(input.stage) || !input.sourceVersionId
-      || (input.stage === "settings" && input.resultType !== "settingsContent")
+      || (input.stage === "settings" && !["settingsContent","settingsRegeneration"].includes(input.resultType ?? ""))
       || (input.stage === "script" && !input.upstreamConfirmedVersionIds.length)
       || (input.stage === "story_knowledge" && input.upstreamConfirmedVersionIds.length !== 0) || input.upstreamConfirmedVersionIds.some(id => !id)
       || ![60, 180, 300].includes(input.generationParameters.targetDurationSeconds)
       || !["9:16", "16:9"].includes(input.generationParameters.aspectRatio)
       || !["narration", "dialogue"].includes(input.generationParameters.narrativeMode)) throw new ModelTaskError("INVALID_CONTEXT");
+    if (input.resultType === "settingsRegeneration") {
+      try {
+        if (!regeneration || !input.regeneration || JSON.stringify(normalizeSettingsRegenerationSelection(input.regeneration)) !== JSON.stringify(normalizeSettingsRegenerationSelection(regeneration))) throw new Error();
+      } catch { throw new ModelTaskError("INVALID_CONTEXT"); }
+    } else if (input.regeneration) throw new ModelTaskError("INVALID_CONTEXT");
     if (retry && (input.stage !== "story_knowledge" && input.resultType !== "scriptContent" || !input.retry || input.retry.expectedActiveVersionId !== retry.expectedActiveVersionId
       || !validIdentifier(input.retry.retryOfJobId) || !validRetrySelection(input.retry) || !sameScopes(input.retry.scopeKeys, retry.scopeKeys))) throw new ModelTaskError("INVALID_CONTEXT");
     if (input.resultType === "scriptContent" && input.retry && (!Array.isArray(input.retry.failureOrigins) || input.retry.failureOrigins.length !== input.retry.scopeKeys.length
@@ -149,7 +159,7 @@ export class ModelTaskService {
       || new Set(input.retry.failureOrigins.map(f => f.scopeKey)).size !== input.retry.scopeKeys.length
       || input.retry.scopeKeys.some(s => !input.retry!.failureOrigins!.some(f => f.scopeKey === s)))) throw new ModelTaskError("INVALID_CONTEXT");
     if (input.resultType === "scriptQuality" && (!input.qualityTarget || !validIdentifier(input.qualityTarget.candidateVersionId) || !validIdentifier(input.qualityTarget.ruleVersion) || !/^[a-f0-9]{64}$/.test(input.qualityTarget.contextHash))) throw new ModelTaskError("INVALID_CONTEXT");
-    return { ...(input.qualityTarget ? { qualityTarget: structuredClone(input.qualityTarget) } : {}),stage: input.stage, ...(input.resultType ? { resultType: input.resultType } : {}), sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
+    return { ...(input.regeneration ? { regeneration: normalizeSettingsRegenerationSelection(input.regeneration) } : {}),...(input.qualityTarget ? { qualityTarget: structuredClone(input.qualityTarget) } : {}),stage: input.stage, ...(input.resultType ? { resultType: input.resultType } : {}), sourceVersionId: input.sourceVersionId, upstreamConfirmedVersionIds: [...input.upstreamConfirmedVersionIds],
       ...(retry && input.retry ? { retry: structuredClone(input.retry) } : {}),
       generationParameters: { targetDurationSeconds: input.generationParameters.targetDurationSeconds,
         aspectRatio: input.generationParameters.aspectRatio, narrativeMode: input.generationParameters.narrativeMode } };
@@ -223,6 +233,34 @@ export class ModelTaskService {
       return duplicate;
     }
   }
+  async submitSettingsRegeneration(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string;selection: SettingsRegenerationSelection }) {
+    let selected: SettingsRegenerationSelection;
+    try { selected = normalizeSettingsRegenerationSelection(input.selection); } catch { throw new ModelTaskError("INVALID_CONTEXT"); }
+    const resultType = "settingsRegeneration";
+    if (!validIdentifier(input.requestId)) throw new ModelTaskError("INVALID_CONTEXT");
+    if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+    const id = `settings_regeneration_${createHash("sha256").update(JSON.stringify([actor.workspaceId,actor.userId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
+    const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId
+      && task.createdBy === actor.userId && JSON.stringify(task.input.regeneration) === JSON.stringify(selected) && task.input.resultType === resultType && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
+    const existing = await this.#options.repository.find(actor.workspaceId, id);
+    if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
+    const context = await this.#context(actor,input.projectId,input.chapterId,undefined,selected);
+    if (context.resultType !== resultType) throw new ModelTaskError("INVALID_CONTEXT");
+    await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
+    this.#assertAdmission(actor, context);
+    const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
+    this.#assertAdmission(actor, context, model);
+    try {
+      return await this.#options.repository.insert({ id, workspaceId: actor.workspaceId, createdBy: actor.userId,
+        projectId: input.projectId, chapterId: input.chapterId, parentTaskId: null, input: context, model,
+        state: "queued", revision: 0, reason: null, result: null, leaseExpiresAt: null });
+    } catch (error) {
+      if (!(error instanceof ModelTaskError && ["STATE_CONFLICT", "TASK_QUEUE_FULL"].includes(error.code))) throw error;
+      const duplicate = await this.#options.repository.find(actor.workspaceId, id);
+      if (!duplicate || !matches(duplicate)) throw error;
+      return duplicate;
+    }
+  }
   async submitScriptQuality(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string;expectedActiveVersionId: string }) {
     if (!validIdentifier(input.requestId)) throw new ModelTaskError("INVALID_CONTEXT");
     if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
@@ -250,7 +288,7 @@ export class ModelTaskService {
   }
   async resubmit(actor: Actor, id: string, selection: { configurationVersionId: string; modelId: string }) {
     const old = await this.get(actor, id);
-    const current = await this.#context(actor, old.projectId, old.chapterId, old.input.retry);
+    const current = await this.#context(actor, old.projectId, old.chapterId, old.input.retry,old.input.regeneration);
     if (!sameInput(old.input, current)) throw new ModelTaskError("UPSTREAM_CHANGED");
     if (old.state !== "paused" || old.reason === "EXECUTION_UNCERTAIN") throw new ModelTaskError("STATE_CONFLICT");
     await this.assertGenerationAllowed(actor, old.projectId, old.chapterId, current);
@@ -323,7 +361,7 @@ export class ModelTaskService {
     let result: TaskResult | null = null;
     let executionError: TaskExecutionError | null = null;
     try {
-      const context = await this.#context(actor, task.projectId, task.chapterId, task.input.retry);
+      const context = await this.#context(actor, task.projectId, task.chapterId, task.input.retry,task.input.regeneration);
       if (task.input.resultType) this.#assertAdmission(actor, task.input, task.model);
       await this.assertGenerationAllowed(actor, task.projectId, task.chapterId, task.input);
       if (!sameInput(task.input, context)) { state = "paused"; reason = "UPSTREAM_CHANGED"; }
@@ -349,7 +387,7 @@ export class ModelTaskService {
   }
 }
 function sameInput(a: TaskInput, b: TaskInput) {
-  return (!a.qualityTarget && !b.qualityTarget || !!a.qualityTarget && !!b.qualityTarget && sameQualityBinding(a.qualityTarget,b.qualityTarget)) && a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
+  return JSON.stringify(a.regeneration) === JSON.stringify(b.regeneration) && (!a.qualityTarget && !b.qualityTarget || !!a.qualityTarget && !!b.qualityTarget && sameQualityBinding(a.qualityTarget,b.qualityTarget)) && a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
     && (!a.retry && !b.retry || !!a.retry && !!b.retry && a.retry.expectedActiveVersionId === b.retry.expectedActiveVersionId && a.retry.retryOfJobId === b.retry.retryOfJobId && sameScopes(a.retry.scopeKeys, b.retry.scopeKeys) && sameFailureOrigins(a.retry.failureOrigins,b.retry.failureOrigins))
     && a.upstreamConfirmedVersionIds.length === b.upstreamConfirmedVersionIds.length
     && a.upstreamConfirmedVersionIds.every((id, i) => id === b.upstreamConfirmedVersionIds[i])
@@ -379,6 +417,8 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"story_knowledge");
   }
+  async scanSettingsRegeneration(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"settingsRegeneration"); }
+  async listSettingsRegeneration(w: string,p: string,c: string,page: TaskPageRequest) { return this.#list(w,p,c,page,"settingsRegeneration"); }
   async scanSettings(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"settingsContent"); }
   async listSettings(w: string,p: string,c: string,page: TaskPageRequest) { return this.#list(w,p,c,page,"settingsContent"); }
   async scanScriptQuality(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"scriptQuality"); }
@@ -388,10 +428,10 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"episodePlan");
   }
-  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent"): Promise<TaskPage> {
+  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration"): Promise<TaskPage> {
     validateTaskScan(mode, page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId
-      && (kind !== "story_knowledge" ? task.input.stage === (kind === "settingsContent" ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
+      && (kind !== "story_knowledge" ? task.input.stage === (["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
       && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0)
       && (mode === "run" ? task.state === "queued" : task.state === "running" && (task.leaseExpiresAt === null || Date.parse(task.leaseExpiresAt) <= this.#clock())
         || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN"))
@@ -405,10 +445,10 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
-  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent"): Promise<TaskPage> {
+  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration"): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
-      && task.chapterId === chapterId && (kind !== "story_knowledge" ? task.input.stage === (kind === "settingsContent" ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
+      && task.chapterId === chapterId && (kind !== "story_knowledge" ? task.input.stage === (["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
       && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0))
       .sort((a, b) => compareTaskIds(a.id, b.id)).slice(0, page.limit + 1);
     const tasks = rows.slice(0, page.limit);
@@ -419,6 +459,9 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async insert(task: ModelTask) {
     if (task.state !== "queued" || task.revision !== 0 || task.reason !== null || task.result !== null || task.leaseExpiresAt !== null) throw new ModelTaskError("STATE_CONFLICT");
     if (this.#tasks.has(this.#key(task.workspaceId, task.id)) || (task.parentTaskId && [...this.#tasks.values()].some(t => t.workspaceId === task.workspaceId && t.parentTaskId === task.parentTaskId))) throw new ModelTaskError("STATE_CONFLICT");
+    if (task.input.resultType === "settingsRegeneration" && [...this.#tasks.values()].some(old => old.workspaceId === task.workspaceId && old.projectId === task.projectId && old.chapterId === task.chapterId
+      && old.input.resultType === "settingsRegeneration" && old.input.regeneration?.expectedActiveVersionId === task.input.regeneration?.expectedActiveVersionId
+      && (old.state === "queued" || old.state === "running" || old.state === "paused" && old.reason === "EXECUTION_UNCERTAIN"))) throw new ModelTaskError("STATE_CONFLICT");
     if (task.input.resultType === "scriptContent" && task.input.retry && [...this.#tasks.values()].some(old => old.workspaceId === task.workspaceId && old.projectId === task.projectId && old.chapterId === task.chapterId
       && old.input.resultType === "scriptContent" && old.input.retry?.expectedActiveVersionId === task.input.retry!.expectedActiveVersionId
       && (old.state === "queued" || old.state === "running" || old.state === "paused" && old.reason === "EXECUTION_UNCERTAIN"))) throw new ModelTaskError("STATE_CONFLICT");

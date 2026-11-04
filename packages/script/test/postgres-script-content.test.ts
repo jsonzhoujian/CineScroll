@@ -23,7 +23,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -237,6 +237,18 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     await admin.query("insert into source_versions(project_id,chapter_id,id,ordinal,created_at,created_by,character_count,source_text) values($1,$2,'123',2,now(),$3,2,'雨落')",[projectId,chapterId,actor.userId]);
     await admin.query("insert into source_fragments(id,project_id,chapter_id,text_content,content_hash) values('42',$1,$2,'雨落','numeric-id-fixture')",[projectId,chapterId]);
     await admin.query("insert into source_version_fragments values('123','42',$1,$2,1,0,2)",[projectId,chapterId]);
+    const regenerationTask: ModelTask = { ...settingsQueued,id: `regeneration-task-${suffix}`,input: { ...settingsQueued.input,resultType: "settingsRegeneration",regeneration: { expectedActiveVersionId: stableSettings.id,assetIds: [settingAsset.id],failureScopeKeys: [],reason: "visible" } } };
+    await taskRepository.insert(regenerationTask);
+    assert.deepEqual((await taskRepository.scanSettingsRegeneration(actor.workspaceId,"run",{ limit: 20,cursor: null })).tasks.map(t => t.id),[regenerationTask.id]);
+    await assert.rejects(() => taskRepository.insert({ ...regenerationTask,id: `duplicate-regeneration-${suffix}` }),{ code: "STATE_CONFLICT" });
+    await taskRepository.transition(actor.workspaceId,regenerationTask.id,0,"running",null);
+    await taskRepository.transition(actor.workspaceId,regenerationTask.id,1,"paused","EXECUTION_UNCERTAIN");
+    await assert.rejects(() => taskRepository.insert({ ...regenerationTask,id: `uncertain-bypass-${suffix}` }),{ code: "STATE_CONFLICT" });
+    const reopenedTasks = new PostgresModelTaskRepository(app);
+    assert.deepEqual((await reopenedTasks.find(actor.workspaceId,regenerationTask.id))!.input.regeneration,regenerationTask.input.regeneration);
+    assert.deepEqual((await reopenedTasks.scanSettingsRegeneration(actor.workspaceId,"recover",{ limit: 20,cursor: null })).tasks.map(t => t.id),[regenerationTask.id]);
+    assert.equal((await reopenedTasks.scanSettingsRegeneration("other","recover",{ limit: 20,cursor: null })).tasks.length,0);
+    await assert.rejects(() => reopenedTasks.recover(actor.workspaceId,regenerationTask.id,2,null),{ code: "STATE_CONFLICT" });
     // Settings persistence constraints use the application role, not the migration owner.
     const settings = { id: `settings-${suffix}`,projectId,chapterId,sourceVersionId: sourceId,scriptVersionId: revisedFormal.id,jobId: `settings-job-${suffix}`,createdBy: actor.userId,status: "candidate",generationStatus: "succeeded",assets: [],failures: [],upstreamConfirmedVersionIds: [revisedFormal.id,confirmed.id,bibleId] };
     const settingsClient = await app.connect();
@@ -255,6 +267,16 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
         const asset = { ...settingAsset,provenance: [{ type: "source_fragment",sourceVersionId: source,fragmentId: fragment,transformation: "retained" }] };
         assert.equal((await settingsClient.query("select valid_settings_review_asset($1::jsonb,$2,$3,'123') as valid",[JSON.stringify(asset),projectId,chapterId])).rows[0].valid,valid);
       }
+      for (const selection of [{ ...regenerationTask.input.regeneration,assetIds: [] },{ ...regenerationTask.input.regeneration,assetIds: [42] },{ ...regenerationTask.input.regeneration,assetIds: [settingAsset.id,settingAsset.id] }]) {
+        assert.equal((await settingsClient.query("select valid_settings_regeneration_task($1::jsonb) as valid",[JSON.stringify({ ...regenerationTask.input,regeneration: selection })])).rows[0].valid,false);
+      }
+      for (const input of [
+        { ...regenerationTask.input,sourceVersionId: "bad\nsource" },
+        { ...regenerationTask.input,regeneration: { ...regenerationTask.input.regeneration,expectedActiveVersionId: ` ${"x".repeat(256)} ` } },
+        { ...regenerationTask.input,regeneration: { ...regenerationTask.input.regeneration,assetIds: [` ${"x".repeat(256)} `] } },
+        { ...regenerationTask.input,generationParameters: { ...regenerationTask.input.generationParameters,targetDurationSeconds: "60" } },
+      ]) assert.equal((await settingsClient.query("select valid_settings_regeneration_task($1::jsonb) as valid",[JSON.stringify(input)])).rows[0].valid,false);
+      assert.equal((await settingsClient.query("select valid_settings_regeneration_task(jsonb_set($1::jsonb,'{generationParameters,targetDurationSeconds}','60.0'::jsonb)) as valid",[JSON.stringify(regenerationTask.input)])).rows[0].valid,true);
       const forgeReview = (value: typeof stableSettings) => settingsClient.query("insert into settings_review_versions(workspace_id,project_id,chapter_id,id,origin_version_id,parent_review_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",[actor.workspaceId,projectId,chapterId,value.id,savedSettings.id,stableSettings.id,value.createdBy,JSON.stringify(value)]);
       const forgedReview = { ...stableSettings,id: `forged-review-${suffix}`,parentVersionId: stableSettings.id,createdBy: actor.userId,operation: { requestId: "forged-review",fingerprint: "a".repeat(64),kind: "confirm" as const,targetId: stableSettings.id,reason: "forged" },status: "confirmed" as const,confirmedBy: actor.userId,confirmedAt: stableSettings.createdAt,assets: [] };
       await rejectWrite(() => forgeReview(forgedReview),"42501");
