@@ -6,7 +6,7 @@ import { validateSettingAsset,type SettingAsset } from "./settings-content.ts";
 export type SettingsReviewCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & (
   { kind: "edit" | "suggest";assetId: string;value: unknown } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" }
   | { kind: "confirm" } | { kind: "lock" | "unlock";assetId: string });
-export type SettingsSuggestion = { id: string;assetId: string;baseAssetHash: string;value: SettingAsset;reason: string;submittedBy: string;submittedAt: string;status: "pending" | "accepted" | "rejected";decidedBy?: string;decidedAt?: string;decisionReason?: string };
+export type SettingsSuggestion = { id: string;assetId: string;baseVersionId: string;baseAssetHash: string;value: SettingAsset;reason: string;submittedBy: string;submittedAt: string;status: "pending" | "accepted" | "rejected";decidedBy?: string;decidedAt?: string;decisionReason?: string };
 export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"];targetId: string;reason: string };
 export type SettingsVersion = Omit<SettingsCandidate,"status"> & { status: "candidate" | "confirmed";parentVersionId: string | null;
   suggestions: SettingsSuggestion[];locks: Record<string,{ lockedBy: string;lockedAt: string }>;
@@ -20,7 +20,7 @@ export interface SettingsReviewRepository {
   save(a: Actor,v: SettingsVersion,expectedActiveVersionId: string): Promise<SettingsVersion>;
 }
 export class SettingsReviewError extends Error {
-  readonly code: "NOT_FOUND" | "FORBIDDEN" | "INVALID_COMMAND" | "INVALID_STATE" | "VERSION_CONFLICT" | "SUGGESTION_CONFLICT" | "LOCKED" | "UPSTREAM_CHANGED";
+  readonly code: "NOT_FOUND" | "FORBIDDEN" | "INVALID_COMMAND" | "INVALID_STATE" | "VERSION_CONFLICT" | "SUGGESTION_CONFLICT" | "LOCKED" | "UPSTREAM_CHANGED" | "STORAGE_UNAVAILABLE";
   constructor(code: SettingsReviewError["code"]) { super(code);this.name = "SettingsReviewError";this.code = code; }
 }
 export class SettingsReviewService {
@@ -78,7 +78,7 @@ export class SettingsReviewService {
       const value = proposed;
       if (!value || value.id !== assetId || value.assetType !== asset!.assetType) throw new SettingsReviewError("INVALID_COMMAND");
       if (command.kind === "edit") next.assets = next.assets.map(v => v.id === assetId ? value : v);
-      else next.suggestions.push({ id: this.options.idGenerator(),assetId: assetId!,baseAssetHash: hash(asset),value,reason: command.reason,submittedBy: a.userId,submittedAt: now,status: "pending" });
+      else next.suggestions.push({ id: this.options.idGenerator(),assetId: assetId!,baseVersionId: base.id,baseAssetHash: hash(asset),value,reason: command.reason,submittedBy: a.userId,submittedAt: now,status: "pending" });
     }
     next.id = this.options.idGenerator();next.parentVersionId = base.id;next.createdBy = a.userId;next.createdAt = now;
     next.operation = { requestId: command.requestId,fingerprint,kind: command.kind,targetId: command.kind === "confirm" ? base.id : command.kind === "decide" ? command.suggestionId : command.assetId,reason: command.reason };

@@ -1,3 +1,5 @@
+import { PostgresSettingsReviewRepository } from "../src/postgres-settings-review.ts";
+import { SettingsReviewService } from "../src/settings-review.ts";
 import { PostgresSettingsCandidateRepository } from "../src/postgres-settings-candidates.ts";
 import type { SettingsCandidate } from "../src/settings-runner.ts";
 import { ScriptRevisionService } from "../src/script-revision.ts";
@@ -21,7 +23,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -193,6 +195,48 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal(await reopenedSettings.findGeneration({ ...actor,userId: "outsider" },projectId,chapterId,savedSettings.jobId),null);
     await assert.rejects(() => reopenedSettings.saveGeneration(actor,{ ...generatedSettings,scriptVersionId: lockedScript.id }),{ code: "UPSTREAM_CHANGED" });
     assert.deepEqual((await admin.query("select target_item_id,script_element_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1 order by script_element_id",[savedSettings.id])).rows,[{ target_item_id: "rain-location",script_element_id: "action" },{ target_item_id: "rain-location",script_element_id: "dialogue" }]);
+    await admin.query("insert into source_fragments(id,project_id,chapter_id,text_content,content_hash) values('f',$1,$2,'雨落','fixture')",[projectId,chapterId]);
+    await admin.query("insert into source_version_fragments values($1,'f',$2,$3,1,0,2)",[sourceId,projectId,chapterId]);
+    const settingsReviewRepo = new PostgresSettingsReviewRepository(app,settingsHandoff);
+    const settingsReview = new SettingsReviewService({ repository: settingsReviewRepo,handoff: settingsHandoff,access: accessReader,idGenerator: () => `settings-review-${suffix}-${++sequence}`,clock: () => new Date("2026-11-04") });
+    const initialSettings = (await settingsReviewRepo.findActive(actor,projectId,chapterId))!;
+    const settingAsset = initialSettings.assets[0]!;
+    const editSettings = { kind: "edit" as const,requestId: "edit-settings",expectedActiveVersionId: initialSettings.id,reason: "visible",assetId: settingAsset.id,value: { ...settingAsset,name: "rain courtyard" } };
+    await assert.rejects(() => settingsReview.execute({ ...actor,userId: "editor" },projectId,chapterId,editSettings),{ code: "FORBIDDEN" });
+    const collisionReview = new SettingsReviewService({ repository: settingsReviewRepo,handoff: settingsHandoff,access: accessReader,idGenerator: () => savedSettings.id,clock: () => new Date("2026-11-04") });
+    await assert.rejects(() => collisionReview.execute(actor,projectId,chapterId,{ ...editSettings,requestId: "settings-id-collision" }),{ code: "VERSION_CONFLICT" });
+    await admin.query("create function fail_settings_review_dependency_test() returns trigger language plpgsql as $$ begin raise exception 'simulated review dependency failure'; end $$");
+    await admin.query("create trigger fail_settings_review_dependency_test before insert on script_downstream_dependencies for each row execute function fail_settings_review_dependency_test()");
+    await assert.rejects(() => settingsReview.execute(actor,projectId,chapterId,editSettings),{ code: "STORAGE_UNAVAILABLE" });
+    assert.equal((await settingsReviewRepo.findActive(actor,projectId,chapterId))!.id,initialSettings.id);
+    assert.equal(await settingsReviewRepo.findOperation(actor,projectId,chapterId,editSettings.requestId),null);
+    await admin.query("drop trigger fail_settings_review_dependency_test on script_downstream_dependencies; drop function fail_settings_review_dependency_test()");
+    const editedSettings = await settingsReview.execute({ ...actor,userId: "reviewer" },projectId,chapterId,editSettings);
+    assert.deepEqual(await new PostgresSettingsReviewRepository(app,settingsHandoff).findActive(actor,projectId,chapterId),editedSettings);
+    assert.equal((await settingsReview.execute({ ...actor,userId: "reviewer" },projectId,chapterId,editSettings)).id,editedSettings.id);
+    assert.equal((await new PostgresSettingsCandidateRepository(app,settingsHandoff).findGeneration(actor,projectId,chapterId,savedSettings.jobId))!.id,savedSettings.id);
+    let reviewedSettings = await settingsReview.execute({ ...actor,userId: "editor" },projectId,chapterId,{ kind: "suggest",requestId: "suggest-settings",expectedActiveVersionId: editedSettings.id,reason: "detail",assetId: settingAsset.id,value: { ...settingAsset,name: "new courtyard" } });
+    reviewedSettings = await settingsReview.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "accept-settings",expectedActiveVersionId: reviewedSettings.id,reason: "checked",suggestionId: reviewedSettings.suggestions[0]!.id,decision: "accepted" });
+    reviewedSettings = await settingsReview.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "confirm-settings",expectedActiveVersionId: reviewedSettings.id,reason: "checked" });
+    assert.equal((await settingsReviewRepo.findConfirmed(actor,projectId,chapterId))!.id,reviewedSettings.id);
+    reviewedSettings = await settingsReview.execute(actor,projectId,chapterId,{ kind: "lock",requestId: "lock-settings",expectedActiveVersionId: reviewedSettings.id,reason: "freeze",assetId: settingAsset.id });
+    assert.ok(reviewedSettings.locks[settingAsset.id]);
+    reviewedSettings = await settingsReview.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock-settings",expectedActiveVersionId: reviewedSettings.id,reason: "revision",assetId: settingAsset.id });
+    reviewedSettings = await settingsReview.execute({ ...actor,userId: "editor" },projectId,chapterId,{ kind: "suggest",requestId: "formal-settings",expectedActiveVersionId: reviewedSettings.id,reason: "revision",assetId: settingAsset.id,value: settingAsset });
+    const formalSettingsId = reviewedSettings.id;
+    reviewedSettings = await settingsReview.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "accept-formal-settings",expectedActiveVersionId: reviewedSettings.id,reason: "checked",suggestionId: reviewedSettings.suggestions.find(s => s.status === "pending")!.id,decision: "accepted" });
+    assert.equal(reviewedSettings.status,"candidate");assert.equal((await settingsReviewRepo.findConfirmed(actor,projectId,chapterId))!.id,formalSettingsId);
+    const competingSettings = await Promise.allSettled([settingsReview.execute(actor,projectId,chapterId,{ ...editSettings,requestId: "settings-race-a",expectedActiveVersionId: reviewedSettings.id }),settingsReview.execute(actor,projectId,chapterId,{ ...editSettings,requestId: "settings-race-b",expectedActiveVersionId: reviewedSettings.id })]);
+    assert.equal(competingSettings.filter(r => r.status === "fulfilled").length,1);
+    assert.equal(await settingsReviewRepo.findActive({ ...actor,workspaceId: "other" },projectId,chapterId),null);
+    assert.equal(await settingsReviewRepo.findConfirmed({ ...actor,userId: "outsider" },projectId,chapterId),null);
+    const stableSettings = (await settingsReviewRepo.findActive(actor,projectId,chapterId))!;
+    await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
+    await assert.rejects(() => settingsReview.execute(actor,projectId,chapterId,{ ...editSettings,requestId: "settings-stale-source",expectedActiveVersionId: stableSettings.id }),{ code: "UPSTREAM_CHANGED" });
+    await admin.query("update chapters set active_source_version_id=$3 where project_id=$1 and id=$2",[projectId,chapterId,sourceId]);
+    await admin.query("insert into source_versions(project_id,chapter_id,id,ordinal,created_at,created_by,character_count,source_text) values($1,$2,'123',2,now(),$3,2,'雨落')",[projectId,chapterId,actor.userId]);
+    await admin.query("insert into source_fragments(id,project_id,chapter_id,text_content,content_hash) values('42',$1,$2,'雨落','numeric-id-fixture')",[projectId,chapterId]);
+    await admin.query("insert into source_version_fragments values('123','42',$1,$2,1,0,2)",[projectId,chapterId]);
     // Settings persistence constraints use the application role, not the migration owner.
     const settings = { id: `settings-${suffix}`,projectId,chapterId,sourceVersionId: sourceId,scriptVersionId: revisedFormal.id,jobId: `settings-job-${suffix}`,createdBy: actor.userId,status: "candidate",generationStatus: "succeeded",assets: [],failures: [],upstreamConfirmedVersionIds: [revisedFormal.id,confirmed.id,bibleId] };
     const settingsClient = await app.connect();
@@ -207,6 +251,19 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
         await assert.rejects(action,{ code });
         await settingsClient.query("rollback to savepoint settings_constraint");
       };
+      for (const [source,fragment,valid] of [["123","42",true],[123,"42",false],["123",42,false]]) {
+        const asset = { ...settingAsset,provenance: [{ type: "source_fragment",sourceVersionId: source,fragmentId: fragment,transformation: "retained" }] };
+        assert.equal((await settingsClient.query("select valid_settings_review_asset($1::jsonb,$2,$3,'123') as valid",[JSON.stringify(asset),projectId,chapterId])).rows[0].valid,valid);
+      }
+      const forgeReview = (value: typeof stableSettings) => settingsClient.query("insert into settings_review_versions(workspace_id,project_id,chapter_id,id,origin_version_id,parent_review_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",[actor.workspaceId,projectId,chapterId,value.id,savedSettings.id,stableSettings.id,value.createdBy,JSON.stringify(value)]);
+      const forgedReview = { ...stableSettings,id: `forged-review-${suffix}`,parentVersionId: stableSettings.id,createdBy: actor.userId,operation: { requestId: "forged-review",fingerprint: "a".repeat(64),kind: "confirm" as const,targetId: stableSettings.id,reason: "forged" },status: "confirmed" as const,confirmedBy: actor.userId,confirmedAt: stableSettings.createdAt,assets: [] };
+      await rejectWrite(() => forgeReview(forgedReview),"42501");
+      await rejectWrite(() => settingsClient.query("update settings_review_versions set version_json='{}'"),"42501");
+      await rejectWrite(() => settingsClient.query("update settings_review_heads set active_version_id=$1",[editedSettings.id]),"42501");
+      await rejectWrite(() => settingsClient.query("select lock_settings_review_authority('other',$1,$2)",[projectId,chapterId]),"42501");
+      await settingsClient.query("select set_config('app.current_user_id','editor',true)");
+      await rejectWrite(() => forgeReview({ ...forgedReview,id: `editor-forged-${suffix}`,createdBy: "editor",confirmedBy: "editor",assets: stableSettings.assets }),"42501");
+      await settingsClient.query("select set_config('app.current_user_id',$1,true)",[actor.userId]);
       await rejectWrite(() => settingsClient.query("insert into script_downstream_dependencies values($1,$2,$3,'storyboard',$4,'rain-location',$5,'action')",[actor.workspaceId,projectId,chapterId,savedSettings.id,revisedFormal.id]),"42501");
       await rejectWrite(() => settingsClient.query("insert into script_downstream_dependencies values($1,$2,$3,'settings',$4,'rain-location',$5,'action')",[actor.workspaceId,projectId,chapterId,savedSettings.id,lockedScript.id]),"42501");
       await rejectWrite(() => settingsClient.query("insert into script_downstream_dependencies values($1,$2,$3,'settings',$4,'invented-item',$5,'action')",[actor.workspaceId,projectId,chapterId,savedSettings.id,revisedFormal.id]),"42501");
