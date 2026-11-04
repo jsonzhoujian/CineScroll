@@ -2,8 +2,8 @@
 import { useEffect,useRef,useState } from "react";
 import { ApiClientError,type ApiClient,type SettingsView,type SettingsReviewCommand } from "../lib/api";
 type Asset = SettingsView["version"]["assets"][number];
-export function SettingsReview({ api,projectId,chapterId,context,view,selectedId,disabled,run,onChanged }: {
-  api: ApiClient;projectId: string;chapterId: string;context: string;view: SettingsView;selectedId: string;disabled: boolean;run(f: () => Promise<void>): Promise<void>;onChanged(): Promise<void>;
+export function SettingsReview({ api,projectId,chapterId,context,view,selectedId,disabled,readDisabled = disabled,run,onChanged,onBlockedChange }: {
+  api: ApiClient;projectId: string;chapterId: string;context: string;view: SettingsView;selectedId: string;disabled: boolean;readDisabled?: boolean;run(f: () => Promise<void>): Promise<void>;onChanged(): Promise<void>;onBlockedChange?(v: boolean): void;
 }) {
   const [draft,setDraft] = useState<Asset | null>(null),[reason,setReason] = useState("");
   const [pending,setPending] = useState<SettingsReviewCommand | null>(null),[restoreBlocked,setRestoreBlocked] = useState(true);
@@ -22,6 +22,7 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
     } catch { setNotice("无法读取已保存的操作身份，请先人工核对，暂停新的审核操作。"); }
     return () => { alive.current = false; };
   },[storageKey]);
+  useEffect(() => { onBlockedChange?.(restoreBlocked || !!pending); },[restoreBlocked,pending,onBlockedChange]);
   useEffect(() => { setDraft(structuredClone(view.version.assets.find(a => a.id === selectedId) ?? null));setReason(""); },[view.version,selectedId]);
   const eligible = view.current && view.active === true,blocked = disabled || restoreBlocked || !!pending || !eligible;
   const locked = !!selectedId && Object.hasOwn(view.version.locks ?? {},selectedId),isFormal = view.version.status === "confirmed";
@@ -64,7 +65,7 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
   }
   return <section aria-label="文字设定审核"><h3>文字设定审核</h3><p>设定状态：{isFormal ? "正式" : "候选"}</p><p role="status">{notice}</p>
     {!eligible && <p>当前内容仅供追溯，请读取当前设定后再审核。</p>}
-    <button type="button" disabled={disabled} onClick={() => void run(async () => { const result = await api.getSettingsVersion(projectId,chapterId,"confirmed");validVersion(result.version);if (result.version.status !== "confirmed") throw new Error("NOT_FORMAL");if (alive.current) setFormal(result.version); })}>读取保留正式设定</button>
+    <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const result = await api.getSettingsVersion(projectId,chapterId,"confirmed");validVersion(result.version);if (result.version.status !== "confirmed") throw new Error("NOT_FORMAL");if (alive.current) setFormal(result.version); })}>读取保留正式设定</button>
     {formal && <article aria-label="保留正式设定"><p>正式版本 {formal.id}</p>{formal.assets.map(a => <p key={a.id}>{a.name}</p>)}</article>}
     <div className="desktop-task-action">
       <label>设定操作理由<input aria-label="设定操作理由" value={reason} maxLength={2000} disabled={blocked} onChange={e => setReason(e.target.value)} /></label>
@@ -86,7 +87,7 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
         </details>
         {s.status === "pending" && view.permissions?.canDecide && <><button type="button" disabled={blocked || !reason.trim() || Object.hasOwn(view.version.locks ?? {},s.assetId)} onClick={() => void run(() => submit("decide",s.id,"accepted"))}>接受设定建议 {s.id}</button><button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => submit("decide",s.id,"rejected"))}>拒绝设定建议 {s.id}</button></>}
       </article>)}
-      {pending && <><button type="button" disabled={disabled || restoreBlocked} onClick={() => void run(reconcile)}>核对设定原操作</button><button type="button" disabled={disabled || restoreBlocked} onClick={() => void run(() => submit(pending.kind,undefined,undefined,true))}>重新发送设定原操作</button></>}
+      {pending && <><button type="button" disabled={readDisabled || restoreBlocked} onClick={() => void run(reconcile)}>核对设定原操作</button><button type="button" disabled={disabled || restoreBlocked} onClick={() => void run(() => submit(pending.kind,undefined,undefined,true))}>重新发送设定原操作</button></>}
     </div>
   </section>;
 }

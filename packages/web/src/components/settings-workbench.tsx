@@ -1,4 +1,5 @@
 "use client";
+import { SettingsRegeneration,readSettingsRegenerationSubmission } from "./settings-regeneration";
 import { SettingsReview } from "./settings-review";
 import { useEffect,useRef,useState } from "react";
 import { ApiClientError,type ApiClient,type ModelConfiguration,type SettingsTask,type SettingsView } from "../lib/api";
@@ -10,6 +11,7 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
   const [task,setTask] = useState<SettingsTask | null>(null),[history,setHistory] = useState<SettingsTask[]>([]),[cursor,setCursor] = useState<string | null>(null);
   const [view,setView] = useState<SettingsView | null>(null),[assetId,setAssetId] = useState("");
   const [busy,setBusy] = useState(false),[uncertain,setUncertain] = useState(false),[notice,setNotice] = useState("正式剧本已确认，可生成文字设定候选。");
+  const [reviewBlocked,setReviewBlocked] = useState(false),[regenerationBlocked,setRegenerationBlocked] = useState(false);
   const alive = useRef(false),locked = useRef(false),pending = useRef<Pending | null>(null);
   const context = JSON.stringify([projectId,chapterId,sourceVersionId,scriptVersionId,planVersionId,knowledgeVersionId]);
   useEffect(() => {
@@ -79,7 +81,16 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
     if (alive.current) { setView(next);setAssetId("");setNotice(next.current ? "已载入文字设定候选，尚未审核确认。" : "上游已变化，此候选仅供历史追溯。"); }
   }
   async function readCurrent() {
-    const next = await api.getSettings(projectId,chapterId),v = next.version;
+    const next = await api.getSettings(projectId,chapterId);
+    let saved: ReturnType<typeof readSettingsRegenerationSubmission> = null;
+    try { saved = readSettingsRegenerationSubmission(context); } catch { next.active = false; }
+    if (saved && next.version.id !== saved.selection.expectedActiveVersionId) {
+      const baseline = (await api.getSettingsVersion(projectId,chapterId,saved.selection.expectedActiveVersionId)).version;
+      if (baseline.id !== saved.selection.expectedActiveVersionId) throw new Error("WRONG_REGENERATION_BASELINE");
+      next.version = baseline;
+      next.active = false;
+    }
+    const v = next.version;
     if (v.projectId !== projectId || v.chapterId !== chapterId || v.sourceVersionId !== sourceVersionId || v.scriptVersionId !== scriptVersionId
       || v.upstreamConfirmedVersionIds.length !== 3 || v.upstreamConfirmedVersionIds.some((id,i) => id !== [scriptVersionId,planVersionId,knowledgeVersionId][i])
       || next.scriptVersion.id !== v.scriptVersionId || next.scriptVersion.status !== "confirmed" || next.scriptVersion.sourceVersionId !== v.sourceVersionId) throw new Error("WRONG_CONTEXT");
@@ -99,13 +110,14 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
       <button type="button" disabled={busy || (!uncertain && (!model || !!task || !!view))} onClick={() => void act(submit)}>{uncertain ? "核对设定原提交" : "生成文字设定"}</button>
     </div>
     <button type="button" disabled={busy} onClick={() => void act(() => refresh())}>刷新设定任务</button>
-    {history.map(t => <button type="button" key={t.id} disabled={busy || uncertain} onClick={() => { setTask(t);setView(null);remember(null,t.id); }}>{t.id} · {t.state}</button>)}
+    {history.map(t => <button type="button" key={t.id} disabled={busy || uncertain || regenerationBlocked || reviewBlocked} onClick={() => { setTask(t);setView(null);remember(null,t.id); }}>{t.id} · {t.state}</button>)}
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多设定任务</button>}
     {task && <p>设定任务：{task.state} {task.reason} {task.result?.extractionStatus}{task.reason === "EXECUTION_UNCERTAIN" ? " · 结果待后台核对，请勿重复生成。" : ""}</p>}
     <button type="button" disabled={busy || uncertain || task?.state !== "succeeded" || !task.result} onClick={() => void act(load)}>载入设定候选</button>
     <button type="button" disabled={busy} onClick={() => void act(readCurrent)}>读取当前设定</button>
     {view && <><p>设定版本 {view.version.id} · {view.version.generationStatus}</p>{view.version.failures.map(f => <p key={f.scopeKey}>失败范围 {f.scopeKey} · {f.code}</p>)}
-      <SettingsReview api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={assetId} disabled={busy || uncertain} run={act} onChanged={readCurrent} />
+      <SettingsReview api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={assetId} disabled={busy || uncertain || regenerationBlocked} readDisabled={busy} run={act} onChanged={readCurrent} onBlockedChange={setReviewBlocked} />
+      <SettingsRegeneration api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={busy || uncertain || reviewBlocked} readDisabled={busy} run={act} onBlockedChange={setRegenerationBlocked} onLoaded={next => { setView(next);setAssetId(old => next.version.assets.some(a => a.id === old) ? old : ""); }} />
       {view.version.assets.map(a => <button type="button" key={a.id} aria-pressed={a.id === assetId} onClick={() => setAssetId(a.id)}>{a.name}</button>)}
       {selected && <><article aria-label="文字设定内容"><h3>{selected.name}</h3><dl>{Object.entries(selected.visibleDefinition).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}</dl><p>{selected.state}</p><p>状态变化：{selected.stateChanges.join("；") || "无"}</p><p>限制：{selected.restrictions.join("；") || "无"}</p></article>
         <aside aria-label="设定原文依据"><h3>原文依据</h3>{fragments.map((id,i) => <p key={i}>{view.sourceFragments.find(f => f.id === id)?.text ?? "原文不可用"}</p>)}</aside>

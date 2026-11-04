@@ -780,6 +780,7 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
   }
   if (mode === "unknown") {
     await expect(review.getByRole("status")).toContainText("操作结果未知");expect(decodeURIComponent(page.url())).not.toContain("修改后的庭院");
+    await expect(page.getByRole("region",{ name: "文字设定局部重生" }).getByRole("button",{ name: "提交设定局部重生",exact: true })).toBeDisabled();
     await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await enter();
     await review.getByRole("button",{ name: "核对设定原操作",exact: true }).click();await expect(review.getByRole("status")).toContainText("原操作已核对");expect(posts).toBe(1);
   }
@@ -793,4 +794,94 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
   await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("修改后的庭院");
   await review.getByLabel("设定操作理由",{ exact: true }).fill("重新核对");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();
   await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("修订候选庭院");
+});
+
+for (const mode of ["success","unknown","missing","mismatch","failure","locked","editor","stale","mobile","storage","execution-unknown","stopped","pending","overlap","dual-pending","corrupt"]) test(`文字设定局部重生与提交恢复：${mode}`,async ({ page }) => {
+  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [] };
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: true,version: script,sourceFragments: [{ id: "f",text: "雨落" }] } }));
+
+  type View = import("../src/lib/api").SettingsView;
+  const asset = { id: "location",assetType: "location",name: "庭院",visibleDefinition: { weather: "细雨" },state: "雨中",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] };
+  const formal: View["version"] = { id: "setting",jobId: "initial",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: mode === "failure" || mode === "overlap" ? "candidate" : "confirmed",generationStatus: mode === "failure" || mode === "overlap" ? "partially_succeeded" : "succeeded",assets: [asset,{ ...asset,id: "untouched",name: "不变道具",assetType: "prop" }],failures: mode === "overlap" ? [{ scopeKey: "replace-location",assetId: "location",code: "PROVIDER_ITEM_FAILED",retryable: true }] : mode === "failure" ? [{ scopeKey: "missing-character",code: "PROVIDER_ITEM_FAILED",retryable: true }] : [],locks: mode === "locked" ? { location: { lockedBy: "owner",lockedAt: "2026-11-04" } } : {},suggestions: mode === "pending" ? [{ id: "suggestion",assetId: "location",value: asset,reason: "pending",status: "pending",submittedBy: "editor" }] : [] };
+  let version = structuredClone(formal),posts = 0,loads = 0,requestId = "";
+  let task: import("../src/lib/api").SettingsRegenerationTask | null = null;
+  const base = `${origin}/projects/p/chapters/c/settings`,tasks = `${origin}/projects/p/chapters/c/settings-regeneration-tasks`;
+  const response = (v = version): View => ({ version: v,current: mode !== "stale",active: true,permissions: { canEdit: mode !== "editor" && v.status === "candidate",canSuggest: true,canDecide: mode !== "editor",canConfirm: mode !== "editor" && v.status === "candidate",canLock: mode !== "editor" && v.status === "confirmed" },scriptVersion: script,sourceFragments: [{ id: "f",text: "雨落" }] });
+  await page.route(base,r => r.fulfill({ headers,json: response() }));
+  await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: { ...formal,status: "confirmed",generationStatus: "succeeded",failures: [] } } }));
+  await page.route(`${base}/versions/setting`,r => r.fulfill({ headers,json: { version: formal } }));
+  await page.route(`${tasks}/availability`,r => r.fulfill({ headers,json: { available: true,reason: null } }));
+  await page.route(`${tasks}/submissions/*`,r => r.fulfill({ headers,status: task ? 200 : 404,json: task ?? { code: "TASK_NOT_FOUND" } }));
+  await page.route(tasks,r => {
+    if (r.request().method()==="OPTIONS") return r.fulfill({ headers,status: 204 });
+    const body = r.request().postDataJSON();posts++;
+    if (requestId) expect(body.requestId).toBe(requestId);else requestId = body.requestId;
+    expect(Object.keys(body).sort()).toEqual(["configurationVersionId","modelId","requestId","selection"]);
+    expect(body.selection.expectedActiveVersionId).toBe("setting");expect(body.selection.assetIds).toEqual(mode === "failure" ? [] : ["location"]);
+    expect(body.selection.failureScopeKeys).toEqual(mode === "failure" ? ["missing-character"] : []);
+    if (mode === "missing" && posts===1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
+    version = { ...formal,id: "regenerated",status: "candidate",parentVersionId: formal.id,operation: { requestId: "operation",kind: "regenerate",targetId: formal.id,reason: body.selection.reason },regeneration: { jobId: "regen-task",assetIds: body.selection.assetIds,failureScopeKeys: body.selection.failureScopeKeys,reason: body.selection.reason,outcome: "succeeded" },assets: mode === "failure" ? [...formal.assets,{ ...asset,id: "character",name: "新人物",assetType: "character" }] : [{ ...asset,name: "重生庭院" },formal.assets[1]!],failures: [] };
+    task = { id: "regen-task",projectId: "p",chapterId: "c",state: "succeeded",reason: null,result: { candidateVersionId: "regenerated",extractionStatus: "succeeded" },input: { stage: "settings",resultType: "settingsRegeneration",sourceVersionId: "s",upstreamConfirmedVersionIds: ["formal","plan","candidate"],regeneration: body.selection } };
+    if (["execution-unknown","stopped"].includes(mode)) { version = structuredClone(formal);task.state = mode === "stopped" ? "failed" : "paused";task.reason = mode === "stopped" ? "INVALID_RESPONSE" : "EXECUTION_UNCERTAIN";task.result = null; }
+    return r.fulfill({ headers,status: ["unknown","dual-pending"].includes(mode) && posts===1 ? 503 : 201,json: ["unknown","dual-pending"].includes(mode) && posts===1 ? { code: "STORAGE_UNAVAILABLE" } : task });
+  });
+  await page.route(`${base}/regenerations/*`,r => { loads++;return r.fulfill({ headers,json: response(mode === "mismatch" ? { ...version,parentVersionId: "wrong-base" } : version) }); });
+  async function enter() { await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();await page.getByRole("button",{ name: "读取当前剧本",exact: true }).click(); }
+  await enter();const workbench = page.getByRole("region",{ name: "设定候选生成与追溯" });
+  if (mode === "corrupt") await page.evaluate(() => sessionStorage.setItem(JSON.stringify(["settings-regeneration",JSON.stringify(["p","c","s","formal","plan","candidate"])]),"{invalid"));
+  await workbench.getByRole("button",{ name: "读取当前设定",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "文字设定局部重生" });
+  if (mode === "corrupt") { await expect(panel.getByRole("status")).toContainText("暂停新的重生操作");await expect(panel.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
+  if (["editor","stale","mobile"].includes(mode)) { await expect(panel.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
+  if (mode === "locked" || mode === "pending") { await expect(panel.getByLabel("重生资产 庭院",{ exact: true })).toBeDisabled();expect(posts).toBe(0);return; }
+  if (mode === "failure") await panel.getByLabel("重试设定失败 missing-character",{ exact: true }).check();else await panel.getByLabel("重生资产 庭院",{ exact: true }).check();
+  if (mode === "overlap") { await expect(panel.getByLabel("重试设定失败 replace-location",{ exact: true })).toBeDisabled();expect(posts).toBe(0);return; }
+  await panel.getByLabel("设定重生原因",{ exact: true }).fill("核对可见细节");
+  await panel.getByRole("button",{ name: "读取重生模型",exact: true }).click();await panel.getByLabel("设定重生模型",{ exact: true }).selectOption("model");
+  if (mode === "success") await panel.screenshot({ path: "/tmp/t07-settings-regeneration.png" });
+  if (mode === "storage") await page.evaluate(() => { Storage.prototype.setItem = () => { throw new Error("storage unavailable"); }; });
+  await panel.getByRole("button",{ name: "提交设定局部重生",exact: true }).click();
+  if (mode === "storage") { await expect(panel.getByRole("status")).toContainText("尚未发送任务");expect(posts).toBe(0);return; }
+  if (["execution-unknown","stopped"].includes(mode)) {
+    await panel.getByRole("button",{ name: "核对设定重生原提交",exact: true }).click();
+    await expect(panel.getByRole("button",{ name: "载入设定重生结果",exact: true })).toBeDisabled();
+    if (mode === "execution-unknown") { await expect(panel.getByRole("status")).toContainText("结果待后台核对");await expect(panel.getByRole("button",{ name: "结束已停止的重生任务",exact: true })).toHaveCount(0); }
+    else { await panel.getByRole("button",{ name: "结束已停止的重生任务",exact: true }).click();await expect(panel.getByRole("button",{ name: "提交设定局部重生",exact: true })).toBeEnabled(); }
+    expect(posts).toBe(1);return;
+  }
+  if (["unknown","missing","dual-pending"].includes(mode)) {
+    await expect(panel.getByRole("status")).toContainText("尚未确认");expect(decodeURIComponent(page.url())).not.toContain("核对可见细节");
+    if (mode === "dual-pending") await page.evaluate(() => sessionStorage.setItem(JSON.stringify(["settings-review",JSON.stringify(["p","c","s","formal","plan","candidate"])]),JSON.stringify({ kind: "lock",requestId: "other-operation",expectedActiveVersionId: "setting",assetId: "location",reason: "freeze" })));
+    await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await enter();
+    await expect(panel.getByRole("button",{ name: "核对设定重生原提交",exact: true })).toBeVisible();expect(posts).toBe(1);expect(loads).toBe(0);
+    if (mode === "dual-pending") {
+      const review = page.getByRole("region",{ name: "文字设定审核" });
+      await expect(review.getByRole("button",{ name: "核对设定原操作",exact: true })).toBeEnabled();
+      await expect(review.getByRole("button",{ name: "重新发送设定原操作",exact: true })).toBeDisabled();
+      await expect(panel.getByRole("button",{ name: "核对设定重生原提交",exact: true })).toBeEnabled();
+      await panel.getByRole("button",{ name: "核对设定重生原提交",exact: true }).click();
+      await expect(panel.getByRole("button",{ name: "载入设定重生结果",exact: true })).toBeEnabled();
+      await review.getByRole("button",{ name: "核对设定原操作",exact: true }).click();
+      await expect(review.getByRole("status")).toContainText("保留原请求");expect(posts).toBe(1);return;
+    }
+    await panel.getByRole("button",{ name: "核对设定重生原提交",exact: true }).click();
+    if (mode === "missing") await panel.getByRole("button",{ name: "重新发送设定重生原提交",exact: true }).click();
+  }
+  await expect(panel.getByRole("button",{ name: "载入设定重生结果",exact: true })).toBeEnabled();expect(loads).toBe(0);
+  await expect(workbench.getByRole("button",{ name: "重生庭院",exact: true })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "载入设定重生结果",exact: true }).click();
+  if (mode === "mismatch") { await expect(panel.getByRole("status")).toContainText("身份不一致");await expect(workbench.getByRole("button",{ name: "重生庭院",exact: true })).toHaveCount(0);return; }
+  await expect(panel.getByRole("status")).toContainText("已载入局部重生候选");
+  await workbench.getByRole("button",{ name: mode === "failure" ? "新人物" : "重生庭院",exact: true }).click();
+  await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");await expect(workbench.getByLabel("设定剧本依据")).toContainText("雨点打湿庭院");
+  await expect(workbench.getByRole("button",{ name: "不变道具",exact: true })).toBeVisible();
+  await workbench.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(workbench.getByLabel("保留正式设定")).toContainText("庭院");
+  expect(posts).toBe(mode === "missing" ? 2 : 1);
 });

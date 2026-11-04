@@ -3,13 +3,17 @@ import type { DocumentRequest, ProjectDraft } from "./workflow";
 type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: number };
 
 export type SettingsTask = StoryKnowledgeTask & { input: { stage: "settings";resultType: "settingsContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[] } };
+export type SettingsRegenerationSelection = { expectedActiveVersionId: string;assetIds: string[];failureScopeKeys: string[];reason: string };
+export type SettingsRegenerationSubmission = { requestId: string;configurationVersionId: string;modelId: string;selection: SettingsRegenerationSelection };
+export type SettingsRegenerationTask = StoryKnowledgeTask & { input: { stage: "settings";resultType: "settingsRegeneration";sourceVersionId: string;upstreamConfirmedVersionIds: string[];regeneration: SettingsRegenerationSelection } };
 export type SettingsView = { active?: boolean;permissions?: { canEdit: boolean;canSuggest: boolean;canDecide: boolean;canConfirm: boolean;canLock: boolean };current: boolean;sourceFragments: Array<{ id: string;text: string }>;scriptVersion: ScriptContentView["version"];version: {
   id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;scriptVersionId: string;upstreamConfirmedVersionIds: string[];status: "candidate" | "confirmed";generationStatus: string;
   assets: Array<{ id: string;assetType: string;name: string;visibleDefinition: Record<string,unknown>;state: string;stateChanges: string[];restrictions: string[];provenance: Array<{ type: string;sourceVersionId?: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
   locks?: Record<string,{ lockedBy: string;lockedAt: string }>;
   suggestions?: Array<{ id: string;assetId: string;value: SettingsView["version"]["assets"][number];reason: string;status: "pending" | "accepted" | "rejected";submittedBy: string }>;
   parentVersionId?: string | null;operation?: { requestId: string;kind: string;targetId: string;reason: string };
-  failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
+  regeneration?: { jobId: string;assetIds: string[];failureScopeKeys: string[];reason: string;outcome: string };
+  failures: Array<{ scopeKey: string;assetId?: string;code: string;retryable: boolean }>;
 } };
 export type SettingsReviewCommand = { requestId: string;expectedActiveVersionId: string;reason: string } & (
   { kind: "edit" | "suggest";assetId: string;value: SettingsView["version"]["assets"][number] } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" }
@@ -129,6 +133,10 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  submitSettingsRegeneration(p: string,c: string,input: SettingsRegenerationSubmission) { return this.request<SettingsRegenerationTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  settingsRegenerationAvailability(p: string,c: string,input: Omit<SettingsRegenerationSubmission,"requestId">) { return this.request<{ available: boolean;reason: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks/availability`,{ method: "POST",body: JSON.stringify(input) },"session"); }
+  getSettingsRegenerationSubmission(p: string,c: string,id: string) { return this.request<SettingsRegenerationTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks/submissions/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
+  getSettingsRegeneration(p: string,c: string,id: string) { return this.request<SettingsView>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/regenerations/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
   reviewSettings(p: string,c: string,input: SettingsReviewCommand) { return this.request<SettingsView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/review`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   getSettings(p: string,c: string) { return this.request<SettingsView>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings`,{ method: "GET",cache: "no-store" },"session"); }
   getSettingsVersion(p: string,c: string,id: string) { return this.request<{ version: SettingsView["version"] }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/versions/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
