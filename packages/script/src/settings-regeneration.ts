@@ -63,7 +63,7 @@ export class SettingsRegenerationRunner {
     if (base.status === "confirmed") next.revisionOfVersionId = base.id;
     next.assets = assets;next.failures = failures;next.generationStatus = failures.length ? assets.length ? "partially_succeeded" : "failed" : "succeeded";
     next.regeneration = { jobId,fingerprint,assetIds: selection.assetIds,failureScopeKeys: selection.failureScopeKeys,reason: selection.reason,outcome: successes === targets.length ? "succeeded" : successes ? "partially_succeeded" : "failed" };
-    next.operation = { requestId: operationId(jobId),fingerprint,kind: "regenerate",targetId: base.id,reason: selection.reason };
+    next.operation = { requestId: settingsRegenerationOperationId(jobId),fingerprint,kind: "regenerate",targetId: base.id,reason: selection.reason };
     try { return await this.options.repository.saveGeneration(a,next,base.id); }
     catch (error) { if (error instanceof SettingsReviewError && error.code !== "STORAGE_UNAVAILABLE") throw error;throw new SettingsRegenerationError("EXECUTION_UNCERTAIN"); }
   }
@@ -84,7 +84,7 @@ export class InMemorySettingsRegenerationRepository implements SettingsRegenerat
   constructor(reviews: SettingsReviewRepository,handoff: Pick<ConfirmedScriptHandoff,"read">,access: ProjectAccessReader) { this.reviews = reviews;this.handoff = handoff;this.access = access; }
   findActive(a: Actor,p: string,c: string) { return this.reviews.findActive(a,p,c); }
   async findGeneration(a: Actor,p: string,c: string,id: string) {
-    const v = await this.reviews.findOperation(a,p,c,operationId(id));
+    const v = await this.reviews.findOperation(a,p,c,settingsRegenerationOperationId(id));
     if (v && (v.operation?.kind !== "regenerate" || v.regeneration?.jobId !== id)) throw new SettingsReviewError("VERSION_CONFLICT");
     return v;
   }
@@ -141,6 +141,6 @@ export function normalizeSettingsRegenerationSelection(v: SettingsRegenerationSe
   return { expectedActiveVersionId: v.expectedActiveVersionId,assetIds: [...v.assetIds].sort(),failureScopeKeys: [...v.failureScopeKeys].sort(),reason: v.reason.trim() };
 }
 function digest(v: string) { return createHash("sha256").update(v).digest("hex"); }
-function operationId(id: string) { return `regenerate_${digest(id)}`; }
+export function settingsRegenerationOperationId(id: string) { return `regenerate_${digest(id)}`; }
 
 export function settingsRegenerationFingerprint(selection: SettingsRegenerationSelection) { return digest(JSON.stringify(normalizeSettingsRegenerationSelection(selection))); }

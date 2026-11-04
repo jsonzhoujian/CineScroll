@@ -1,3 +1,5 @@
+import { PostgresSettingsRegenerationRepository } from "../src/postgres-settings-regeneration.ts";
+import { SettingsRegenerationRunner } from "../src/settings-regeneration.ts";
 import { PostgresSettingsReviewRepository } from "../src/postgres-settings-review.ts";
 import { SettingsReviewService } from "../src/settings-review.ts";
 import { PostgresSettingsCandidateRepository } from "../src/postgres-settings-candidates.ts";
@@ -23,7 +25,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -242,13 +244,102 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.deepEqual((await taskRepository.scanSettingsRegeneration(actor.workspaceId,"run",{ limit: 20,cursor: null })).tasks.map(t => t.id),[regenerationTask.id]);
     await assert.rejects(() => taskRepository.insert({ ...regenerationTask,id: `duplicate-regeneration-${suffix}` }),{ code: "STATE_CONFLICT" });
     await taskRepository.transition(actor.workspaceId,regenerationTask.id,0,"running",null);
-    await taskRepository.transition(actor.workspaceId,regenerationTask.id,1,"paused","EXECUTION_UNCERTAIN");
+    let generatedRegeneration: Awaited<ReturnType<SettingsRegenerationRunner["run"]>> | undefined;
+    let proposedRegeneration: typeof generatedRegeneration;
+    const regenerationRepository = new PostgresSettingsRegenerationRepository(app,settingsHandoff);
+    let regenerationCalls = 0;
+    const regenerationRunner = new SettingsRegenerationRunner({ repository: { findActive: (...args) => regenerationRepository.findActive(...args),findGeneration: (...args) => regenerationRepository.findGeneration(...args),saveGeneration: async (a,v,e) => { proposedRegeneration = structuredClone(v);return regenerationRepository.saveGeneration(a,v,e); } },handoff: settingsHandoff,access: accessReader,idGenerator: () => `regenerated-${suffix}-${++sequence}`,clock: () => new Date("2026-11-04"),model: { async generate(r) {
+      regenerationCalls++;
+      return { contractVersion: "0.1.0",stage: "settings",jobId: r.jobId,projectId,chapterId,sourceVersionId: sourceId,upstreamConfirmedVersionIds: r.upstreamConfirmedVersionIds,status: "succeeded",items: r.regeneration.targets.map(t => ({ scopeKey: t.scopeKey,status: "succeeded",value: { ...t.asset!,name: "regenerated courtyard" } })) };
+    } } });
+    await admin.query("create function fail_settings_review_dependency_test() returns trigger language plpgsql as $$ begin raise exception 'simulated dependency failure'; end $$");
+    await admin.query("create trigger fail_settings_regeneration_dependency_test before insert on script_downstream_dependencies for each row execute function fail_settings_review_dependency_test()");
+    await assert.rejects(() => regenerationRunner.run(actor,projectId,chapterId,regenerationTask.id,regenerationTask.input.regeneration!),{ code: "EXECUTION_UNCERTAIN" });
+    assert.equal((await regenerationRepository.findActive(actor,projectId,chapterId))!.id,stableSettings.id);
+    assert.equal(await regenerationRepository.findGeneration(actor,projectId,chapterId,regenerationTask.id),null);
+    await admin.query("drop trigger fail_settings_regeneration_dependency_test on script_downstream_dependencies; drop function fail_settings_review_dependency_test()");
+    // Raw application-role writes must obey the same boundaries even if the service is bypassed.
+    const proposed = proposedRegeneration!;
+    const rawRegeneration = async (v: typeof proposed) => {
+      const client = await app.connect();
+      try {
+        await client.query("begin");
+        await client.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true),set_config('app.model_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
+        await client.query("insert into settings_review_versions(workspace_id,project_id,chapter_id,id,origin_version_id,parent_review_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",[actor.workspaceId,projectId,chapterId,v.id,savedSettings.id,stableSettings.id,v.createdBy,JSON.stringify(v)]);
+      } finally { await client.query("rollback");client.release(); }
+    };
+    for (const forged of [
+      { ...proposed,regeneration: { ...proposed.regeneration!,jobId: "missing-task" } },
+      { ...proposed,regeneration: { ...proposed.regeneration!,outcome: "failed" as const } },
+      { ...proposed,regeneration: { ...proposed.regeneration!,assetIds: [] } },
+      { ...proposed,assets: [...proposed.assets,{ ...settingAsset,id: "unselected" }] },
+      { ...proposed,locks: { injected: { lockedBy: actor.userId,lockedAt: proposed.createdAt } } },
+      { ...proposed,assets: [{ ...proposed.assets[0]!,assetType: "prop" as const }] },
+      { ...proposed,assets: [{ ...proposed.assets[0]!,provenance: [] }] },
+      { ...proposed,assets: [{ ...proposed.assets[0]!,name: "ok"+" ".repeat(20000) }] },
+      { ...proposed,assets: [{ ...proposed.assets[0]!,name: "😀".repeat(10001) }] },
+      { ...proposed,assets: [{ ...proposed.assets[0]!,visibleDefinition: Array.from({ length: 21 }).reduce<Record<string,unknown>>((child) => ({ child }),{ leaf: true }) }] },
+      { ...proposed,assets: [{ ...proposed.assets[0]!,name: "\u00a0\u3000" }] },
+      { ...proposed,createdBy: "editor" },
+    ]) await assert.rejects(() => rawRegeneration(forged),{ code: "42501" });
+    await taskRepository.transition(actor.workspaceId,regenerationTask.id,1,"paused","UPSTREAM_CHANGED");
+    await assert.rejects(() => rawRegeneration(proposed),{ code: "42501" });
+    // Resume through a fresh task: paused known failures cannot serve as a result-write capability.
+    const writeTask: ModelTask = { ...regenerationTask,id: `regeneration-write-${suffix}` };
+    await taskRepository.insert(writeTask);
+    await taskRepository.transition(actor.workspaceId,writeTask.id,0,"running",null);
+    generatedRegeneration = await regenerationRunner.run(actor,projectId,chapterId,writeTask.id,regenerationTask.input.regeneration!);
+    assert.equal(generatedRegeneration.assets[0]!.name,"regenerated courtyard");
+    assert.equal((await settingsReviewRepo.findConfirmed(actor,projectId,chapterId))!.id,formalSettingsId);
+    assert.equal((await admin.query("select count(*)::int as n from script_downstream_dependencies where target_version_id=$1",[generatedRegeneration.id])).rows[0].n,2);
+    const reopenedRegeneration = new PostgresSettingsRegenerationRepository(app,settingsHandoff);
+    assert.deepEqual(await reopenedRegeneration.findGeneration(actor,projectId,chapterId,writeTask.id),generatedRegeneration);
+    assert.equal(await reopenedRegeneration.findGeneration({ ...actor,workspaceId: "other" },projectId,chapterId,writeTask.id),null);
+    assert.equal(await reopenedRegeneration.findGeneration({ ...actor,userId: "reviewer" },projectId,chapterId,writeTask.id),null);
+    assert.deepEqual(await regenerationRunner.run(actor,projectId,chapterId,writeTask.id,regenerationTask.input.regeneration!),generatedRegeneration);
+    assert.equal(regenerationCalls,2);
+    await taskRepository.transition(actor.workspaceId,writeTask.id,1,"paused","EXECUTION_UNCERTAIN");
     await assert.rejects(() => taskRepository.insert({ ...regenerationTask,id: `uncertain-bypass-${suffix}` }),{ code: "STATE_CONFLICT" });
     const reopenedTasks = new PostgresModelTaskRepository(app);
-    assert.deepEqual((await reopenedTasks.find(actor.workspaceId,regenerationTask.id))!.input.regeneration,regenerationTask.input.regeneration);
-    assert.deepEqual((await reopenedTasks.scanSettingsRegeneration(actor.workspaceId,"recover",{ limit: 20,cursor: null })).tasks.map(t => t.id),[regenerationTask.id]);
+    assert.deepEqual((await reopenedTasks.find(actor.workspaceId,writeTask.id))!.input.regeneration,regenerationTask.input.regeneration);
+    assert.deepEqual((await reopenedTasks.scanSettingsRegeneration(actor.workspaceId,"recover",{ limit: 20,cursor: null })).tasks.map(t => t.id),[writeTask.id]);
     assert.equal((await reopenedTasks.scanSettingsRegeneration("other","recover",{ limit: 20,cursor: null })).tasks.length,0);
-    await assert.rejects(() => reopenedTasks.recover(actor.workspaceId,regenerationTask.id,2,null),{ code: "STATE_CONFLICT" });
+    await assert.rejects(() => reopenedTasks.recover(actor.workspaceId,writeTask.id,2,null),{ code: "STATE_CONFLICT" });
+    // Failed replacement retains the old asset; a later selected-failure retry clears only that failure.
+    const failureSelection = { ...regenerationTask.input.regeneration!,expectedActiveVersionId: generatedRegeneration.id };
+    const failureTask: ModelTask = { ...regenerationTask,id: `regeneration-failure-${suffix}`,input: { ...regenerationTask.input,regeneration: failureSelection } };
+    await taskRepository.insert(failureTask);await taskRepository.transition(actor.workspaceId,failureTask.id,0,"running",null);
+    const failingRunner = new SettingsRegenerationRunner({ repository: regenerationRepository,handoff: settingsHandoff,access: accessReader,idGenerator: () => `failed-regeneration-${suffix}`,clock: () => new Date("2026-11-04"),model: { async generate(r) {
+      return { contractVersion: r.contractVersion,stage: r.stage,jobId: r.jobId,projectId,chapterId,sourceVersionId: sourceId,upstreamConfirmedVersionIds: r.upstreamConfirmedVersionIds,status: "failed",items: r.regeneration.targets.map(t => ({ scopeKey: t.scopeKey,status: "failed",error: { code: "provider",message: "private provider details",retryable: true } })) };
+    } } });
+    const failedRegeneration = await failingRunner.run(actor,projectId,chapterId,failureTask.id,failureSelection);
+    assert.deepEqual(failedRegeneration.assets,generatedRegeneration.assets);assert.equal(failedRegeneration.regeneration!.outcome,"failed");
+    assert.equal(failedRegeneration.failures[0]!.assetId,settingAsset.id);
+    const retrySelection = { expectedActiveVersionId: failedRegeneration.id,assetIds: [],failureScopeKeys: [failedRegeneration.failures[0]!.scopeKey],reason: "retry selected failure" };
+    const retryTask: ModelTask = { ...regenerationTask,id: `regeneration-retry-${suffix}`,input: { ...regenerationTask.input,regeneration: retrySelection } };
+    await taskRepository.insert(retryTask);await taskRepository.transition(actor.workspaceId,retryTask.id,0,"running",null);
+    const retriedRegeneration = await regenerationRunner.run(actor,projectId,chapterId,retryTask.id,retrySelection);
+    assert.equal(retriedRegeneration.failures.length,0);assert.equal(retriedRegeneration.regeneration!.outcome,"succeeded");
+    const staleResult = { ...proposed,id: `stale-regeneration-${suffix}` };
+    await assert.rejects(() => regenerationRepository.saveGeneration(actor,staleResult,stableSettings.id),{ code: "VERSION_CONFLICT" });
+    const formalRegeneration = await settingsReview.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "confirm-regeneration",expectedActiveVersionId: retriedRegeneration.id,reason: "reviewed" });
+    const lockedRegeneration = await settingsReview.execute(actor,projectId,chapterId,{ kind: "lock",requestId: "lock-regeneration",expectedActiveVersionId: formalRegeneration.id,reason: "freeze",assetId: settingAsset.id });
+    const callsBeforeLock = regenerationCalls;
+    await assert.rejects(() => regenerationRunner.run(actor,projectId,chapterId,"locked-regeneration",{ ...failureSelection,expectedActiveVersionId: lockedRegeneration.id }),{ code: "LOCKED" });
+    assert.equal(regenerationCalls,callsBeforeLock);
+    const unlockedRegeneration = await settingsReview.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock-regeneration",expectedActiveVersionId: lockedRegeneration.id,reason: "regenerate",assetId: settingAsset.id });
+    const formalSelection = { ...failureSelection,expectedActiveVersionId: unlockedRegeneration.id };
+    const formalTask: ModelTask = { ...regenerationTask,id: `formal-regeneration-${suffix}`,input: { ...regenerationTask.input,regeneration: formalSelection } };
+    await taskRepository.insert(formalTask);await taskRepository.transition(actor.workspaceId,formalTask.id,0,"running",null);
+    const capturedRunner = new SettingsRegenerationRunner({ repository: { findActive: (...args) => regenerationRepository.findActive(...args),findGeneration: (...args) => regenerationRepository.findGeneration(...args),saveGeneration: async (_a,v) => v },handoff: settingsHandoff,access: accessReader,idGenerator: () => `formal-regenerated-${suffix}`,clock: () => new Date("2026-11-04"),model: { async generate(r) {
+      return { contractVersion: r.contractVersion,stage: r.stage,jobId: r.jobId,projectId,chapterId,sourceVersionId: sourceId,upstreamConfirmedVersionIds: r.upstreamConfirmedVersionIds,status: "succeeded",items: r.regeneration.targets.map(t => ({ scopeKey: t.scopeKey,status: "succeeded",value: { ...t.asset!,name: "formal revision" } })) };
+    } } });
+    const formalResult = await capturedRunner.run(actor,projectId,chapterId,formalTask.id,formalSelection);
+    const competingRegenerations = await Promise.all([regenerationRepository.saveGeneration(actor,formalResult,unlockedRegeneration.id),regenerationRepository.saveGeneration(actor,{ ...formalResult,id: `${formalResult.id}-race` },unlockedRegeneration.id)]);
+    assert.equal(competingRegenerations[0]!.id,competingRegenerations[1]!.id);
+    assert.equal(competingRegenerations[0]!.revisionOfVersionId,unlockedRegeneration.id);
+    assert.equal(competingRegenerations[0]!.status,"candidate");
+    assert.equal((await settingsReviewRepo.findConfirmed(actor,projectId,chapterId))!.id,unlockedRegeneration.id);
     // Settings persistence constraints use the application role, not the migration owner.
     const settings = { id: `settings-${suffix}`,projectId,chapterId,sourceVersionId: sourceId,scriptVersionId: revisedFormal.id,jobId: `settings-job-${suffix}`,createdBy: actor.userId,status: "candidate",generationStatus: "succeeded",assets: [],failures: [],upstreamConfirmedVersionIds: [revisedFormal.id,confirmed.id,bibleId] };
     const settingsClient = await app.connect();
@@ -263,6 +354,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
         await assert.rejects(action,{ code });
         await settingsClient.query("rollback to savepoint settings_constraint");
       };
+      assert.equal((await settingsClient.query("select valid_settings_regeneration_asset(jsonb_set($1::jsonb,'{visibleDefinition}','{\"x\":1e1000}'::jsonb),$2,$3,$4) as valid",[JSON.stringify(settingAsset),projectId,chapterId,sourceId])).rows[0].valid,false);
       for (const [source,fragment,valid] of [["123","42",true],[123,"42",false],["123",42,false]]) {
         const asset = { ...settingAsset,provenance: [{ type: "source_fragment",sourceVersionId: source,fragmentId: fragment,transformation: "retained" }] };
         assert.equal((await settingsClient.query("select valid_settings_review_asset($1::jsonb,$2,$3,'123') as valid",[JSON.stringify(asset),projectId,chapterId])).rows[0].valid,valid);

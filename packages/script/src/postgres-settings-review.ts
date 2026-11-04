@@ -59,7 +59,7 @@ export class PostgresSettingsReviewRepository implements SettingsReviewRepositor
     let client: ModelSettingsClient | undefined;
     try {
       client = await this.pool.connect();await client.query("begin");await client.query("set local statement_timeout='5s'");
-      await client.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[a.userId,a.workspaceId]);
+      await client.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true),set_config('app.model_workspace_id',$2,true)",[a.userId,a.workspaceId]);
       const result = await action(client);await client.query("commit");return result;
     } catch (error) {
       try { await client?.query("rollback"); } catch { /* Preserve sanitized failure. */ }
