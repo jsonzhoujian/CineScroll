@@ -47,6 +47,22 @@ export async function assertSettingsDatabase(pool: Pool,workspaceIds: readonly s
         and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl where acl.grantee=0 and acl.privilege_type='EXECUTE'))
       ready`);
     if (!review.rows[0]?.ready) throw new Error();
+    const regeneration = await client.query(`select
+      exists(select 1 from pg_constraint where conrelid='public.model_tasks'::regclass and conname='settings_regeneration_task_input_valid' and contype='c' and convalidated)
+      and (select count(*)=4 from pg_index where indisvalid and indexrelid in (
+        to_regclass('public.model_tasks_settings_regeneration_active_idx'),to_regclass('public.model_tasks_settings_regeneration_queued_idx'),
+        to_regclass('public.model_tasks_settings_regeneration_recovery_idx'),to_regclass('public.model_tasks_settings_regeneration_chapter_idx')))
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_settings_regeneration_active_idx') and indisvalid and indisunique)
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.settings_regeneration_job_idx') and indisvalid and indisunique)
+      and exists(select 1 from pg_trigger where tgrelid='public.settings_review_versions'::regclass and tgname='settings_regeneration_transition'
+        and tgfoid='public.guard_settings_regeneration_version()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and pg_get_triggerdef(oid)=$guard$CREATE TRIGGER settings_regeneration_transition BEFORE INSERT ON public.settings_review_versions FOR EACH ROW WHEN ((((new.version_json -> 'operation'::text) ->> 'kind'::text) = 'regenerate'::text)) EXECUTE FUNCTION guard_settings_regeneration_version()$guard$)
+      and exists(select 1 from pg_trigger where tgrelid='public.settings_review_versions'::regclass and tgname='settings_review_transition'
+        and tgfoid='public.guard_settings_review_version()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and pg_get_triggerdef(oid)=$guard$CREATE TRIGGER settings_review_transition BEFORE INSERT ON public.settings_review_versions FOR EACH ROW WHEN ((((new.version_json -> 'operation'::text) ->> 'kind'::text) IS DISTINCT FROM 'regenerate'::text)) EXECUTE FUNCTION guard_settings_review_version()$guard$)
+      and (select count(*)=2 from pg_proc p where p.oid in (to_regprocedure('public.valid_settings_regeneration_task(jsonb)'),to_regprocedure('public.valid_settings_regeneration_asset(jsonb,text,text,text)'))
+        and not p.prosecdef and has_function_privilege(current_user,p.oid,'EXECUTE')
+        and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl where acl.grantee=0 and acl.privilege_type='EXECUTE'))
+      ready`);
+    if (!regeneration.rows[0]?.ready) throw new Error();
     await client.query("commit");
   } catch { await client.query("rollback").catch(() => {});throw new Error("SETTINGS_DATABASE_NOT_READY"); }
   finally { client.release(); }

@@ -30,6 +30,7 @@
     "./postgres-settings-candidates": "./src/postgres-settings-candidates.ts",
     "./settings-review": "./src/settings-review.ts",
     "./postgres-settings-review": "./src/postgres-settings-review.ts",
+    "./postgres-settings-regeneration": "./src/postgres-settings-regeneration.ts",
     "./settings-regeneration": "./src/settings-regeneration.ts"
   },
   "scripts": {

@@ -1,3 +1,6 @@
+import { PostgresSettingsRegenerationRepository } from "@novel-adaptation/script/postgres-settings-regeneration";
+import { SettingsRegenerationTaskContext,SettingsRegenerationTaskExecutor } from "./settings-regeneration-task-executor.ts";
+import { SettingsRegenerationTaskDispatcher } from "./settings-regeneration-task-dispatcher.ts";
 import { PostgresSettingsReviewRepository } from "@novel-adaptation/script/postgres-settings-review";
 import { SettingsReviewService } from "@novel-adaptation/script/settings-review";
 import { SettingsReviewApiModule } from "./settings-review-api.ts";
@@ -229,6 +232,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   let modelPool: Pool | undefined;
   let worker: StoryKnowledgeTaskWorker | undefined;
   let settingsWorker: StoryKnowledgeTaskWorker | undefined;
+  let settingsRegenerationWorker: StoryKnowledgeTaskWorker | undefined;
   let scriptWorker: StoryKnowledgeTaskWorker | undefined;
   let qualityWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
@@ -379,13 +383,22 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         idGenerator: () => `settingv_${randomUUID()}`,clock: () => new Date(),model: new DeepSeekSettingsModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       settingsWorker = new StoryKnowledgeTaskWorker({ dispatcher: new SettingsTaskDispatcher({ repository,executor }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
+      const regenerationRepository = new PostgresSettingsRegenerationRepository(restrictedPool,handoff);
+      const regenerationContext = new SettingsRegenerationTaskContext(new SettingsTaskContext(context,handoff),regenerationRepository,projects);
+      const regenerationTasks = new ModelTaskService({ settings,repository,contextReader: regenerationContext,
+        settingsAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
+        generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `settingsregen_${randomUUID()}` });
+      const regenerationExecutor = new SettingsRegenerationTaskExecutor({ tasks: regenerationTasks,context: regenerationContext,repository: regenerationRepository,handoff,access: projects,
+        idGenerator: () => `settingg_${randomUUID()}`,clock: () => new Date(),model: new DeepSeekSettingsModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
+      settingsRegenerationWorker = new StoryKnowledgeTaskWorker({ dispatcher: new SettingsRegenerationTaskDispatcher({ repository,executor: regenerationExecutor }),
+        enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
       const reviews = new PostgresSettingsReviewRepository(restrictedPool,handoff);
       const review = new SettingsReviewService({ repository: reviews,handoff,access: projects,idGenerator: () => `settingr_${randomUUID()}`,clock: () => new Date() });
-      apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker),
+      apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker,settingsRegenerationWorker),
         SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
         SettingsReviewApiModule.register({ sessionVerifier: sessions,repository: reviews,review,context: new SettingsTaskContext(context,handoff) }),
         SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,reviews,review,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository }));
-      apiModule.providers!.push({ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
+      apiModule.providers!.push({ provide: "SETTINGS_REGENERATION_TASK_SERVICE",useValue: regenerationTasks },{ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertSettingsDatabase(restrictedPool,taskConfig.workspaceIds),
       } });
     }
@@ -395,7 +408,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop()]); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop(),settingsRegenerationWorker?.stop()]); }
       finally { await Promise.all([pool.end(), modelPool?.end()]); }
     })(),
   };

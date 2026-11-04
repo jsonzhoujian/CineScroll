@@ -1,4 +1,4 @@
-import { SETTINGS_WORKER } from "../src/settings-worker-module.ts";
+import { SETTINGS_REGENERATION_WORKER,SETTINGS_WORKER } from "../src/settings-worker-module.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProductionApi } from "../src/production.ts";
@@ -150,6 +150,8 @@ test("设定任务独立默认关闭，开启前拒绝不可信装配配置", as
       await app.init();
       assert.throws(() => app.get(SETTINGS_WORKER));
       assert.throws(() => app.get("SETTINGS_TASK_SERVICE"));
+      assert.throws(() => app.get(SETTINGS_REGENERATION_WORKER));
+      assert.throws(() => app.get("SETTINGS_REGENERATION_TASK_SERVICE"));
     } finally { await app.close();await production.close(); }
   }
 });

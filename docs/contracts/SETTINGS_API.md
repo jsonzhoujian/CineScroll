@@ -19,7 +19,7 @@ Unauthenticated requests return 401; inaccessible projects/results or wrong-stag
 
 ## T07-02 review API
 
-The same opt-in `settingsTasks` switch now mounts review routes after migration 0028 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
+The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0030 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
 
 | Method | Route | Input / result |
 |---|---|---|
@@ -34,7 +34,7 @@ Owners/reviewers may edit candidates, decide suggestions, confirm, lock and unlo
 
 Active/generation candidate reads additionally return `active` and `permissions` (`canEdit`, `canSuggest`, `canDecide`, `canConfirm`, `canLock`). `current` still describes upstream validity; `active` identifies the current review head. Inactive generation results and stale upstream results have no review action permissions. The active read follows review history, while the generation read always preserves the original result. Version/operation routes return `{version}` as read-only history.
 
-Review errors use controlled codes: `INVALID_COMMAND` 400, `NOT_FOUND` 404, `FORBIDDEN` 403, `VERSION_CONFLICT`/`SUGGESTION_CONFLICT`/`INVALID_STATE`/`LOCKED`/`UPSTREAM_CHANGED` 409, and `STORAGE_UNAVAILABLE` 503. Responses are `no-store`. After an uncertain write, clients can read the original operation or reconcile the identical command; they must preserve request identity and avoid submitting a different operation. Browser review controls are implemented as described below; local regeneration remains pending.
+Review errors use controlled codes: `INVALID_COMMAND` 400, `NOT_FOUND` 404, `FORBIDDEN` 403, `VERSION_CONFLICT`/`SUGGESTION_CONFLICT`/`INVALID_STATE`/`LOCKED`/`UPSTREAM_CHANGED` 409, and `STORAGE_UNAVAILABLE` 503. Responses are `no-store`. After an uncertain write, clients can read the original operation or reconcile the identical command; they must preserve request identity and avoid submitting a different operation. Browser review controls are implemented as described below; local regeneration API/browser controls remain pending.
 
 
 ## Browser review behavior
@@ -48,4 +48,4 @@ Before a write, the exact command is saved to sessionStorage under its project/c
 
 ## Internal local regeneration persistence
 
-Local regeneration has no public submission/execution route yet. Migration 0030 and `PostgresSettingsRegenerationRepository` persist results through the existing review transaction. A result is bound to a running `settingsRegeneration` task and its actor, chapter, base version, selection, source, formal upstreams and generation parameters. The SQL guard independently reconstructs the permitted merge and rejects changes outside the selected unlocked targets. Invalid/failed replacements retain old assets; selected retryable failure scopes can be filled or retried. Task results remain immutable and actor-scoped, with one result per task. Candidate, active pointer and actual source-based script dependency registrations commit or roll back together; the confirmed pointer is retained until explicit confirmation. Production transport/Worker composition and API/browser controls remain pending.
+Local regeneration has no public submission/execution route yet. Migration 0030 and `PostgresSettingsRegenerationRepository` persist results through the existing review transaction. A result is bound to a running `settingsRegeneration` task and its actor, chapter, base version, selection, source, formal upstreams and generation parameters. The SQL guard independently reconstructs the permitted merge and rejects changes outside the selected unlocked targets. Invalid/failed replacements retain old assets; selected retryable failure scopes can be filled or retried. Task results remain immutable and actor-scoped, with one result per task. Candidate, active pointer and actual source-based script dependency registrations commit or roll back together; the confirmed pointer is retained until explicit confirmation. Production transport and independent Worker composition are implemented behind the existing default-off settings switch; API/browser controls remain pending.

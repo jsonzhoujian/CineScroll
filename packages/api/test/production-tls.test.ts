@@ -1,4 +1,4 @@
-import { SETTINGS_WORKER } from "../src/settings-worker-module.ts";
+import { SETTINGS_REGENERATION_WORKER,SETTINGS_WORKER } from "../src/settings-worker-module.ts";
 import type { ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -46,7 +46,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
     if (input.stage === "settings") {
-      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "settings",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",items: [{ scopeKey: "location",status: "succeeded",value: { id: "location",assetType: "location",name: "庭院",visibleDefinition: { weather: "rain" },state: "",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "settings",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",items: [{ scopeKey: input.regeneration?.targets[0].scopeKey ?? "location",status: "succeeded",value: { id: "location",assetType: "location",name: input.regeneration ? "重生庭院" : "庭院",visibleDefinition: { weather: "rain" },state: "",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
       return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(result) } }] });
     }
     if (input.version) {
@@ -90,6 +90,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       try { await app.listen(0, "127.0.0.1"); }
       catch (error) { await app.close(); throw error; }
       return { http: request(app.getHttpServer()), worker: tasksEnabled ? app.get(StoryKnowledgeTaskWorker) : null,
+        regenerationTasks: settingsEnabled ? app.get("SETTINGS_REGENERATION_TASK_SERVICE") as ModelTaskService : null,
+        regenerationWorker: settingsEnabled ? app.get(SETTINGS_REGENERATION_WORKER) as StoryKnowledgeTaskWorker : null,
         settingsTasks: settingsEnabled ? app.get("SETTINGS_TASK_SERVICE") as ModelTaskService : null,
         settingsWorker: settingsEnabled ? app.get(SETTINGS_WORKER) as StoryKnowledgeTaskWorker : null,
         scriptWorker: scriptsEnabled ? app.get(SCRIPT_CONTENT_WORKER) as StoryKnowledgeTaskWorker : null,
@@ -107,7 +109,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -336,8 +338,18 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query("revoke execute on function lock_settings_review_authority(text,text,text) from novel_app");
     try { await assert.rejects(() => start(ca,false,false,false,true),{ message: "SETTINGS_DATABASE_NOT_READY" }); }
     finally { await admin.query("grant execute on function lock_settings_review_authority(text,text,text) to novel_app"); }
+    await admin.query("alter table settings_review_versions disable trigger settings_regeneration_transition");
+    try { await assert.rejects(start(ca,false,false,false,true),/SETTINGS_DATABASE_NOT_READY/); }
+    finally { await admin.query("alter table settings_review_versions enable trigger settings_regeneration_transition"); }
+    await admin.query("alter index settings_regeneration_job_idx rename to temporarily_missing_settings_regeneration_job_idx");
+    try { await assert.rejects(start(ca,false,false,false,true),/SETTINGS_DATABASE_NOT_READY/); }
+    finally { await admin.query("alter index temporarily_missing_settings_regeneration_job_idx rename to settings_regeneration_job_idx"); }
+    const regenerationTrigger = (await admin.query("select pg_get_triggerdef(oid) definition from pg_trigger where tgname='settings_regeneration_transition'")).rows[0].definition;
+    await admin.query("drop trigger settings_regeneration_transition on settings_review_versions;create trigger settings_regeneration_transition before insert on settings_review_versions for each row when (false) execute function guard_settings_regeneration_version()");
+    try { await assert.rejects(start(ca,false,false,false,true),/SETTINGS_DATABASE_NOT_READY/); }
+    finally { await admin.query("drop trigger settings_regeneration_transition on settings_review_versions");await admin.query(regenerationTrigger); }
     const settingsApp = await start(ca,false,false,false,true);
-    let settingsTaskId: string,settingsCandidateId: string,settingsActiveId: string;
+    let settingsTaskId: string,settingsCandidateId: string,settingsActiveId: string,regenerationTaskId: string,regenerationVersionId: string;
     try {
       const actor = { workspaceId,userId };
       const base = `/projects/${projectId}/chapters/${chapterId}/settings-tasks`;
@@ -365,14 +377,52 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       reviewed = (await settingsApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "unlock",requestId: "tls-settings-unlock",expectedActiveVersionId: reviewed.id,reason: "revision",assetId: "location" }).expect(201)).body;
       settingsActiveId = reviewed.id;
       assert.equal((await settingsApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,settingsActiveId);
-      assert.equal(modelCalls,6);
-    } finally { await settingsApp.close();assert.equal(settingsApp.settingsWorker!.status().state,"stopped"); }
+      const regeneration = await settingsApp.regenerationTasks!.submitSettingsRegeneration(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-regeneration",selection: { expectedActiveVersionId: settingsActiveId,assetIds: ["location"],failureScopeKeys: [],reason: "visible revision" } });
+      regenerationTaskId = regeneration.id;
+      assert.equal((await settingsApp.regenerationTasks!.submitSettingsRegeneration(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-regeneration",selection: { expectedActiveVersionId: settingsActiveId,assetIds: ["location"],failureScopeKeys: [],reason: "visible revision" } })).id,regeneration.id);
+      let regenerated = regeneration;
+      for (let i=0;i<100;i++) {
+        regenerated = await settingsApp.regenerationTasks!.get(actor,regeneration.id);
+        if (["succeeded","failed","paused"].includes(regenerated.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(regenerated.state,"succeeded",JSON.stringify(regenerated));assert.equal(modelCalls,7);
+      regenerationVersionId = regenerated.result!.candidateVersionId;
+      const regeneratedView = (await settingsApp.http.get(settingsBase).set("authorization",bearer).expect(200)).body;
+      assert.equal(regeneratedView.version.id,regenerationVersionId);assert.equal(regeneratedView.version.assets[0].name,"重生庭院");assert.equal(regeneratedView.version.status,"candidate");
+      assert.equal((await settingsApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,settingsActiveId);
+      assert.equal((await admin.query("select count(*)::int n from script_downstream_dependencies where target_version_id=$1",[regenerationVersionId])).rows[0].n,2);
+      await settingsApp.http.post(`/settings-regeneration-tasks/${regeneration.id}/run`).set("authorization",bearer).expect(404);
+      // Persist a result but fail its final task-state acknowledgement; restart must only read it.
+      await admin.query("create function fail_regeneration_ack_test() returns trigger language plpgsql as $$ begin if new.payload->'input'->>'resultType'='settingsRegeneration' and new.state='succeeded' then raise exception 'simulated lost task acknowledgement'; end if;return new;end $$");
+      await admin.query("create trigger fail_regeneration_ack_test before update on model_tasks for each row execute function fail_regeneration_ack_test()");
+      const uncertain = await settingsApp.regenerationTasks!.submitSettingsRegeneration(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-regeneration-unknown",selection: { expectedActiveVersionId: regenerationVersionId,assetIds: ["location"],failureScopeKeys: [],reason: "recover saved result" } });
+      for (let i=0;i<100;i++) {
+        const current = (await settingsApp.http.get(settingsBase).set("authorization",bearer).expect(200)).body.version;
+        if (current.regeneration?.jobId === uncertain.id) { regenerationVersionId = current.id;break; }
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal((await settingsApp.http.get(settingsBase).set("authorization",bearer).expect(200)).body.version.regeneration.jobId,uncertain.id);
+      await settingsApp.regenerationWorker!.stop();
+      assert.equal((await settingsApp.regenerationTasks!.get(actor,uncertain.id)).state,"running");
+      await admin.query("update model_tasks set state='paused',reason='EXECUTION_UNCERTAIN',revision=revision+1,lease_expires_at=null where workspace_id=$1 and id=$2",[workspaceId,uncertain.id]);
+      await admin.query("drop trigger fail_regeneration_ack_test on model_tasks;drop function fail_regeneration_ack_test()");
+      regenerationTaskId = uncertain.id;assert.equal(modelCalls,8);
+
+    } finally { await settingsApp.close();assert.equal(settingsApp.settingsWorker!.status().state,"stopped");assert.equal(settingsApp.regenerationWorker!.status().state,"stopped"); }
     const settingsRestart = await start(ca,false,false,false,true);
     try {
       const recovered = (await settingsRestart.http.get(`/settings-tasks/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body;
-      assert.equal(recovered.result?.candidateVersionId,settingsCandidateId!);assert.equal(modelCalls,6);
+      assert.equal(recovered.result?.candidateVersionId,settingsCandidateId!);assert.equal(modelCalls,8);
       const view = await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings`).set("authorization",bearer).expect(200);
-      assert.equal(view.body.version.id,settingsActiveId!);assert.equal(view.body.version.status,"confirmed");
+      assert.equal(view.body.version.id,regenerationVersionId!);assert.equal(view.body.version.status,"candidate");
+      let regenerated = await settingsRestart.regenerationTasks!.get({ workspaceId,userId },regenerationTaskId!);
+      for (let i=0;i<100 && regenerated.state!=="succeeded";i++) {
+        await new Promise(resolve => setTimeout(resolve,20));
+        regenerated = await settingsRestart.regenerationTasks!.get({ workspaceId,userId },regenerationTaskId!);
+      }
+      assert.equal(regenerated.state,"succeeded");
+      assert.equal(regenerated.result?.candidateVersionId,regenerationVersionId!);assert.equal(modelCalls,8);
       assert.equal((await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body.version.id,settingsCandidateId!);
     } finally { await settingsRestart.close(); }
     const second = await start();

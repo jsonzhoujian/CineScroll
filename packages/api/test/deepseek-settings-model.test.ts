@@ -44,3 +44,29 @@ test("settings transport sanitizes malformed completions and never retries netwo
     await assert.rejects(model.generate(input,credentials),{ code,message: code });assert.equal(calls,1);
   }
 });
+
+test("settings regeneration transport preserves exact selected scope and separates local replacement instructions",async () => {
+  const request = { ...input,regeneration: { baseVersionId: "settings-base",reason: "visible detail",targets: [{ scopeKey: "failure_scope",failureScopeKey: "missing-character" }] } };
+  let calls = 0;
+  const model = new DeepSeekSettingsModel({ fetch: async (_url,init) => {
+    calls++;const body = JSON.parse(String(init?.body));assert.deepEqual(JSON.parse(body.messages[1].content),request);
+    assert.match(body.messages[0].content,/exactly one item for each regeneration target/);
+    assert.match(body.messages[0].content,/Preserve each target asset id and assetType/);
+    return Response.json(completion());
+  } });
+  await model.generate(request,credentials);assert.equal(calls,1);
+});
+test("settings regeneration transport rejects malformed or overlapping targets before any model call",async () => {
+  let calls = 0;const model = new DeepSeekSettingsModel({ fetch: async () => { calls++;return Response.json(completion()); } });
+  const target = { scopeKey: "scope",failureScopeKey: "failure" };
+  for (const regeneration of [
+    { baseVersionId: "base",reason: "visible",targets: [] },
+    { baseVersionId: "base",reason: "visible",targets: [target,target] },
+    { baseVersionId: "base",reason: "visible",targets: [{ scopeKey: "empty" }] },
+    { baseVersionId: "base",reason: "visible",targets: [target,{ ...target,scopeKey: "other" }] },
+    { baseVersionId: "base",reason: "visible",targets: [target],extra: true },
+    { baseVersionId: "base",reason: " ",targets: [target] },
+    { baseVersionId: "base",reason: "visible",targets: [{ scopeKey: "asset",asset: { id: "unknown",provenance: [] } }] },
+  ]) await assert.rejects(model.generate({ ...input,regeneration } as never,credentials),{ code: "INVALID_REQUEST" });
+  assert.equal(calls,0);
+});

@@ -241,7 +241,7 @@ export class ModelTaskService {
     if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
     const id = `settings_regeneration_${createHash("sha256").update(JSON.stringify([actor.workspaceId,actor.userId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
     const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId
-      && task.createdBy === actor.userId && JSON.stringify(task.input.regeneration) === JSON.stringify(selected) && task.input.resultType === resultType && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
+      && task.createdBy === actor.userId && sameRegeneration(task.input.regeneration,selected) && task.input.resultType === resultType && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
     const existing = await this.#options.repository.find(actor.workspaceId, id);
     if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
     const context = await this.#context(actor,input.projectId,input.chapterId,undefined,selected);
@@ -387,7 +387,7 @@ export class ModelTaskService {
   }
 }
 function sameInput(a: TaskInput, b: TaskInput) {
-  return JSON.stringify(a.regeneration) === JSON.stringify(b.regeneration) && (!a.qualityTarget && !b.qualityTarget || !!a.qualityTarget && !!b.qualityTarget && sameQualityBinding(a.qualityTarget,b.qualityTarget)) && a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
+  return sameRegeneration(a.regeneration,b.regeneration) && (!a.qualityTarget && !b.qualityTarget || !!a.qualityTarget && !!b.qualityTarget && sameQualityBinding(a.qualityTarget,b.qualityTarget)) && a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId
     && (!a.retry && !b.retry || !!a.retry && !!b.retry && a.retry.expectedActiveVersionId === b.retry.expectedActiveVersionId && a.retry.retryOfJobId === b.retry.retryOfJobId && sameScopes(a.retry.scopeKeys, b.retry.scopeKeys) && sameFailureOrigins(a.retry.failureOrigins,b.retry.failureOrigins))
     && a.upstreamConfirmedVersionIds.length === b.upstreamConfirmedVersionIds.length
     && a.upstreamConfirmedVersionIds.every((id, i) => id === b.upstreamConfirmedVersionIds[i])
@@ -498,3 +498,7 @@ export function validateTaskScan(mode: TaskScanMode, page: TaskPageRequest) {
   if (!["run", "recover"].includes(mode)) throw new ModelTaskError("INVALID_CONTEXT");
 }
 function compareTaskIds(a: string, b: string) { return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8")); }
+
+function sameRegeneration(a: SettingsRegenerationSelection | undefined,b: SettingsRegenerationSelection | undefined) {
+  return !a && !b || !!a && !!b && JSON.stringify(normalizeSettingsRegenerationSelection(a)) === JSON.stringify(normalizeSettingsRegenerationSelection(b));
+}
