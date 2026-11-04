@@ -2,7 +2,7 @@
 
 Parent: T07
 
-status: ready
+status: in_progress
 
 **Blocked by:** T07-01 completed
 
@@ -22,3 +22,5 @@ status: ready
 权威输入：docs/PRODUCT_SPEC.md（权限、7.4、7.5、8与MVP验收）、CONTEXT.md、docs/contracts/DOMAIN_MODEL.md、settings/storyboard canonical Schema；复用T06交付的正式读取、不可变版本、角色规则、后台任务、许可与未知执行恢复。参见docs/plans/2026-11-03-t06-final-acceptance.md。不得把历史读取当生成授权，不得重复建设已经具备的基础设施。
 
 本票为纵向交付：按已确认公共API、Worker、仓储与浏览器测试边界验证并独立审查。用户要求每轮提供Git提交文案、不自动提交。不部署、不自动调用真实付费模型、不启用真实计费。依赖中完成的前置不应被反向重新设为阻塞。
+
+2026-11-04首个实现增量：新增设定审核领域服务与参考内存仓储，覆盖角色限制、候选编辑/建议/裁决、确认、锁/解锁、正式修改派生候选与独立正式指针，记录不可变操作审计和请求指纹；支持原请求重放、CAS、过期建议拒绝及原文引用验证。生产数据库、API/UI、局部重生及影响标记仍待接通，本票不关闭。见[审核交付计划](../../../../docs/plans/2026-11-04-t07-settings-review-delivery.md)。

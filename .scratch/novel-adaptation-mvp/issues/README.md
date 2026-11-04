@@ -40,9 +40,9 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 | ID | Ticket | Status | Blocked by |
 | --- | --- | --- | --- |
 | T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | done | T06 completed |
-| T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | ready | T07-01 completed |
+| T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | in_progress | T07-01 completed |
 | T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | blocked | T07-02 |
 | T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |
 | T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
 
-盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01已完成[文字设定候选纵向验收](../../../docs/plans/2026-11-03-t07-settings-candidate-delivery.md)，T07-02可领取；设定审核确认、局部重生与分镜仍待实现，父项T07保持in_progress。
+盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01已完成[文字设定候选纵向验收](../../../docs/plans/2026-11-03-t07-settings-candidate-delivery.md)，T07-02已开始审核核心实现；设定审核确认、局部重生与分镜仍待实现，父项T07保持in_progress。
