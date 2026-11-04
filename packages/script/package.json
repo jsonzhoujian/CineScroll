@@ -29,7 +29,8 @@
     "./settings-content": "./src/settings-content.ts",
     "./postgres-settings-candidates": "./src/postgres-settings-candidates.ts",
     "./settings-review": "./src/settings-review.ts",
-    "./postgres-settings-review": "./src/postgres-settings-review.ts"
+    "./postgres-settings-review": "./src/postgres-settings-review.ts",
+    "./settings-regeneration": "./src/settings-regeneration.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",

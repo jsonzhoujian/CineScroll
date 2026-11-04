@@ -7,9 +7,10 @@ export type SettingsReviewCommand = { requestId: string;expectedActiveVersionId:
   { kind: "edit" | "suggest";assetId: string;value: unknown } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" }
   | { kind: "confirm" } | { kind: "lock" | "unlock";assetId: string });
 export type SettingsSuggestion = { id: string;assetId: string;baseVersionId: string;baseAssetHash: string;value: SettingAsset;reason: string;submittedBy: string;submittedAt: string;status: "pending" | "accepted" | "rejected";decidedBy?: string;decidedAt?: string;decisionReason?: string };
-export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"];targetId: string;reason: string };
+export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"] | "regenerate";targetId: string;reason: string };
 export type SettingsVersion = Omit<SettingsCandidate,"status"> & { status: "candidate" | "confirmed";parentVersionId: string | null;
   suggestions: SettingsSuggestion[];locks: Record<string,{ lockedBy: string;lockedAt: string }>;
+  regeneration?: { jobId: string;fingerprint: string;assetIds: string[];failureScopeKeys: string[];reason: string;outcome: "succeeded" | "partially_succeeded" | "failed" };
   operation?: SettingsReviewOperation;confirmedBy?: string;confirmedAt?: string;revisionOfVersionId?: string };
 export interface SettingsReviewRepository {
   findActive(a: Actor,p: string,c: string): Promise<SettingsVersion | null>;

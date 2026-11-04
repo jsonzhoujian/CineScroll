@@ -26,7 +26,7 @@ export class SettingsContentError extends Error {
   constructor() { super("INVALID_RESPONSE");this.name = "SettingsContentError";this.code = "INVALID_RESPONSE"; }
 }
 export type SettingsResponseIdentity = { jobId: string;projectId: string;chapterId: string;sourceVersionId: string;upstreamConfirmedVersionIds: readonly string[] };
-export type SettingsGenerationResult = { assets: SettingAsset[];failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;generationStatus: "succeeded" | "partially_succeeded" | "failed" };
+export type SettingsGenerationResult = { assets: SettingAsset[];failures: Array<{ scopeKey: string;assetId?: string;code: string;retryable: boolean }>;generationStatus: "succeeded" | "partially_succeeded" | "failed" };
 /** Envelope identity must match before any item may be consumed. Provider prose never enters failure records. */
 export function validateSettingsResponse(response: unknown,expected: SettingsResponseIdentity,evidence: SettingEvidenceContext): SettingsGenerationResult {
   if (!record(response) || !keys(response,["contractVersion","jobId","stage","projectId","chapterId","sourceVersionId","upstreamConfirmedVersionIds","status","items"])
