@@ -45,4 +45,4 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 | T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |
 | T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
 
-盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01已完成[文字设定候选纵向验收](../../../docs/plans/2026-11-03-t07-settings-candidate-delivery.md)，T07-02已完成审核核心与数据库事务增量；审核Session API及浏览器单项操作已接通，局部重生核心、任务恢复及结果事务仓储已实现，生产原生传输与独立Worker已接通，局部重生API／浏览器与分镜仍待实现，父项T07保持in_progress。
+盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01已完成[文字设定候选纵向验收](../../../docs/plans/2026-11-03-t07-settings-candidate-delivery.md)，T07-02已完成审核核心与数据库事务增量；审核Session API及浏览器单项操作已接通，局部重生核心、任务恢复及结果事务仓储已实现，生产原生传输与独立Worker已接通，局部重生Session API已接通，浏览器与分镜仍待实现，父项T07保持in_progress。

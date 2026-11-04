@@ -1,3 +1,4 @@
+import { SettingsRegenerationTaskApiModule } from "./settings-regeneration-task-api.ts";
 import { PostgresSettingsRegenerationRepository } from "@novel-adaptation/script/postgres-settings-regeneration";
 import { SettingsRegenerationTaskContext,SettingsRegenerationTaskExecutor } from "./settings-regeneration-task-executor.ts";
 import { SettingsRegenerationTaskDispatcher } from "./settings-regeneration-task-dispatcher.ts";
@@ -395,9 +396,10 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       const reviews = new PostgresSettingsReviewRepository(restrictedPool,handoff);
       const review = new SettingsReviewService({ repository: reviews,handoff,access: projects,idGenerator: () => `settingr_${randomUUID()}`,clock: () => new Date() });
       apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker,settingsRegenerationWorker),
+        SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: regenerationTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
         SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
         SettingsReviewApiModule.register({ sessionVerifier: sessions,repository: reviews,review,context: new SettingsTaskContext(context,handoff) }),
-        SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,reviews,review,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository }));
+        SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,reviews,review,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository,regeneration: { tasks: regenerationTasks,repository: regenerationRepository } }));
       apiModule.providers!.push({ provide: "SETTINGS_REGENERATION_TASK_SERVICE",useValue: regenerationTasks },{ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertSettingsDatabase(restrictedPool,taskConfig.workspaceIds),
       } });

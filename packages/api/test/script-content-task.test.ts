@@ -557,3 +557,84 @@ test("regeneration task admission stays closed by default and changed project pa
   } } });
   const result = await executor.run(f.actor,task.id);assert.equal(result.reason,"UPSTREAM_CHANGED");assert.equal(calls,1);assert.equal(await f.results.findGeneration(f.actor,"p","c",task.id),null);
 });
+
+import { SettingsRegenerationTaskApiModule } from "../src/settings-regeneration-task-api.ts";
+test("settings regeneration Session API submits exact targets and reconciles original requests without execution endpoints",async () => {
+  const f = await regenerationTaskFixture();let calls = 0;
+  const project = (await f.projects.findProject(f.actor,"p"))!;project.members.push({ userId: "editor",role: "editor" });await f.projects.saveProject(f.actor,project);
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() }),SettingsApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,repository: f.candidates,reviews: f.reviews,context: f.context,handoff: f.handoff,projects: f.projects,scripts: f.contentRepository,regeneration: { tasks: f.tasks,repository: f.results } })] }).compile();
+  const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },outsider = { authorization: `Bearer ${await sessions.issue("outsider","w")}` },editor = { authorization: `Bearer ${await sessions.issue("editor","w")}` },base = "/projects/p/chapters/c/settings-regeneration-tasks";
+    const body = { configurationVersionId: f.input.configurationVersionId,modelId: f.input.modelId,requestId: f.input.requestId,selection: f.input.selection };
+    await http.post(base).send(body).expect(401);
+    await http.post(base).set(auth).send({ ...body,sourceVersionId: "forged" }).expect(400);
+    await http.post(base).set(auth).send({ ...body,selection: { ...body.selection,assetIds: [] } }).expect(400);
+    await http.post(base).set(outsider).send(body).expect(404);
+    await http.post(base).set(editor).send(body).expect(403);
+    assert.equal((await http.post(`${base}/availability`).set(auth).send({ configurationVersionId: body.configurationVersionId,modelId: body.modelId,selection: body.selection }).expect(201)).body.available,true);
+    assert.equal((await http.get(base).set(auth).expect(200)).body.tasks.length,0);
+    const created = (await http.post(base).set(auth).send(body).expect(201)).body;
+    const lookup = await http.get(`${base}/submissions/${body.requestId}`).set(auth).expect(200);
+    assert.equal(lookup.body.id,created.id);assert.equal(lookup.headers["cache-control"],"no-store");
+    assert.equal((await http.post(base).set(auth).send(body).expect(201)).body.id,created.id);
+    await http.post(base).set(auth).send({ ...body,selection: { ...body.selection,reason: "different" } }).expect(409);
+    await http.get(`${base}/submissions/${body.requestId}`).set(editor).expect(404);
+    await http.get(base).set(outsider).expect(404);
+    await http.get(base).set(auth).query({ limit: "51" }).expect(400);
+    assert.equal((await http.get(base).set(auth).expect(200)).body.tasks.length,1);
+    const resultPath = `/projects/p/chapters/c/settings/regenerations/${created.id}`;
+    await http.get(resultPath).set(auth).expect(404);
+    const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.results,handoff: f.handoff,access: f.projects,idGenerator: () => "api-regeneration",clock: () => new Date("2026-11-04"),model: { async generate(r) { calls++;return regenerationResponse(r); } } });
+    await executor.run(f.actor,created.id);
+    const view = await http.get(resultPath).set(auth).expect(200);
+    assert.equal(view.body.version.id,"api-regeneration");assert.equal(view.body.sourceFragments[0].text,"雨落");assert.equal(view.body.scriptVersion.id,view.body.version.scriptVersionId);assert.equal(view.body.current,true);assert.equal(view.body.active,true);
+    assert.equal((await http.get(`/settings-regeneration-tasks/${created.id}`).set(auth).expect(200)).body.state,"succeeded");
+    await http.get(`/settings-regeneration-tasks/${created.id}`).set(outsider).expect(404);
+    await http.get(resultPath).set(editor).expect(404);
+    await http.post(`/settings-regeneration-tasks/${created.id}/run`).set(auth).expect(404);
+    await http.post(`/settings-regeneration-tasks/${created.id}/recover`).set(auth).expect(404);
+    const original = await http.get(`${base}/submissions/${body.requestId}`).set(auth).expect(200);
+    assert.equal(original.body.result.candidateVersionId,"api-regeneration");assert.equal(calls,1);
+    const changed = (await f.projects.findProject(f.actor,"p"))!;changed.chapters[0]!.activeSourceVersionId = "new-source";await f.projects.saveProject(f.actor,changed);
+    const stale = await http.get(resultPath).set(auth).expect(200);
+    assert.equal(stale.body.current,false);assert.equal(stale.body.sourceFragments[0].text,"雨落");
+    assert.equal((await http.get(base).set(auth).expect(200)).body.tasks.length,1);
+  } finally { await app.close(); }
+});
+
+test("settings regeneration Session submissions fail closed on denied or unavailable rate budgets",async () => {
+  const f = await regenerationTaskFixture();
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  for (const unavailable of [false,true]) {
+    const ref = await Test.createTestingModule({ imports: [SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: { async consume() { if (unavailable) throw new Error("private-storage-details");return { allowed: false,retryAfterSeconds: 13 }; } } })] }).compile();
+    const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
+    try {
+      const response = await request(app.getHttpServer()).post("/projects/p/chapters/c/settings-regeneration-tasks").set("authorization",`Bearer ${await sessions.issue("owner","w")}`).send({ configurationVersionId: f.input.configurationVersionId,modelId: f.input.modelId,requestId: f.input.requestId,selection: f.input.selection }).expect(unavailable ? 503 : 429);
+      if (!unavailable) assert.equal(response.headers["retry-after"],"13");
+      assert.ok(!JSON.stringify(response.body).includes("private-storage-details"));
+      assert.equal((await f.tasks.listSettingsRegeneration(f.actor,"p","c")).tasks.length,0);
+    } finally { await app.close(); }
+  }
+});
+test("settings regeneration Session reconciliation never reexecutes unknown model work or admits a new request for that base",async () => {
+  const f = await regenerationTaskFixture();let calls = 0;
+  const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
+  const ref = await Test.createTestingModule({ imports: [SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() })] }).compile();
+  const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()),auth = { authorization: `Bearer ${await sessions.issue("owner","w")}` },base = "/projects/p/chapters/c/settings-regeneration-tasks";
+    const body = { configurationVersionId: f.input.configurationVersionId,modelId: f.input.modelId,requestId: f.input.requestId,selection: f.input.selection };
+    const created = (await http.post(base).set(auth).send(body).expect(201)).body;
+    const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.results,handoff: f.handoff,access: f.projects,idGenerator: () => "unused",clock: () => new Date("2026-11-04"),model: { async generate() { calls++;throw new Error("uncertain-provider-details"); } } });
+    assert.equal((await executor.run(f.actor,created.id)).reason,"EXECUTION_UNCERTAIN");
+    const original = await http.get(`${base}/submissions/${body.requestId}`).set(auth).expect(200);
+    assert.equal(original.body.reason,"EXECUTION_UNCERTAIN");assert.ok(!JSON.stringify(original.body).includes("uncertain-provider-details"));
+    assert.equal((await http.post(base).set(auth).send(body).expect(201)).body.id,created.id);
+    await http.post(base).set(auth).send({ ...body,requestId: "new-request" }).expect(409);
+    await http.post(`/settings-regeneration-tasks/${created.id}/run`).set(auth).expect(404);
+    await http.post(`/settings-regeneration-tasks/${created.id}/recover`).set(auth).expect(404);
+    assert.equal(calls,1);
+  } finally { await app.close(); }
+});

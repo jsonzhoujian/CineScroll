@@ -377,9 +377,13 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       reviewed = (await settingsApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "unlock",requestId: "tls-settings-unlock",expectedActiveVersionId: reviewed.id,reason: "revision",assetId: "location" }).expect(201)).body;
       settingsActiveId = reviewed.id;
       assert.equal((await settingsApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,settingsActiveId);
-      const regeneration = await settingsApp.regenerationTasks!.submitSettingsRegeneration(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-regeneration",selection: { expectedActiveVersionId: settingsActiveId,assetIds: ["location"],failureScopeKeys: [],reason: "visible revision" } });
+      const regenerationBase = `/projects/${projectId}/chapters/${chapterId}/settings-regeneration-tasks`;
+      const regenerationInput = { configurationVersionId: version!,modelId: "m",requestId: "tls-regeneration",selection: { expectedActiveVersionId: settingsActiveId,assetIds: ["location"],failureScopeKeys: [],reason: "visible revision" } };
+      await settingsApp.http.post(regenerationBase).send(regenerationInput).expect(401);
+      const regeneration = (await settingsApp.http.post(regenerationBase).set("authorization",bearer).send(regenerationInput).expect(201)).body;
       regenerationTaskId = regeneration.id;
-      assert.equal((await settingsApp.regenerationTasks!.submitSettingsRegeneration(actor,{ projectId,chapterId,configurationVersionId: version!,modelId: "m",requestId: "tls-regeneration",selection: { expectedActiveVersionId: settingsActiveId,assetIds: ["location"],failureScopeKeys: [],reason: "visible revision" } })).id,regeneration.id);
+      assert.equal((await settingsApp.http.post(regenerationBase).set("authorization",bearer).send(regenerationInput).expect(201)).body.id,regeneration.id);
+      assert.equal((await settingsApp.http.get(`${regenerationBase}/submissions/tls-regeneration`).set("authorization",bearer).expect(200)).body.id,regeneration.id);
       let regenerated = regeneration;
       for (let i=0;i<100;i++) {
         regenerated = await settingsApp.regenerationTasks!.get(actor,regeneration.id);
@@ -388,6 +392,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       }
       assert.equal(regenerated.state,"succeeded",JSON.stringify(regenerated));assert.equal(modelCalls,7);
       regenerationVersionId = regenerated.result!.candidateVersionId;
+      const loadedRegeneration = await settingsApp.http.get(`${settingsBase}/regenerations/${regeneration.id}`).set("authorization",bearer).expect(200);
+      assert.equal(loadedRegeneration.body.version.id,regenerationVersionId);assert.equal(loadedRegeneration.body.sourceFragments[0].text,"雨落");
       const regeneratedView = (await settingsApp.http.get(settingsBase).set("authorization",bearer).expect(200)).body;
       assert.equal(regeneratedView.version.id,regenerationVersionId);assert.equal(regeneratedView.version.assets[0].name,"重生庭院");assert.equal(regeneratedView.version.status,"candidate");
       assert.equal((await settingsApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,settingsActiveId);
@@ -422,6 +428,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         regenerated = await settingsRestart.regenerationTasks!.get({ workspaceId,userId },regenerationTaskId!);
       }
       assert.equal(regenerated.state,"succeeded");
+      assert.equal((await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings-regeneration-tasks/submissions/tls-regeneration-unknown`).set("authorization",bearer).expect(200)).body.result.candidateVersionId,regenerationVersionId!);
       assert.equal(regenerated.result?.candidateVersionId,regenerationVersionId!);assert.equal(modelCalls,8);
       assert.equal((await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body.version.id,settingsCandidateId!);
     } finally { await settingsRestart.close(); }

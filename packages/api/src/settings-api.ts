@@ -1,3 +1,4 @@
+import type { SettingsRegenerationRepository } from "@novel-adaptation/script/settings-regeneration";
 import type { SettingsReviewRepository,SettingsReviewService } from "@novel-adaptation/script/settings-review";
 import { BadRequestException,Controller,Get,Header,Inject,Module,NotFoundException,Param,Query,Req,ServiceUnavailableException,UseGuards,type DynamicModule } from "@nestjs/common";
 import type { Actor,SessionVerifier } from "@novel-adaptation/identity";
@@ -9,7 +10,7 @@ import type { SettingsCandidate,SettingsCandidateRepository } from "@novel-adapt
 import type { SettingsTaskContext } from "./settings-task-executor.ts";
 import { SESSION_VERIFIER,SessionGuard } from "./index.ts";
 const SERVICES = Symbol("SETTINGS_READ");
-type Services = { reviews?: SettingsReviewRepository;review?: SettingsReviewService;sessionVerifier: SessionVerifier;tasks: ModelTaskService;repository: SettingsCandidateRepository & { findActive(a: Actor,p: string,c: string): Promise<SettingsCandidate | null> };
+type Services = { regeneration?: { tasks: ModelTaskService;repository: SettingsRegenerationRepository };reviews?: SettingsReviewRepository;review?: SettingsReviewService;sessionVerifier: SessionVerifier;tasks: ModelTaskService;repository: SettingsCandidateRepository & { findActive(a: Actor,p: string,c: string): Promise<SettingsCandidate | null> };
   context: Pick<SettingsTaskContext,"canRead">;handoff: Pick<ConfirmedScriptHandoff,"read">;projects: Pick<ProjectImportRepository,"findChapter">;scripts: Pick<ScriptContentRepository,"findVersion"> };
 function identifier(v: unknown) { return typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v); }
 class SettingsController {
@@ -23,15 +24,19 @@ class SettingsController {
     if (!identifier(id)) throw new BadRequestException();
     return this.read(request.actor,p,c,id);
   }
-  private async read(a: Actor,p: string,c: string,jobId?: string) {
+  async regeneration(request: { actor: Actor },p: string,c: string,id: string) {
+    if (!identifier(id) || !this.services.regeneration) throw new NotFoundException();
+    return this.read(request.actor,p,c,id,true);
+  }
+  private async read(a: Actor,p: string,c: string,jobId?: string,regeneration = false) {
     if (![p,c].every(identifier)) throw new BadRequestException();
     try {
       if (!await this.services.context.canRead(a,p,c)) throw new NotFoundException();
       if (jobId) {
-        const task = await this.services.tasks.get(a,jobId);
-        if (task.projectId !== p || task.chapterId !== c || task.input.stage !== "settings" || task.input.resultType !== "settingsContent") throw new NotFoundException();
+        const task = await (regeneration ? this.services.regeneration!.tasks : this.services.tasks).get(a,jobId);
+        if (task.projectId !== p || task.chapterId !== c || task.input.stage !== "settings" || task.input.resultType !== (regeneration ? "settingsRegeneration" : "settingsContent")) throw new NotFoundException();
       }
-      const version = jobId ? await this.services.repository.findGeneration(a,p,c,jobId) : await (this.services.reviews ?? this.services.repository).findActive(a,p,c);
+      const version = jobId ? await (regeneration ? this.services.regeneration!.repository : this.services.repository).findGeneration(a,p,c,jobId) : await (this.services.reviews ?? this.services.repository).findActive(a,p,c);
       if (!version) throw new NotFoundException();
       const chapter = await this.services.projects.findChapter(a,p,c),source = chapter?.versions.find(v => v.id === version.sourceVersionId);
       const scriptVersion = await this.services.scripts.findVersion?.(a,p,c,version.scriptVersionId);
@@ -56,11 +61,11 @@ class SettingsController {
   }
 }
 Controller("projects/:projectId/chapters/:chapterId/settings")(SettingsController);UseGuards(SessionGuard)(SettingsController);Inject(SERVICES)(SettingsController,undefined,0);
-for (const [method,path] of [["view",""],["generation","generations/:id"]] as const) {
+for (const [method,path] of [["view",""],["generation","generations/:id"],["regeneration","regenerations/:id"]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(SettingsController.prototype,method)!;
   Get(path)(SettingsController.prototype,method,descriptor);Header("Cache-Control","no-store")(SettingsController.prototype,method,descriptor);
   Req()(SettingsController.prototype,method,0);Param("projectId")(SettingsController.prototype,method,1);Param("chapterId")(SettingsController.prototype,method,2);
-  if (method === "generation") Param("id")(SettingsController.prototype,method,3);else Query()(SettingsController.prototype,method,3);
+  if (method !== "view") Param("id")(SettingsController.prototype,method,3);else Query()(SettingsController.prototype,method,3);
 }
 export class SettingsApiModule {
   static register(services: Services): DynamicModule { return { module: SettingsApiModule,providers: [{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier },{ provide: SERVICES,useValue: services }] }; }

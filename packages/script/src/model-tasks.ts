@@ -115,6 +115,27 @@ export class ModelTaskService {
     } else await this.#context(actor,projectId,chapterId);
     return this.#options.repository.listEpisodePlans(actor.workspaceId,projectId,chapterId,page);
   }
+  async listSettingsRegeneration(actor: Actor,p: string,c: string,page: TaskPageRequest = { limit: 20,cursor: null }) {
+    validateTaskPage(page);
+    if (!await this.#options.contextReader.canRead?.(actor,p,c)) throw new ModelTaskError("TASK_NOT_FOUND");
+    if (!this.#options.repository.listSettingsRegeneration) throw new ModelTaskError("STORAGE_UNAVAILABLE");
+    return this.#options.repository.listSettingsRegeneration(actor.workspaceId,p,c,page);
+  }
+  async findSettingsRegenerationSubmission(actor: Actor,p: string,c: string,requestId: string) {
+    if (![p,c,requestId].every(validIdentifier)) throw new ModelTaskError("INVALID_CONTEXT");
+    if (!await this.#options.contextReader.canRead?.(actor,p,c)) throw new ModelTaskError("TASK_NOT_FOUND");
+    const task = await this.#options.repository.find(actor.workspaceId,regenerationSubmissionId(actor,p,c,requestId));
+    if (!task || task.createdBy !== actor.userId || task.projectId !== p || task.chapterId !== c || task.input.resultType !== "settingsRegeneration" || task.input.stage !== "settings") throw new ModelTaskError("TASK_NOT_FOUND");
+    return task;
+  }
+  async settingsRegenerationAvailability(actor: Actor,p: string,c: string,input: { configurationVersionId: string;modelId: string;selection: SettingsRegenerationSelection }) {
+    const context = await this.#context(actor,p,c,undefined,input.selection);
+    if (context.resultType !== "settingsRegeneration") throw new ModelTaskError("INVALID_CONTEXT");
+    await this.assertGenerationAllowed(actor,p,c,context);
+    const status = this.#admission(actor,context);if (!status.available) return status;
+    const model = await this.#options.settings.selectForTask(actor,input.configurationVersionId,input.modelId);
+    return this.#admission(actor,context,model);
+  }
   async listSettings(actor: Actor,p: string,c: string,page: TaskPageRequest = { limit: 20,cursor: null }) {
     validateTaskPage(page);
     if (!await this.#options.contextReader.canRead?.(actor,p,c)) throw new ModelTaskError("TASK_NOT_FOUND");
@@ -239,7 +260,7 @@ export class ModelTaskService {
     const resultType = "settingsRegeneration";
     if (!validIdentifier(input.requestId)) throw new ModelTaskError("INVALID_CONTEXT");
     if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
-    const id = `settings_regeneration_${createHash("sha256").update(JSON.stringify([actor.workspaceId,actor.userId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
+    const id = regenerationSubmissionId(actor,input.projectId,input.chapterId,input.requestId);
     const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId
       && task.createdBy === actor.userId && sameRegeneration(task.input.regeneration,selected) && task.input.resultType === resultType && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
     const existing = await this.#options.repository.find(actor.workspaceId, id);
@@ -501,4 +522,8 @@ function compareTaskIds(a: string, b: string) { return Buffer.compare(Buffer.fro
 
 function sameRegeneration(a: SettingsRegenerationSelection | undefined,b: SettingsRegenerationSelection | undefined) {
   return !a && !b || !!a && !!b && JSON.stringify(normalizeSettingsRegenerationSelection(a)) === JSON.stringify(normalizeSettingsRegenerationSelection(b));
+}
+
+function regenerationSubmissionId(actor: Actor,p: string,c: string,requestId: string) {
+  return `settings_regeneration_${createHash("sha256").update(JSON.stringify([actor.workspaceId,actor.userId,p,c,requestId])).digest("hex")}`;
 }
