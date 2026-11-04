@@ -46,3 +46,12 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 | T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
 
 盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01已完成[文字设定候选纵向验收](../../../docs/plans/2026-11-03-t07-settings-candidate-delivery.md)，T07-02已完成审核核心与数据库事务增量；审核Session API及浏览器单项操作已接通，局部重生核心、任务恢复及结果事务仓储已实现，生产原生传输与独立Worker已接通，局部重生Session API与浏览器闭环已接通，上游影响只读展示及独立复核已补齐，跨上游设定处理与分镜仍待完成，父项T07保持in_progress。
+
+T07-02跨上游处理的[规则及四项拆分](../../../docs/plans/2026-11-04-t07-upstream-settings-decisions.md)均已确认：受限锁沿用、相同片段依据迁移、分批核对及旧建议留在旧版本。以下为已发布任务；T07-02及其父项保持原状态，不因计划发布而关闭。
+
+| ID | Ticket | Status | Blocked by |
+| --- | --- | --- | --- |
+| T07-02a | [同源跨上游分批核对与原样保留](./t07/02a-reconcile-same-source.md) | ready | None |
+| T07-02b | [跨源依据迁移与人工修订闭环](./t07/02b-reconcile-source-evidence.md) | blocked | T07-02a |
+| T07-02c | [待核对目标局部重生与未知结果恢复](./t07/02c-reconcile-regeneration.md) | blocked | T07-02b |
+| T07-02d | [跨上游整体验收与分镜交接](./t07/02d-reconcile-acceptance.md) | blocked | T07-02a、T07-02b、T07-02c |
