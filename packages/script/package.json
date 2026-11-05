@@ -28,6 +28,7 @@
     "./settings-runner": "./src/settings-runner.ts",
     "./settings-content": "./src/settings-content.ts",
     "./postgres-settings-candidates": "./src/postgres-settings-candidates.ts",
+    "./settings-reconciliation": "./src/settings-reconciliation.ts",
     "./settings-review": "./src/settings-review.ts",
     "./postgres-settings-review": "./src/postgres-settings-review.ts",
     "./postgres-settings-regeneration": "./src/postgres-settings-regeneration.ts",

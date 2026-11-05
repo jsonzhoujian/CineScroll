@@ -102,6 +102,7 @@ export class InMemorySettingsRegenerationRepository implements SettingsRegenerat
   }
 }
 export function selectSettingsRegenerationTargets(base: SettingsVersion,s: SettingsRegenerationSelection): SettingsRegenerationTarget[] {
+  if (base.reconciliation && (base.reconciliation.pendingAssets.length || base.reconciliation.pendingFailureScopeKeys.length)) throw new SettingsReviewError("INVALID_STATE");
   const targets: SettingsRegenerationTarget[] = [],ids = new Set<string>();
   const add = (asset: SettingAsset | undefined,failureScopeKey?: string) => {
     if (asset) {

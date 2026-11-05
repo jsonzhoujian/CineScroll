@@ -7,9 +7,10 @@ export type SettingsReviewCommand = { requestId: string;expectedActiveVersionId:
   { kind: "edit" | "suggest";assetId: string;value: unknown } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" }
   | { kind: "confirm" } | { kind: "lock" | "unlock";assetId: string });
 export type SettingsSuggestion = { id: string;assetId: string;baseVersionId: string;baseAssetHash: string;value: SettingAsset;reason: string;submittedBy: string;submittedAt: string;status: "pending" | "accepted" | "rejected";decidedBy?: string;decidedAt?: string;decisionReason?: string };
-export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"] | "regenerate";targetId: string;reason: string };
+export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"] | "regenerate" | "reconcile" | "retain";targetId: string;reason: string };
 export type SettingsVersion = Omit<SettingsCandidate,"status"> & { status: "candidate" | "confirmed";parentVersionId: string | null;
   suggestions: SettingsSuggestion[];locks: Record<string,{ lockedBy: string;lockedAt: string }>;
+  reconciliation?: { originVersionId: string;pendingAssets: SettingAsset[];pendingFailureScopeKeys: string[] };
   regeneration?: { jobId: string;fingerprint: string;assetIds: string[];failureScopeKeys: string[];reason: string;outcome: "succeeded" | "partially_succeeded" | "failed" };
   operation?: SettingsReviewOperation;confirmedBy?: string;confirmedAt?: string;revisionOfVersionId?: string };
 export interface SettingsReviewRepository {
@@ -58,7 +59,7 @@ export class SettingsReviewService {
     const asset = next.assets.find(v => v.id === assetId);
     if (command.kind !== "confirm" && !asset) throw new SettingsReviewError("NOT_FOUND");
     if (command.kind === "confirm") {
-      if (base.status !== "candidate" || base.generationStatus !== "succeeded" || base.failures.length || !base.assets.length || base.suggestions.some(s => s.status === "pending")) throw new SettingsReviewError("INVALID_STATE");
+      if (base.status !== "candidate" || base.generationStatus !== "succeeded" || base.failures.length || !!base.reconciliation?.pendingAssets.length || !!base.reconciliation?.pendingFailureScopeKeys.length || !base.assets.length || base.suggestions.some(s => s.status === "pending")) throw new SettingsReviewError("INVALID_STATE");
       next.status = "confirmed";next.confirmedBy = a.userId;next.confirmedAt = now;
     } else if (command.kind === "lock" || command.kind === "unlock") {
       if (base.status !== "confirmed") throw new SettingsReviewError("INVALID_STATE");

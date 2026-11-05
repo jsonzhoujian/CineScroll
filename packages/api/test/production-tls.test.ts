@@ -109,7 +109,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -348,6 +348,13 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query("drop trigger settings_regeneration_transition on settings_review_versions;create trigger settings_regeneration_transition before insert on settings_review_versions for each row when (false) execute function guard_settings_regeneration_version()");
     try { await assert.rejects(start(ca,false,false,false,true),/SETTINGS_DATABASE_NOT_READY/); }
     finally { await admin.query("drop trigger settings_regeneration_transition on settings_review_versions");await admin.query(regenerationTrigger); }
+    await admin.query("alter table settings_review_versions disable trigger settings_reconciliation_transition");
+    try { await assert.rejects(start(ca,false,false,false,true),/SETTINGS_DATABASE_NOT_READY/); }
+    finally { await admin.query("alter table settings_review_versions enable trigger settings_reconciliation_transition"); }
+    const reconciliationTrigger = (await admin.query("select pg_get_triggerdef(oid) definition from pg_trigger where tgname='settings_reconciliation_transition'")).rows[0].definition;
+    await admin.query("drop trigger settings_reconciliation_transition on settings_review_versions;create trigger settings_reconciliation_transition before insert on settings_review_versions for each row when (false) execute function guard_settings_reconciliation_version()");
+    try { await assert.rejects(start(ca,false,false,false,true),/SETTINGS_DATABASE_NOT_READY/); }
+    finally { await admin.query("drop trigger settings_reconciliation_transition on settings_review_versions");await admin.query(reconciliationTrigger); }
     const settingsApp = await start(ca,false,false,false,true);
     let settingsTaskId: string,settingsCandidateId: string,settingsActiveId: string,regenerationTaskId: string,regenerationVersionId: string;
     try {
@@ -459,6 +466,20 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       await impactApp.http.get(`${settingsBase}/versions/missing/impacts`).set("authorization",bearer).expect(404);
       await impactApp.http.get(`${settingsBase}/versions/${locked.id}/impacts`).expect(401);
       assert.equal((await impactApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,locked.id);
+      const preview = (await impactApp.http.get(`${settingsBase}/reconciliation`).set("authorization",bearer).expect(200)).body;
+      assert.equal(preview.canBegin,true);
+      const begin = { kind: "begin",requestId: "tls-reconciliation",expectedActiveVersionId: locked.id,expectedUpstreamConfirmedVersionIds: preview.upstreamConfirmedVersionIds,reason: "retain for new script" };
+      await impactApp.http.post(`${settingsBase}/reconciliation`).send(begin).expect(401);
+      const begun = (await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send(begin).expect(201)).body;
+      assert.equal(begun.assets.length,0);assert.equal(begun.reconciliation.pendingAssets.length,1);
+      assert.equal((await impactApp.http.get(`${settingsBase}/operations/${begin.requestId}`).set("authorization",bearer).expect(200)).body.version.id,begun.id);
+      await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "tls-pending-confirm",expectedActiveVersionId: begun.id,reason: "check" }).expect(409);
+      const retained = (await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send({ ...begin,kind: "retain",assetId: "location",requestId: "tls-retain",expectedActiveVersionId: begun.id }).expect(201)).body;
+      assert.deepEqual(retained.assets,locked.assets);assert.deepEqual(retained.locks,locked.locks);
+      assert.equal((await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send(begin).expect(201)).body.id,begun.id);
+      const final = (await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "tls-reconfirm",expectedActiveVersionId: retained.id,reason: "checked" }).expect(201)).body;
+      assert.equal((await impactApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,final.id);
+
     } finally { await impactApp.close(); }
     const second = await start();
     try {

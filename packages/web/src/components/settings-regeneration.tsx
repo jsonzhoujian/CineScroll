@@ -21,7 +21,7 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
   },[key]);
   useEffect(() => { onBlockedChange(restoring || !!pending); },[restoring,pending,onBlockedChange]);
   useEffect(() => { setAssets([]);setFailures([]);setReason(""); },[view.version.id]);
-  const eligible = view.current && view.active === true && view.permissions?.canDecide === true;
+  const eligible = view.current && view.active === true && view.permissions?.canDecide === true && !view.version.reconciliation?.pendingAssets.length && !view.version.reconciliation?.pendingFailureScopeKeys.length;
   const blocked = disabled || restoring || !!pending || !eligible;
   const unavailableAsset = (id: string) => Object.hasOwn(view.version.locks ?? {},id) || !!view.version.suggestions?.some(s => s.assetId === id && s.status === "pending");
   function save(value: SettingsRegenerationSubmission | null) {
@@ -92,7 +92,7 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
         <button type="button" disabled={blocked} onClick={() => void run(async () => { const next = (await api.modelConfiguration()).configuration;if (alive.current) { setConfig(next?.tested && next.processingRegion === "mainland" ? next : null);setModel(""); } })}>读取重生模型</button>
         <label>重生模型<select aria-label="设定重生模型" disabled={blocked} value={model} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{config?.availableModelIds.map(id => <option key={id}>{id}</option>)}</select></label>
         <button type="button" disabled={blocked || !model || !reason.trim() || assets.length+failures.length<1 || assets.length+failures.length>100} onClick={() => void run(() => send())}>提交设定局部重生</button>
-      </> : <p>当前身份或版本仅可读取，不开放局部重生。</p>}
+      </> : <p>当前身份或核对状态尚不开放局部重生。</p>}
       {pending && missing && <button type="button" disabled={disabled || restoring} onClick={() => void run(() => send(pending))}>重新发送设定重生原提交</button>}
       {task && (task.state === "failed" || task.state === "paused" && task.reason !== "EXECUTION_UNCERTAIN") && <button type="button" disabled={readDisabled || restoring} onClick={() => void run(async () => { save(null);setTask(null);setNotice("已结束停止任务的核对；请读取当前设定后重新选择。"); })}>结束已停止的重生任务</button>}
     </div>

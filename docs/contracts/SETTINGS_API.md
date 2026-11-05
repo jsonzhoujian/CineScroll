@@ -19,7 +19,7 @@ Unauthenticated requests return 401; inaccessible projects/results or wrong-stag
 
 ## T07-02 review API
 
-The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0030 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
+The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0031 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
 
 | Method | Route | Input / result |
 |---|---|---|
@@ -86,4 +86,20 @@ Full current/generation/regeneration views additionally return `impacts`: an arr
 
 The settings panel shows target asset names, original script/element, the new confirmed script and “待核对”; locked targets explicitly retain the unlock requirement. Stale settings heads can load their pinned historical script/source even when the current script ID differs, with all review/regeneration writes blocked. A loaded stale formal script retains a read-only settings entry. No content, lock or pointer is rewritten by reading impact records. Script changes produce links only when the revised script is explicitly confirmed; suggestions/candidate revisions do not trigger downstream rewriting.
 
-Remaining boundary: cross-upstream retain/revise/regenerate is not implemented yet. Existing review/regeneration writers still require the settings version to match the current formal upstream. These read-only markers do not resolve an impact or authorize rebinding old evidence to new upstream versions; T07-02 remains in progress pending that controlled workflow and final acceptance.
+Remaining boundary: same-source explicit retention is implemented below; cross-source evidence migration/manual repair and pending-target regeneration remain T07-02b/T07-02c. Existing review/regeneration writers still require the settings version to match the current formal upstream. These read-only markers do not resolve an impact or authorize rebinding old evidence to new upstream versions; T07-02 remains in progress pending that controlled workflow and final acceptance.
+
+
+## Same-source reconciliation (T07-02a)
+
+Mounted by the existing default-off settings switch after trusted-owner migration 0031. `GET .../settings/reconciliation` is a read-only preview returning `{baseVersionId,sourceVersionId,upstreamConfirmedVersionIds,sameSource,requiresReconciliation,canBegin}`. Members can preview; only owner/reviewer may execute. The same source version and a different, currently valid formal upstream are required to begin. Source changes are explicitly rejected here.
+
+`POST .../settings/reconciliation` accepts exactly `{kind,requestId,expectedActiveVersionId,expectedUpstreamConfirmedVersionIds,reason}` plus `assetId` only for `kind:"retain"`. Expected upstreams are an ordered three-ID acknowledgement, not authority supplied by the caller. The server rereads the real formal handoff and locks project, member, chapter and confirmed heads in the save transaction; actual script source/plan and plan parameters must match. Reasons/IDs are bounded as review commands; errors use existing review 400/403/404/409/503 mappings and responses are no-store.
+
+- `kind:"begin"`: explicitly derives a candidate bound to the new formal script/plan/knowledge. Copies no asset into the effective collection by default. Existing assets and previously unfinished assets become `reconciliation.pendingAssets`; failures are tracked by `pendingFailureScopeKeys`. The metadata also records the immutable `originVersionId`. Locks are conserved, old suggestions remain in the old version and the new candidate's suggestions start empty. Original generation result/job identity stays unchanged.
+- `kind:"retain"`: moves exactly the selected pending asset, unchanged, into effective `assets`; its original lock audit remains identical. No caller-provided asset value or evidence is accepted. Current-source canonical evidence is revalidated. Retain is not an unlock or confirmation.
+
+All existing review operations continue through exact prior-state reconstruction and current epoch authority. Confirmation additionally requires both pending collections empty; existing failure/empty-asset/new-suggestion gates remain. Ordinary regeneration cannot process a half-reconciled candidate in either the application or SQL. New-version dependencies use the actual new formal script and shared source evidence, not the original generation's script. Version/head/formal pointer/dependencies commit or roll back together; role revocation cannot interleave through the held member lock. Historical generation, operations and formal pointers remain readable.
+
+Actor-scoped `GET .../settings/operations/:requestId` reconciles original commands. The browser persists the exact request before POST, refresh never posts, and lost acknowledgements are read back. Successful write followed by read failure retains the original identity. Only a same-identity retry explicitly rejected by the server followed by the original-operation GET itself returning 404 permits a user to end unsaved reconciliation; a local rejection receipt is kept before clearing the pending record. A 404 from a subsequent current-view read never counts as evidence that the original write was absent. Unknown 5xx outcomes cannot be discarded or silently assigned a new request ID.
+
+The desktop panel previews and starts explicitly, shows pending historical content/source plus lock notices, retains assets one by one, reads old suggestions without migration and requires ordinary explicit reconfirmation. Review/regeneration/reconciliation pending states block new competing writes while GET reconciliation stays available. The retained formal version may have a different script binding and is read-only; loading it validates project/chapter rather than treating it as current authority. Mobile remains read-only. No new model or public execution endpoint is introduced.

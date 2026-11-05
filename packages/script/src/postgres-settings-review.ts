@@ -43,9 +43,9 @@ export class PostgresSettingsReviewRepository implements SettingsReviewRepositor
       const origin = parent?.origin_version_id ?? expected;
       await client.query("insert into settings_review_versions(workspace_id,project_id,chapter_id,id,origin_version_id,parent_review_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",[...key,v.id,origin,parent?.id ?? null,a.userId,JSON.stringify(v)]);
       await client.query(`insert into script_downstream_dependencies(workspace_id,project_id,chapter_id,target_stage,target_version_id,target_item_id,script_version_id,script_element_id)
-        select distinct r.workspace_id,r.project_id,r.chapter_id,'settings',r.id,asset->>'id',s.script_version_id,element->>'id'
+        select distinct r.workspace_id,r.project_id,r.chapter_id,'settings',r.id,asset->>'id',r.version_json->>'scriptVersionId',element->>'id'
         from settings_review_versions r join settings_candidate_versions s on s.workspace_id=r.workspace_id and s.project_id=r.project_id and s.chapter_id=r.chapter_id and s.id=r.origin_version_id
-        join script_content_versions v on v.workspace_id=s.workspace_id and v.project_id=s.project_id and v.chapter_id=s.chapter_id and v.id=s.script_version_id
+        join script_content_versions v on v.workspace_id=s.workspace_id and v.project_id=s.project_id and v.chapter_id=s.chapter_id and v.id=r.version_json->>'scriptVersionId'
         cross join lateral jsonb_array_elements(r.version_json->'assets') asset cross join lateral jsonb_array_elements(v.version_json->'elements') element
         cross join lateral jsonb_array_elements(asset->'provenance') ap cross join lateral jsonb_array_elements(element->'provenance') ep
         where r.workspace_id=$1 and r.project_id=$2 and r.chapter_id=$3 and r.id=$4 and ap->>'type'='source_fragment' and ep->>'type'='source_fragment'

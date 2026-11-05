@@ -1,3 +1,4 @@
+import type { SettingsReconciliationService,SettingsReconciliationCommand } from "@novel-adaptation/script/settings-reconciliation";
 import { BadRequestException,Body,Controller,Get,Header,HttpException,Inject,Module,Param,Post,Req,UseGuards,type DynamicModule } from "@nestjs/common";
 import type { Actor,SessionVerifier } from "@novel-adaptation/identity";
 import { SettingsReviewError,type SettingsReviewCommand,type SettingsReviewRepository,type SettingsReviewService } from "@novel-adaptation/script/settings-review";
@@ -5,11 +6,17 @@ import { ScriptContentError } from "@novel-adaptation/script/script-content";
 import type { SettingsTaskContext } from "./settings-task-executor.ts";
 import { SESSION_VERIFIER,SessionGuard } from "./index.ts";
 const SERVICES = Symbol("SETTINGS_REVIEW_API");
-type Services = { sessionVerifier: SessionVerifier;review: SettingsReviewService;repository: SettingsReviewRepository;context: Pick<SettingsTaskContext,"canRead"> };
+type Services = { reconciliation?: SettingsReconciliationService; sessionVerifier: SessionVerifier;review: SettingsReviewService;repository: SettingsReviewRepository;context: Pick<SettingsTaskContext,"canRead"> };
 function identifier(v: unknown) { return typeof v === "string" && !!v.trim() && v.length <= 256 && !/[\r\n]/.test(v); }
 class SettingsReviewController {
   private readonly services: Services;
   constructor(services: Services) { this.services = services; }
+  async preview(request: { actor: Actor },p: string,c: string) {
+    return this.authorized(request.actor,p,c,async () => { if (!this.services.reconciliation) throw new SettingsReviewError("NOT_FOUND");return this.services.reconciliation.preview(request.actor,p,c); });
+  }
+  async reconcile(request: { actor: Actor },p: string,c: string,body: unknown) {
+    return this.authorized(request.actor,p,c,async () => { if (!this.services.reconciliation) throw new SettingsReviewError("NOT_FOUND");return this.services.reconciliation.execute(request.actor,p,c,body as SettingsReconciliationCommand); });
+  }
   async execute(request: { actor: Actor },p: string,c: string,body: unknown) {
     return this.authorized(request.actor,p,c,() => this.services.review.execute(request.actor,p,c,body as SettingsReviewCommand));
   }
@@ -40,11 +47,11 @@ class SettingsReviewController {
   }
 }
 Controller("projects/:projectId/chapters/:chapterId/settings")(SettingsReviewController);UseGuards(SessionGuard)(SettingsReviewController);Inject(SERVICES)(SettingsReviewController,undefined,0);
-for (const [method,decorator] of [["execute",Post("review")],["version",Get("versions/:id")],["operation",Get("operations/:id")]] as const) {
+for (const [method,decorator] of [["preview",Get("reconciliation")],["reconcile",Post("reconciliation")],["execute",Post("review")],["version",Get("versions/:id")],["operation",Get("operations/:id")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(SettingsReviewController.prototype,method)!;
   decorator(SettingsReviewController.prototype,method,descriptor);Header("Cache-Control","no-store")(SettingsReviewController.prototype,method,descriptor);
   Req()(SettingsReviewController.prototype,method,0);Param("projectId")(SettingsReviewController.prototype,method,1);Param("chapterId")(SettingsReviewController.prototype,method,2);
-  if (method === "execute") Body()(SettingsReviewController.prototype,method,3);else Param("id")(SettingsReviewController.prototype,method,3);
+  if (method === "execute" || method === "reconcile") Body()(SettingsReviewController.prototype,method,3);else if (method !== "preview") Param("id")(SettingsReviewController.prototype,method,3);
 }
 export class SettingsReviewApiModule {
   static register(services: Services): DynamicModule { return { module: SettingsReviewApiModule,providers: [{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier },{ provide: SERVICES,useValue: services }] }; }

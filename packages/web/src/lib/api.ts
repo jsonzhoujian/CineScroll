@@ -7,12 +7,15 @@ export type SettingsRegenerationSelection = { expectedActiveVersionId: string;as
 export type SettingsRegenerationSubmission = { requestId: string;configurationVersionId: string;modelId: string;selection: SettingsRegenerationSelection };
 export type SettingsRegenerationTask = StoryKnowledgeTask & { input: { stage: "settings";resultType: "settingsRegeneration";sourceVersionId: string;upstreamConfirmedVersionIds: string[];regeneration: SettingsRegenerationSelection } };
 export type SettingsImpact = { confirmed_version_id: string;source_version_id: string;source_element_id: string;target_stage: string;target_version_id: string;target_item_id: string;status: string };
+export type SettingsReconciliationCommand = { requestId: string;expectedActiveVersionId: string;expectedUpstreamConfirmedVersionIds: string[];reason: string } & ({ kind: "begin" } | { kind: "retain";assetId: string });
+export type SettingsReconciliationPreview = { baseVersionId: string;sourceVersionId: string;upstreamConfirmedVersionIds: string[];sameSource: boolean;requiresReconciliation: boolean;canBegin: boolean };
 export type SettingsView = { impacts?: SettingsImpact[] | null; active?: boolean;permissions?: { canEdit: boolean;canSuggest: boolean;canDecide: boolean;canConfirm: boolean;canLock: boolean };current: boolean;sourceFragments: Array<{ id: string;text: string }>;scriptVersion: ScriptContentView["version"];version: {
   id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;scriptVersionId: string;upstreamConfirmedVersionIds: string[];status: "candidate" | "confirmed";generationStatus: string;
   assets: Array<{ id: string;assetType: string;name: string;visibleDefinition: Record<string,unknown>;state: string;stateChanges: string[];restrictions: string[];provenance: Array<{ type: string;sourceVersionId?: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
   locks?: Record<string,{ lockedBy: string;lockedAt: string }>;
   suggestions?: Array<{ id: string;assetId: string;value: SettingsView["version"]["assets"][number];reason: string;status: "pending" | "accepted" | "rejected";submittedBy: string }>;
   parentVersionId?: string | null;operation?: { requestId: string;kind: string;targetId: string;reason: string };
+  reconciliation?: { originVersionId: string;pendingAssets: SettingsView["version"]["assets"];pendingFailureScopeKeys: string[] };
   regeneration?: { jobId: string;assetIds: string[];failureScopeKeys: string[];reason: string;outcome: string };
   failures: Array<{ scopeKey: string;assetId?: string;code: string;retryable: boolean }>;
 } };
@@ -134,6 +137,8 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
 export class ApiClient {
+  previewSettingsReconciliation(p: string,c: string) { return this.request<SettingsReconciliationPreview>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/reconciliation`,{ method: "GET",cache: "no-store" },"session"); }
+  reconcileSettings(p: string,c: string,input: SettingsReconciliationCommand) { return this.request<SettingsView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/reconciliation`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   submitSettingsRegeneration(p: string,c: string,input: SettingsRegenerationSubmission) { return this.request<SettingsRegenerationTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   settingsRegenerationAvailability(p: string,c: string,input: Omit<SettingsRegenerationSubmission,"requestId">) { return this.request<{ available: boolean;reason: string | null }>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks/availability`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   getSettingsRegenerationSubmission(p: string,c: string,id: string) { return this.request<SettingsRegenerationTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks/submissions/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }

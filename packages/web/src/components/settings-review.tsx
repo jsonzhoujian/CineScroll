@@ -65,7 +65,7 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
   }
   return <section aria-label="文字设定审核"><h3>文字设定审核</h3><p>设定状态：{isFormal ? "正式" : "候选"}</p><p role="status">{notice}</p>
     {!eligible && <p>当前内容仅供追溯，请读取当前设定后再审核。</p>}
-    <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const result = await api.getSettingsVersion(projectId,chapterId,"confirmed");validVersion(result.version);if (result.version.status !== "confirmed") throw new Error("NOT_FORMAL");if (alive.current) setFormal(result.version); })}>读取保留正式设定</button>
+    <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const result = await api.getSettingsVersion(projectId,chapterId,"confirmed");if (result.version.projectId !== projectId || result.version.chapterId !== chapterId || result.version.status !== "confirmed") throw new Error("NOT_FORMAL");if (alive.current) setFormal(result.version); })}>读取保留正式设定</button>
     {formal && <article aria-label="保留正式设定"><p>正式版本 {formal.id}</p>{formal.assets.map(a => <p key={a.id}>{a.name}</p>)}</article>}
     <div className="desktop-task-action">
       <label>设定操作理由<input aria-label="设定操作理由" value={reason} maxLength={2000} disabled={blocked} onChange={e => setReason(e.target.value)} /></label>
@@ -78,7 +78,7 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
       </fieldset>}
       {draft && view.permissions?.canEdit && !isFormal && <button type="button" disabled={blocked || locked || !reason.trim() || !draft.name.trim()} onClick={() => void run(() => submit("edit"))}>保存设定修改</button>}
       {draft && view.permissions?.canSuggest && <button type="button" disabled={blocked || locked || !reason.trim() || !draft.name.trim()} onClick={() => void run(() => submit("suggest"))}>提交设定建议</button>}
-      {view.permissions?.canConfirm && !isFormal && <button type="button" disabled={blocked || !reason.trim() || view.version.generationStatus !== "succeeded" || !!view.version.failures.length || !view.version.assets.length || !!view.version.suggestions?.some(s => s.status === "pending")} onClick={() => void run(() => submit("confirm"))}>确认文字设定</button>}
+      {view.permissions?.canConfirm && !isFormal && <button type="button" disabled={blocked || !reason.trim() || view.version.generationStatus !== "succeeded" || !!view.version.failures.length || !!view.version.reconciliation?.pendingAssets.length || !!view.version.reconciliation?.pendingFailureScopeKeys.length || !view.version.assets.length || !!view.version.suggestions?.some(s => s.status === "pending")} onClick={() => void run(() => submit("confirm"))}>确认文字设定</button>}
       {draft && isFormal && view.permissions?.canLock && <button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => submit(locked ? "unlock" : "lock"))}>{locked ? "明确解锁当前设定" : "锁定当前设定"}</button>}
       {view.version.suggestions?.map(s => <article key={s.id}><p>{s.value.name}</p><small>{s.reason} · {s.status} · {s.submittedBy}</small>
         <details><summary>查看建议内容 {s.id}</summary><dl>{Object.entries(s.value.visibleDefinition).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}</dl>

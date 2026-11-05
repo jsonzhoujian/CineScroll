@@ -1,3 +1,4 @@
+import { SettingsReconciliationService } from "../src/settings-reconciliation.ts";
 import { PostgresSettingsRegenerationRepository } from "../src/postgres-settings-regeneration.ts";
 import { SettingsRegenerationRunner } from "../src/settings-regeneration.ts";
 import { PostgresSettingsReviewRepository } from "../src/postgres-settings-review.ts";
@@ -25,7 +26,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -414,6 +415,65 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.deepEqual(await settingsReviewRepo.findConfirmed(actor,projectId,chapterId),lockedSetting);
     assert.equal((await rebuilt.listSettingsImpacts({ ...actor,workspaceId: "other" },projectId,chapterId,lockedSetting.id)).length,0);
     assert.equal((await rebuilt.listSettingsImpacts({ ...actor,userId: "outsider" },projectId,chapterId,lockedSetting.id)).length,0);
+    const newHandoff = { async read() { return { version: upstreamConfirmed,sourceFragments: [{ id: "f",text: "雨落" }],upstreamConfirmedVersionIds: [confirmed.id,bibleId] }; } };
+    const reconciliationRepo = new PostgresSettingsReviewRepository(app,newHandoff),reconciliation = new SettingsReconciliationService({ repository: reconciliationRepo,handoff: newHandoff,access: accessReader,idGenerator: () => `reconciliation-${suffix}-${++sequence}`,clock: () => new Date("2026-11-04") });
+    const begin = { kind: "begin" as const,requestId: "begin-reconciliation",expectedActiveVersionId: lockedSetting.id,expectedUpstreamConfirmedVersionIds: [upstreamConfirmed.id,confirmed.id,bibleId],reason: "retain for new script" };
+    assert.equal((await reconciliation.preview(actor,projectId,chapterId)).canBegin,true);
+    await assert.rejects(() => reconciliation.execute({ ...actor,userId: "editor" },projectId,chapterId,begin),{ code: "FORBIDDEN" });
+    const begun = await reconciliation.execute(actor,projectId,chapterId,begin);
+    assert.equal(await reconciliationRepo.findActive({ ...actor,workspaceId: "other" },projectId,chapterId),null);
+    assert.equal(begun.assets.length,0);assert.equal(begun.reconciliation!.pendingAssets.length,1);assert.deepEqual(begun.locks,lockedSetting.locks);
+    assert.equal((await reconciliationRepo.findConfirmed(actor,projectId,chapterId))!.id,lockedSetting.id);
+    const newReview = new SettingsReviewService({ repository: reconciliationRepo,handoff: newHandoff,access: accessReader,idGenerator: () => `new-review-${suffix}-${++sequence}`,clock: () => new Date("2026-11-04") });
+    await assert.rejects(() => newReview.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "confirm-pending-reconciliation",expectedActiveVersionId: begun.id,reason: "check" }),{ code: "INVALID_STATE" });
+    const retain = { ...begin,kind: "retain" as const,assetId: settingAsset.id,requestId: "retain-reconciliation",expectedActiveVersionId: begun.id };
+    const rawRetain = { ...begun,id: `raw-retain-${suffix}`,parentVersionId: begun.id,assets: structuredClone(lockedSetting.assets),reconciliation: { ...begun.reconciliation!,pendingAssets: [] },operation: { requestId: "raw-retain",fingerprint: "a".repeat(64),kind: "retain" as const,targetId: settingAsset.id,reason: "retain" } };
+    const rawClient = await app.connect();
+    try {
+      await rawClient.query("begin");await rawClient.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
+      const rawInsert = (v: typeof rawRetain) => rawClient.query("insert into settings_review_versions(workspace_id,project_id,chapter_id,id,origin_version_id,parent_review_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",[actor.workspaceId,projectId,chapterId,v.id,savedSettings.id,begun.id,v.createdBy,JSON.stringify(v)]);
+      await rawClient.query("savepoint raw_reconciliation");await rawInsert(rawRetain);await rawClient.query("rollback to savepoint raw_reconciliation");
+      await assert.rejects(() => rawInsert({ ...rawRetain,operation: { ...rawRetain.operation,kind: "regenerate",targetId: begun.id } } as never),{ code: "42501",message: /pending settings reconciliation/ });
+      await rawClient.query("rollback to savepoint raw_reconciliation");
+      for (const forged of [
+        { ...rawRetain,assets: [{ ...rawRetain.assets[0]!,name: "forged" }] },
+        { ...rawRetain,assets: [{ ...rawRetain.assets[0]!,provenance: [] }] },
+        { ...rawRetain,locks: {} },
+        { ...rawRetain,assets: [] },
+        { ...rawRetain,reconciliation: { ...rawRetain.reconciliation,originVersionId: "forged" } },
+      ]) { await assert.rejects(() => rawInsert(forged),{ code: "42501" });await rawClient.query("rollback to savepoint raw_reconciliation"); }
+      await assert.rejects(() => rawInsert({ ...rawRetain,operation: { ...rawRetain.operation,kind: "confirm",targetId: begun.id },status: "confirmed" } as never),{ code: "42501" });
+      await rawClient.query("rollback to savepoint raw_reconciliation");
+      await rawClient.query("select set_config('app.current_user_id','editor',true)");
+      await assert.rejects(() => rawInsert({ ...rawRetain,createdBy: "editor" }),{ code: "42501" });
+      await rawClient.query("rollback to savepoint raw_reconciliation");
+      await assert.rejects(() => rawInsert({ ...rawRetain,scriptVersionId: lockedScript.id }),{ code: "P7001" });
+      await rawClient.query("rollback to savepoint raw_reconciliation");
+    } finally { await rawClient.query("rollback");rawClient.release(); }
+
+    await admin.query("create function fail_reconciliation_dependency_test() returns trigger language plpgsql as $$ begin raise exception 'dependency failed';end $$");
+    await admin.query("create trigger fail_reconciliation_dependency_test before insert on script_downstream_dependencies for each row execute function fail_reconciliation_dependency_test()");
+    await assert.rejects(() => reconciliation.execute(actor,projectId,chapterId,retain),{ code: "STORAGE_UNAVAILABLE" });
+    assert.equal((await reconciliationRepo.findActive(actor,projectId,chapterId))!.id,begun.id);
+    assert.equal(await reconciliationRepo.findOperation(actor,projectId,chapterId,retain.requestId),null);
+    await admin.query("drop trigger fail_reconciliation_dependency_test on script_downstream_dependencies;drop function fail_reconciliation_dependency_test()");
+    const retainRace = await Promise.allSettled([reconciliation.execute(actor,projectId,chapterId,retain),reconciliation.execute(actor,projectId,chapterId,{ ...retain,requestId: "retain-reconciliation-race" })]);
+    assert.equal(retainRace.filter(r => r.status === "fulfilled").length,1);
+    const raceFailure = retainRace.find(r => r.status === "rejected") as PromiseRejectedResult;
+    assert.equal(raceFailure.reason.code,"VERSION_CONFLICT");
+    const retained = (retainRace.find(r => r.status === "fulfilled") as PromiseFulfilledResult<typeof begun>).value;
+    assert.equal((await reconciliationRepo.findConfirmed(actor,projectId,chapterId))!.id,lockedSetting.id);
+    assert.equal((await reconciliation.execute(actor,projectId,chapterId,{ ...retain,requestId: retained.operation!.requestId })).id,retained.id);
+    assert.deepEqual(retained.assets,lockedSetting.assets);assert.deepEqual(retained.locks,lockedSetting.locks);assert.equal(retained.reconciliation!.pendingAssets.length,0);
+    assert.deepEqual((await admin.query("select distinct script_version_id from script_downstream_dependencies where target_version_id=$1",[retained.id])).rows,[{ script_version_id: upstreamConfirmed.id }]);
+    assert.equal((await new PostgresSettingsReviewRepository(app,newHandoff).findActive(actor,projectId,chapterId))!.id,retained.id);
+    const reconfirmedSetting = await newReview.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "confirm-reconciled-setting",expectedActiveVersionId: retained.id,reason: "checked" });
+    assert.equal((await reconciliationRepo.findConfirmed(actor,projectId,chapterId))!.id,reconfirmedSetting.id);
+    const unlockedReconciled = await newReview.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock-reconciled",expectedActiveVersionId: reconfirmedSetting.id,assetId: settingAsset.id,reason: "explicit" });
+    assert.equal(Object.hasOwn(unlockedReconciled.locks,settingAsset.id),false);
+    assert.equal((await reconciliation.execute(actor,projectId,chapterId,begin)).id,begun.id);
+    assert.deepEqual(await reconciliationRepo.findVersion(actor,projectId,chapterId,lockedSetting.id),lockedSetting);
+
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
     const head = await content.findActive(actor,projectId,chapterId);
     await assert.rejects(() => content.save(actor,{ ...candidate,id: `stale-${suffix}`,parentVersionId: head!.id },head!.id),{ code: "CONTEXT_NOT_FOUND" });

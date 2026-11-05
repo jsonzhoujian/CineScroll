@@ -1,4 +1,5 @@
 "use client";
+import { SettingsReconciliation } from "./settings-reconciliation";
 import { SettingsRegeneration,readSettingsRegenerationSubmission } from "./settings-regeneration";
 import { SettingsReview } from "./settings-review";
 import { useEffect,useRef,useState } from "react";
@@ -11,6 +12,7 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
   const [task,setTask] = useState<SettingsTask | null>(null),[history,setHistory] = useState<SettingsTask[]>([]),[cursor,setCursor] = useState<string | null>(null);
   const [view,setView] = useState<SettingsView | null>(null),[assetId,setAssetId] = useState("");
   const [busy,setBusy] = useState(false),[uncertain,setUncertain] = useState(false),[notice,setNotice] = useState(readOnly ? "上游已变化，可读取历史设定及影响记录。" : "正式剧本已确认，可生成文字设定候选。");
+  const [reconciliationBlocked,setReconciliationBlocked] = useState(false);
   const [reviewBlocked,setReviewBlocked] = useState(false),[regenerationBlocked,setRegenerationBlocked] = useState(false);
   const alive = useRef(false),locked = useRef(false),pending = useRef<Pending | null>(null);
   const context = JSON.stringify([projectId,chapterId,sourceVersionId,scriptVersionId,planVersionId,knowledgeVersionId]);
@@ -114,7 +116,7 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
       <button type="button" disabled={readOnly || busy || (!uncertain && (!model || !!task || !!view))} onClick={() => void act(submit)}>{uncertain ? "核对设定原提交" : "生成文字设定"}</button>
     </div>
     <button type="button" disabled={busy} onClick={() => void act(() => refresh())}>刷新设定任务</button>
-    {history.map(t => <button type="button" key={t.id} disabled={busy || uncertain || regenerationBlocked || reviewBlocked} onClick={() => { setTask(t);setView(null);remember(null,t.id); }}>{t.id} · {t.state}</button>)}
+    {history.map(t => <button type="button" key={t.id} disabled={busy || uncertain || regenerationBlocked || reviewBlocked || reconciliationBlocked} onClick={() => { setTask(t);setView(null);remember(null,t.id); }}>{t.id} · {t.state}</button>)}
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多设定任务</button>}
     {task && <p>设定任务：{task.state} {task.reason} {task.result?.extractionStatus}{task.reason === "EXECUTION_UNCERTAIN" ? " · 结果待后台核对，请勿重复生成。" : ""}</p>}
     <button type="button" disabled={busy || uncertain || task?.state !== "succeeded" || !task.result} onClick={() => void act(load)}>载入设定候选</button>
@@ -124,8 +126,9 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
         {!view.current && <p>原文或确认上游已变化，当前设定仅供追溯；不会自动覆盖或重做。</p>}
         {view.impacts == null ? <p>影响记录尚未读取，不能据此判定无影响。</p> : view.impacts.length ? <><p>以下设定待核对，内容及锁保持不变。</p>{view.impacts.map((i,n) => <p key={n}>{view.version.assets.find(a => a.id === i.target_item_id)?.name ?? i.target_item_id} · 来源剧本 {i.source_version_id} / {i.source_element_id} → 新确认剧本 {i.confirmed_version_id} · 待核对{Object.hasOwn(view.version.locks ?? {},i.target_item_id) ? " · 已锁定，替换前需明确解锁" : ""}</p>)}</> : <p>尚无已记录的剧本影响；原文与其他上游变化仍以上方状态为准。</p>}
       </aside>
-      <SettingsReview api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={assetId} disabled={readOnly || busy || uncertain || regenerationBlocked} readDisabled={busy} run={act} onChanged={readCurrent} onBlockedChange={setReviewBlocked} />
-      <SettingsRegeneration api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={readOnly || busy || uncertain || reviewBlocked} readDisabled={busy} run={act} onBlockedChange={setRegenerationBlocked} onLoaded={next => { setView(next);setAssetId(old => next.version.assets.some(a => a.id === old) ? old : ""); }} />
+      <SettingsReconciliation api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={readOnly || busy || uncertain || reviewBlocked || regenerationBlocked} readDisabled={busy} run={act} onChanged={readCurrent} onBlockedChange={setReconciliationBlocked} />
+      <SettingsReview api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} selectedId={assetId} disabled={readOnly || busy || uncertain || regenerationBlocked || reconciliationBlocked} readDisabled={busy} run={act} onChanged={readCurrent} onBlockedChange={setReviewBlocked} />
+      <SettingsRegeneration api={api} projectId={projectId} chapterId={chapterId} context={context} view={view} disabled={readOnly || busy || uncertain || reviewBlocked || reconciliationBlocked} readDisabled={busy} run={act} onBlockedChange={setRegenerationBlocked} onLoaded={next => { setView(next);setAssetId(old => next.version.assets.some(a => a.id === old) ? old : ""); }} />
       {view.version.assets.map(a => <button type="button" key={a.id} aria-pressed={a.id === assetId} onClick={() => setAssetId(a.id)}>{a.name}</button>)}
       {selected && <><article aria-label="文字设定内容"><h3>{selected.name}</h3><dl>{Object.entries(selected.visibleDefinition).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}</dl><p>{selected.state}</p><p>状态变化：{selected.stateChanges.join("；") || "无"}</p><p>限制：{selected.restrictions.join("；") || "无"}</p></article>
         <aside aria-label="设定原文依据"><h3>原文依据</h3>{fragments.map((id,i) => <p key={i}>{view.sourceFragments.find(f => f.id === id)?.text ?? "原文不可用"}</p>)}</aside>

@@ -4,7 +4,7 @@
 
 **Blocked by:** T07-02a — 复用核对候选、有效/待核对项、幂等审计和重新确认门禁。
 
-**Status:** ready-for-agent（阻塞于上述任务）
+**Status:** ready-for-agent（T07-02a已完成，可开始）
 
 ## Accepted rules
 

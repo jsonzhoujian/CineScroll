@@ -889,3 +889,86 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
   await workbench.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(workbench.getByLabel("保留正式设定")).toContainText("庭院");
   expect(posts).toBe(mode === "missing" ? 2 : 1);
 });
+
+for (const mode of ["success","unknown","read-failure","conflict","editor","mobile","cross-source","missing-conflict","replay-read-404"]) test(`同源跨上游分批原样保留：${mode}`,async ({ page }) => {
+  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
+  await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [] };
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: mode !== "impact-parent",version: { ...script,id: "new-formal" },sourceFragments: [{ id: "f",text: "雨落" }] } }));
+
+  type Version = import("../src/lib/api").SettingsView["version"];
+  const asset = { id: "location",assetType: "location",name: "庭院",visibleDefinition: { rain: true },state: "wet",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "retained" }] };
+  const old: Version = { id: "old-setting",jobId: "initial",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: "confirmed",generationStatus: "succeeded",assets: [asset,{ ...asset,id: "prop",name: "道具" }],failures: [],locks: { location: { lockedBy: "owner",lockedAt: "2026-11-04" } },suggestions: [{ id: "old-suggestion",assetId: "prop",value: { ...asset,id: "prop",name: "旧建议" },reason: "old advice",status: "pending",submittedBy: "editor" }] };
+  let version = structuredClone(old),formal = structuredClone(old),posts = 0,failedRead = false;
+  const operations = new Map<string,Version>(),base = `${origin}/projects/p/chapters/c/settings`;
+  await page.route(base,r => {
+    if (mode === "replay-read-404" && posts===2 && !failedRead) { failedRead = true;return r.fulfill({ headers,status: 404,json: { code: "NOT_FOUND" } }); }
+    if (mode === "read-failure" && posts===1 && !failedRead) { failedRead = true;return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } }); }
+    const current = version.scriptVersionId === "new-formal",reviewer = mode !== "editor";
+    return r.fulfill({ headers,json: { version,current,active: true,impacts: [],permissions: { canEdit: current && reviewer && version.status === "candidate",canSuggest: current,canDecide: current && reviewer,canConfirm: current && reviewer && version.status === "candidate",canLock: current && reviewer && version.status === "confirmed" },scriptVersion: { ...script,id: version.scriptVersionId },sourceFragments: [{ id: "f",text: "雨落" }] } });
+  });
+  await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: formal } }));
+  await page.route(`${base}/versions/old-setting`,r => r.fulfill({ headers,json: { version: old } }));
+  await page.route(`${base}/operations/*`,r => { const v = operations.get(new URL(r.request().url()).pathname.split("/").at(-1)!);return r.fulfill({ headers,status: v ? 200 : 404,json: v ? { version: v } : {} }); });
+  await page.route(`${base}/reconciliation`,r => {
+    if (r.request().method()==="OPTIONS") return r.fulfill({ headers,status: 204 });
+    if (r.request().method()==="GET") return r.fulfill({ headers,json: { baseVersionId: version.id,sourceVersionId: mode === "cross-source" ? "new-source" : "s",upstreamConfirmedVersionIds: ["new-formal","plan","candidate"],sameSource: mode !== "cross-source",requiresReconciliation: version.scriptVersionId !== "new-formal",canBegin: mode !== "editor" && mode !== "cross-source" && version.scriptVersionId !== "new-formal" } });
+    const b = r.request().postDataJSON();posts++;expect(b.expectedUpstreamConfirmedVersionIds).toEqual(["new-formal","plan","candidate"]);expect(b.reason).toBeTruthy();
+    if (mode === "missing-conflict") {
+      expect(b.expectedActiveVersionId).toBe(old.id);
+      if (posts===1) version = { ...old,id: "other-reviewer-head",status: "candidate",scriptVersionId: "new-formal",upstreamConfirmedVersionIds: b.expectedUpstreamConfirmedVersionIds,assets: [],suggestions: [],reconciliation: { originVersionId: old.id,pendingAssets: old.assets,pendingFailureScopeKeys: [] } };
+      return r.fulfill({ headers,status: posts===1 ? 503 : 409,json: { code: posts===1 ? "STORAGE_UNAVAILABLE" : "VERSION_CONFLICT" } });
+    }
+    if (mode === "replay-read-404" && posts===2) return r.fulfill({ headers,status: 403,json: { code: "FORBIDDEN" } });
+    expect(b.expectedActiveVersionId).toBe(version.id);
+    if (mode === "conflict") return r.fulfill({ headers,status: 409,json: { code: "VERSION_CONFLICT" } });
+    const previous = version;version = { ...structuredClone(previous),id: `reconciled-${posts}`,parentVersionId: previous.id,status: "candidate",operation: { requestId: b.requestId,kind: b.kind === "begin" ? "reconcile" : "retain",targetId: b.kind === "begin" ? previous.id : b.assetId,reason: b.reason } };
+    if (b.kind === "begin") { version.assets = [];version.suggestions = [];version.scriptVersionId = "new-formal";version.upstreamConfirmedVersionIds = b.expectedUpstreamConfirmedVersionIds;version.reconciliation = { originVersionId: previous.id,pendingAssets: previous.assets,pendingFailureScopeKeys: [] }; }
+    else { const a = version.reconciliation!.pendingAssets.find(a => a.id===b.assetId)!;version.assets = [...version.assets,a];version.reconciliation!.pendingAssets = version.reconciliation!.pendingAssets.filter(a => a.id!==b.assetId); }
+    operations.set(b.requestId,structuredClone(version));
+    return r.fulfill({ headers,status: ["unknown","replay-read-404"].includes(mode) && posts===1 ? 503 : 201,json: ["unknown","replay-read-404"].includes(mode) && posts===1 ? { code: "STORAGE_UNAVAILABLE" } : version });
+  });
+  await page.route(`${base}/review`,r => {
+    if (r.request().method()==="OPTIONS") return r.fulfill({ headers,status: 204 });
+    const b = r.request().postDataJSON();expect(b.kind).toBe("confirm");expect(version.reconciliation!.pendingAssets).toEqual([]);expect(b.expectedActiveVersionId).toBe(version.id);
+    version = { ...version,id: "reconfirmed",parentVersionId: version.id,status: "confirmed",operation: { requestId: b.requestId,kind: "confirm",targetId: version.id,reason: b.reason } };formal = structuredClone(version);return r.fulfill({ headers,json: version });
+  });
+  async function enter() { await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();await page.getByRole("button",{ name: "读取当前剧本",exact: true }).click(); }
+  await enter();const workbench = page.getByRole("region",{ name: "设定候选生成与追溯" });await workbench.getByRole("button",{ name: "读取当前设定",exact: true }).click();
+  const panel = page.getByRole("region",{ name: "设定跨上游核对" });await panel.getByRole("button",{ name: "预览设定跨上游处理",exact: true }).click();expect(posts).toBe(0);
+  if (["editor","mobile","cross-source"].includes(mode)) { await expect(panel.getByRole("button",{ name: "明确开始同源核对",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
+  await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("review new script");await panel.getByRole("button",{ name: "明确开始同源核对",exact: true }).click();
+  if (mode === "conflict") { await expect(panel.getByRole("status")).toContainText("操作被拒绝");expect(posts).toBe(1);return; }
+  if (mode === "missing-conflict") {
+    await expect(panel.getByRole("status")).toContainText("结果未知");
+    await panel.getByRole("button",{ name: "核对跨上游原操作",exact: true }).click();await expect(panel.getByRole("status")).toContainText("保留原身份");
+    await panel.getByRole("button",{ name: "重新发送跨上游原操作",exact: true }).click();await expect(panel.getByRole("status")).toContainText("已明确拒绝且未找到已保存结果");
+    await panel.getByRole("button",{ name: "结束未保存的跨上游操作核对",exact: true }).click();await expect(panel.getByRole("status")).toContainText("已结束明确未保存");expect(posts).toBe(2);return;
+  }
+  if (mode === "replay-read-404") {
+    await expect(panel.getByRole("status")).toContainText("结果未知");
+    await panel.getByRole("button",{ name: "重新发送跨上游原操作",exact: true }).click();
+    await expect(panel.getByRole("status")).toContainText("已读取原操作记录");
+    await expect(panel.getByRole("button",{ name: "结束未保存的跨上游操作核对",exact: true })).toHaveCount(0);
+    await panel.getByRole("button",{ name: "核对跨上游原操作",exact: true }).click();await expect(panel.getByRole("status")).toContainText("核对操作已保存");expect(posts).toBe(2);return;
+  }
+  if (mode === "unknown") { await expect(panel.getByRole("status")).toContainText("结果未知");await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await enter();await expect(panel.getByRole("button",{ name: "核对跨上游原操作",exact: true })).toBeVisible();expect(posts).toBe(1);await panel.getByRole("button",{ name: "核对跨上游原操作",exact: true }).click(); }
+  if (mode === "read-failure") { await expect(panel.getByRole("status")).toContainText("操作已保存");await panel.getByRole("button",{ name: "核对跨上游原操作",exact: true }).click();expect(posts).toBe(1); }
+  await expect(panel.getByText(/待核对资产 2 项/)).toBeVisible();
+  await expect(workbench.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();
+  if (mode === "success") await panel.screenshot({ path: "/tmp/t07-settings-reconciliation.png" });
+  const review = page.getByRole("region",{ name: "文字设定审核" });await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
+  await panel.getByRole("button",{ name: "读取原版本建议历史",exact: true }).click();await expect(panel.getByLabel("原版本建议历史")).toContainText("pending · 未迁移");
+  await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain courtyard");await panel.getByRole("button",{ name: "原样保留 庭院",exact: true }).click();await expect(panel.getByText(/待核对资产 1 项/)).toBeVisible();
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("too early");await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
+  await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain prop");await panel.getByRole("button",{ name: "原样保留 道具",exact: true }).click();
+  await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("old-setting");
+  expect(version.locks).toEqual(old.locks);expect(version.suggestions).toEqual([]);
+  await workbench.getByRole("button",{ name: "庭院",exact: true }).click();await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("checked all");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();expect(posts).toBe(3);
+});
