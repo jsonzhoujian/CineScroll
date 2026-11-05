@@ -19,7 +19,7 @@ Unauthenticated requests return 401; inaccessible projects/results or wrong-stag
 
 ## T07-02 review API
 
-The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0032 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
+The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0033 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
 
 | Method | Route | Input / result |
 |---|---|---|
@@ -48,7 +48,7 @@ Before a write, the exact command is saved to sessionStorage under its project/c
 
 ## Internal local regeneration persistence
 
-Local regeneration now has authenticated submission/read routes listed below; execution and recovery remain internal. Migration 0030 and `PostgresSettingsRegenerationRepository` persist results through the existing review transaction. A result is bound to a running `settingsRegeneration` task and its actor, chapter, base version, selection, source, formal upstreams and generation parameters. The SQL guard independently reconstructs the permitted merge and rejects changes outside the selected unlocked targets. Invalid/failed replacements retain old assets; selected retryable failure scopes can be filled or retried. Task results remain immutable and actor-scoped, with one result per task. Candidate, active pointer and actual source-based script dependency registrations commit or roll back together; the confirmed pointer is retained until explicit confirmation. Production transport and independent Worker composition are implemented behind the existing default-off settings switch; Session API and browser controls are implemented as described below.
+Local regeneration now has authenticated submission/read routes listed below; execution and recovery remain internal. Migrations 0030 and 0033 guard results saved through the existing review transaction by `PostgresSettingsRegenerationRepository`. A result is bound to a running `settingsRegeneration` task and its actor, chapter, base version, selection, source, formal upstreams and generation parameters. The SQL guard independently reconstructs the permitted merge and rejects changes outside the selected unlocked targets. Invalid/failed replacements retain old assets; selected retryable failure scopes can be filled or retried. Task results remain immutable and actor-scoped, with one result per task. Candidate, active pointer and actual source-based script dependency registrations commit or roll back together; the confirmed pointer is retained until explicit confirmation. Production transport and independent Worker composition are implemented behind the existing default-off settings switch; Session API and browser controls are implemented as described below.
 
 
 ## Local regeneration Session API
@@ -86,7 +86,7 @@ Full current/generation/regeneration views additionally return `impacts`: an arr
 
 The settings panel shows target asset names, original script/element, the new confirmed script and “待核对”; locked targets explicitly retain the unlock requirement. Stale settings heads can load their pinned historical script/source even when the current script ID differs, with all review/regeneration writes blocked. A loaded stale formal script retains a read-only settings entry. No content, lock or pointer is rewritten by reading impact records. Script changes produce links only when the revised script is explicitly confirmed; suggestions/candidate revisions do not trigger downstream rewriting.
 
-Pending-target regeneration and final acceptance remain T07-02c and T07-02d. Review and ordinary regeneration writers require a settings version bound to the current formal upstream.
+Review and regeneration writers require a settings version bound to the current formal upstream. The complete cross-upstream acceptance is tracked in T07-02d.
 
 ## Upstream reconciliation (T07-02a/b)
 
@@ -99,8 +99,14 @@ The default-off settings switch mounts reconciliation after trusted-owner migrat
 - `unlock` adds `assetId` and removes that pending asset's lock through an explicit audited operation. The asset remains pending.
 - `repair` adds `assetId` and `value`. It validates the revised asset's identity, type and references against the current source before making the asset effective. It applies to unlocked pending assets on either source path.
 
-All existing review operations continue through exact prior-state reconstruction and current epoch authority. Confirmation additionally requires both pending collections empty; existing failure/empty-asset/new-suggestion gates remain. Ordinary regeneration cannot process a half-reconciled candidate in either the application or SQL. New-version dependencies use the actual new formal script and shared source evidence, not the original generation's script. Version/head/formal pointer/dependencies commit or roll back together; role revocation cannot interleave through the held member lock. Historical generation, operations and formal pointers remain readable.
+All existing review operations continue through exact prior-state reconstruction and current epoch authority. Confirmation requires both pending collections empty, no unresolved regeneration task on the current reconciliation chain, and the existing review gates. New-version dependencies use the actual new formal script and shared source evidence, not the original generation's script. Version/head/formal pointer/dependencies commit or roll back together; role revocation cannot interleave through the held member lock. Historical generation, operations and formal pointers remain readable.
 
 Actor-scoped `GET .../settings/operations/:requestId` reconciles original commands. The browser persists the exact request before POST, refresh never posts, and lost acknowledgements are read back. Successful write followed by read failure retains the original identity. Only a same-identity retry explicitly rejected by the server followed by the original-operation GET itself returning 404 permits a user to end unsaved reconciliation; a local rejection receipt is kept before clearing the pending record. A 404 from a subsequent current-view read never counts as evidence that the original write was absent. Unknown 5xx outcomes cannot be discarded or silently assigned a new request ID.
 
 The desktop panel previews and starts explicitly, shows pending historical content/source plus lock notices, supports explicit retention, unlock and manual repair one asset at a time, reads old evidence, locks and suggestions and requires ordinary explicit reconfirmation. Review/regeneration/reconciliation pending states block new competing writes while GET reconciliation stays available. The retained formal version may have a different script binding and is read-only; loading it validates project/chapter rather than treating it as current authority. Mobile remains read-only. No new model or public execution endpoint is introduced.
+
+## Pending-target regeneration (T07-02c)
+
+The existing regeneration API, admission, Worker and recovery routes also handle reconciliation candidates after migration 0033. While reconciliation has pending work, asset IDs address pending assets and failure keys address pending retryable failures. Only successful selections advance. A selected failure linked to an effective asset can resolve without replacing that asset. Unselected failures and assets retain their existing state. A failed attempt leaves the target pending and available for explicit manual repair or a fresh, authorized attempt after the task outcome is known.
+
+The provider receives a pending asset's identity, type and name. New evidence must come from the current formal script and source fragments. The transaction independently validates the merge against the running task, and the browser still requires explicit result loading and confirmation. A queued, running or execution-uncertain job on the same reconciliation chain blocks confirmation across sessions. Enqueue and confirmation use the same chapter lock, and enqueue rechecks that the selected baseline is still active. Original request reconciliation and Worker recovery remain read-only for uncertain executions.

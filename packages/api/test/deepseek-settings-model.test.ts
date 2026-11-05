@@ -46,7 +46,7 @@ test("settings transport sanitizes malformed completions and never retries netwo
 });
 
 test("settings regeneration transport preserves exact selected scope and separates local replacement instructions",async () => {
-  const request = { ...input,regeneration: { baseVersionId: "settings-base",reason: "visible detail",targets: [{ scopeKey: "failure_scope",failureScopeKey: "missing-character" }] } };
+  const request = { ...input,regeneration: { baseVersionId: "settings-base",reason: "visible detail",targets: [{ scopeKey: "failure_scope",failureScopeKey: "missing-character" },{ scopeKey:"pending",pendingAsset:{ id:"courtyard",assetType:"location" as const,name:"旧庭院" } }] } };
   let calls = 0;
   const model = new DeepSeekSettingsModel({ fetch: async (_url,init) => {
     calls++;const body = JSON.parse(String(init?.body));assert.deepEqual(JSON.parse(body.messages[1].content),request);

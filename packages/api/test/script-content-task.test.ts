@@ -507,21 +507,24 @@ test("settings review Session API enforces roles and preserves formal version wi
 
 import { InMemorySettingsRegenerationRepository,type SettingsRegenerationRequest } from "@novel-adaptation/script/settings-regeneration";
 import { SettingsRegenerationTaskContext,SettingsRegenerationTaskExecutor } from "../src/settings-regeneration-task-executor.ts";
-async function regenerationTaskFixture() {
+async function regenerationTaskFixture(reconciling = false) {
   const f = await settingsFixture();
   const initial = await f.tasks.submitSettings(f.actor,{ projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "regeneration-base" });
   await new SettingsTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.candidates,idGenerator: () => "regeneration-base",clock: () => new Date("2026-11-04"),model: { async generate(r) { return settingsResponse(r); } } }).run(f.actor,initial.id);
-  const candidate = (await f.candidates.findGeneration(f.actor,"p","c",initial.id))!,reviews = new InMemorySettingsReviewRepository(f.actor,candidate);
+  const candidate = (await f.candidates.findGeneration(f.actor,"p","c",initial.id))!;
+  const base = reconciling ? { ...candidate,assets:[],reconciliation:{ originVersionId:"old-settings",pendingAssets:candidate.assets,pendingFailureScopeKeys:[] } } : candidate;
+  const reviews = new InMemorySettingsReviewRepository(f.actor,base);
   const results = new InMemorySettingsRegenerationRepository(reviews,f.handoff,f.projects),context = new SettingsRegenerationTaskContext(f.context,results,f.projects);
   const tasks = new ModelTaskService({ settings: f.settings,repository: f.repository,contextReader: context,settingsAdmission: { workspaceIds: ["w"],providerIds: ["deepseek"] },generationPolicy: { isAllowed: async () => true },idGenerator: () => "unused" });
   const input = { projectId: "p",chapterId: "c",...await f.settingsSelection(),requestId: "regeneration",selection: { expectedActiveVersionId: candidate.id,assetIds: ["location"],failureScopeKeys: [],reason: "visible" } };
   return { ...f,results,context,tasks,input,reviews };
 }
 function regenerationResponse(r: SettingsRegenerationRequest) {
-  return { ...settingsResponse(r),items: r.regeneration.targets.map(t => ({ scopeKey: t.scopeKey,status: "succeeded",value: { ...t.asset!,name: "regenerated courtyard" } })) };
+  const raw = settingsResponse(r);
+  return { ...raw,items:r.regeneration.targets.map(t => ({ scopeKey:t.scopeKey,status:"succeeded",value:{ ...(t.asset ?? raw.items[0]!.value),...t.pendingAsset,name:"regenerated courtyard" } })) };
 }
 test("settings regeneration task recovers a saved result after lost acknowledgement without another model invocation",async () => {
-  const f = await regenerationTaskFixture();let calls = 0;
+  const f = await regenerationTaskFixture(true);let calls = 0;
   const task = await f.tasks.submitSettingsRegeneration(f.actor,f.input);
   assert.equal((await f.tasks.submitSettingsRegeneration(f.actor,f.input)).id,task.id);
   const save = f.results.saveGeneration.bind(f.results);
@@ -538,7 +541,7 @@ test("settings regeneration task recovers a saved result after lost acknowledgem
   assert.equal((await f.repository.scanSettingsRegeneration("w","run",{ limit: 20,cursor: null })).tasks.length,0);
 });
 test("unknown regeneration without a saved result cannot run, resubmit or bypass the guard with a new request",async () => {
-  const f = await regenerationTaskFixture();let calls = 0;
+  const f = await regenerationTaskFixture(true);let calls = 0;
   const task = await f.tasks.submitSettingsRegeneration(f.actor,f.input);
   const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,handoff: f.handoff,repository: f.results,access: f.projects,idGenerator: () => "never-saved",clock: () => new Date("2026-11-04"),model: { async generate() { calls++;throw new Error("unknown provider execution"); } } });
   const result = await executor.run(f.actor,task.id);assert.equal(result.state,"paused");assert.equal(result.reason,"EXECUTION_UNCERTAIN");
@@ -562,7 +565,7 @@ test("regeneration task admission stays closed by default and changed project pa
 
 import { SettingsRegenerationTaskApiModule } from "../src/settings-regeneration-task-api.ts";
 test("settings regeneration Session API submits exact targets and reconciles original requests without execution endpoints",async () => {
-  const f = await regenerationTaskFixture();let calls = 0;
+  const f = await regenerationTaskFixture(true);let calls = 0;
   const project = (await f.projects.findProject(f.actor,"p"))!;project.members.push({ userId: "editor",role: "editor" });await f.projects.saveProject(f.actor,project);
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
   const ref = await Test.createTestingModule({ imports: [SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() }),SettingsApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,repository: f.candidates,reviews: f.reviews,context: f.context,handoff: f.handoff,projects: f.projects,scripts: f.contentRepository,regeneration: { tasks: f.tasks,repository: f.results } })] }).compile();
@@ -591,6 +594,7 @@ test("settings regeneration Session API submits exact targets and reconciles ori
     const executor = new SettingsRegenerationTaskExecutor({ tasks: f.tasks,context: f.context,repository: f.results,handoff: f.handoff,access: f.projects,idGenerator: () => "api-regeneration",clock: () => new Date("2026-11-04"),model: { async generate(r) { calls++;return regenerationResponse(r); } } });
     await executor.run(f.actor,created.id);
     const view = await http.get(resultPath).set(auth).expect(200);
+    assert.deepEqual(view.body.version.reconciliation.pendingAssets,[]);
     assert.equal(view.body.version.id,"api-regeneration");assert.equal(view.body.sourceFragments[0].text,"雨落");assert.equal(view.body.scriptVersion.id,view.body.version.scriptVersionId);assert.equal(view.body.current,true);assert.equal(view.body.active,true);
     assert.equal((await http.get(`/settings-regeneration-tasks/${created.id}`).set(auth).expect(200)).body.state,"succeeded");
     await http.get(`/settings-regeneration-tasks/${created.id}`).set(outsider).expect(404);
@@ -621,7 +625,7 @@ test("settings regeneration Session submissions fail closed on denied or unavail
   }
 });
 test("settings regeneration Session reconciliation never reexecutes unknown model work or admits a new request for that base",async () => {
-  const f = await regenerationTaskFixture();let calls = 0;
+  const f = await regenerationTaskFixture(true);let calls = 0;
   const sessions = new HmacSessionManager({ secret: "0123456789abcdef0123456789abcdef",resolveActor: async userId => ({ userId,workspaceId: "w" }) });
   const ref = await Test.createTestingModule({ imports: [SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks,rateLimiter: availableRateLimiter() })] }).compile();
   const app = ref.createNestApplication();await app.listen(0,"127.0.0.1");

@@ -65,6 +65,7 @@ export class PostgresSettingsReviewRepository implements SettingsReviewRepositor
       try { await client?.query("rollback"); } catch { /* Preserve sanitized failure. */ }
       if (error instanceof SettingsReviewError) throw error;
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+      if (code === "P7002") throw new SettingsReviewError("INVALID_STATE");
       if (code === "P7001") throw new SettingsReviewError("UPSTREAM_CHANGED");
       if (code === "42501") throw new SettingsReviewError("FORBIDDEN");
       if (["23505","23503"].includes(code)) throw new SettingsReviewError("VERSION_CONFLICT");

@@ -799,8 +799,9 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
   await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("修订候选庭院");
 });
 
-for (const mode of ["success","unknown","missing","mismatch","failure","locked","editor","stale","mobile","storage","execution-unknown","stopped","pending","overlap","dual-pending","corrupt"]) test(`文字设定局部重生与提交恢复：${mode}`,async ({ page }) => {
-  await setup(page, null, false, mode === "cross-source" ? "new-source" : "s");if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+for (const mode of ["success","unknown","missing","mismatch","failure","locked","editor","stale","mobile","storage","execution-unknown","stopped","pending","overlap","dual-pending","corrupt","reconciliation"]) test(`文字设定局部重生与提交恢复：${mode}`,async ({ page }) => {
+  const reconciliation = mode === "reconciliation";
+  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
   await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
@@ -813,7 +814,8 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
   type View = import("../src/lib/api").SettingsView;
   const asset = { id: "location",assetType: "location",name: "庭院",visibleDefinition: { weather: "细雨" },state: "雨中",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] };
   const formal: View["version"] = { id: "setting",jobId: "initial",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: mode === "failure" || mode === "overlap" ? "candidate" : "confirmed",generationStatus: mode === "failure" || mode === "overlap" ? "partially_succeeded" : "succeeded",assets: [asset,{ ...asset,id: "untouched",name: "不变道具",assetType: "prop" }],failures: mode === "overlap" ? [{ scopeKey: "replace-location",assetId: "location",code: "PROVIDER_ITEM_FAILED",retryable: true }] : mode === "failure" ? [{ scopeKey: "missing-character",code: "PROVIDER_ITEM_FAILED",retryable: true }] : [],locks: mode === "locked" ? { location: { lockedBy: "owner",lockedAt: "2026-11-04" } } : {},suggestions: mode === "pending" ? [{ id: "suggestion",assetId: "location",value: asset,reason: "pending",status: "pending",submittedBy: "editor" }] : [] };
-  let version = structuredClone(formal),posts = 0,loads = 0,requestId = "";
+  const initial = reconciliation ? { ...formal,status:"candidate" as const,assets:[formal.assets[1]!],reconciliation:{ originVersionId:"old-setting",pendingAssets:[asset],pendingFailureScopeKeys:[] } } : formal;
+  let version = structuredClone(initial),posts = 0,loads = 0,requestId = "";
   let task: import("../src/lib/api").SettingsRegenerationTask | null = null;
   const base = `${origin}/projects/p/chapters/c/settings`,tasks = `${origin}/projects/p/chapters/c/settings-regeneration-tasks`;
   const response = (v = version): View => ({ version: v,current: mode !== "stale",active: true,permissions: { canEdit: mode !== "editor" && v.status === "candidate",canSuggest: true,canDecide: mode !== "editor",canConfirm: mode !== "editor" && v.status === "candidate",canLock: mode !== "editor" && v.status === "confirmed" },scriptVersion: script,sourceFragments: [{ id: "f",text: "雨落" }] });
@@ -831,10 +833,20 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
     expect(body.selection.expectedActiveVersionId).toBe("setting");expect(body.selection.assetIds).toEqual(mode === "failure" ? [] : ["location"]);
     expect(body.selection.failureScopeKeys).toEqual(mode === "failure" ? ["missing-character"] : []);
     if (mode === "missing" && posts===1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
-    version = { ...formal,id: "regenerated",status: "candidate",parentVersionId: formal.id,operation: { requestId: "operation",kind: "regenerate",targetId: formal.id,reason: body.selection.reason },regeneration: { jobId: "regen-task",assetIds: body.selection.assetIds,failureScopeKeys: body.selection.failureScopeKeys,reason: body.selection.reason,outcome: "succeeded" },assets: mode === "failure" ? [...formal.assets,{ ...asset,id: "character",name: "新人物",assetType: "character" }] : [{ ...asset,name: "重生庭院" },formal.assets[1]!],failures: [] };
+    version = { ...initial,id: "regenerated",status: "candidate",parentVersionId: formal.id,operation: { requestId: "operation",kind: "regenerate",targetId: formal.id,reason: body.selection.reason },regeneration: { jobId: "regen-task",assetIds: body.selection.assetIds,failureScopeKeys: body.selection.failureScopeKeys,reason: body.selection.reason,outcome: "succeeded" },assets: mode === "failure" ? [...formal.assets,{ ...asset,id: "character",name: "新人物",assetType: "character" }] : reconciliation ? [formal.assets[1]!,{ ...asset,name:"重生庭院" }] : [{ ...asset,name: "重生庭院" },formal.assets[1]!],failures: [] };
+    if (reconciliation) version.reconciliation!.pendingAssets = [];
     task = { id: "regen-task",projectId: "p",chapterId: "c",state: "succeeded",reason: null,result: { candidateVersionId: "regenerated",extractionStatus: "succeeded" },input: { stage: "settings",resultType: "settingsRegeneration",sourceVersionId: "s",upstreamConfirmedVersionIds: ["formal","plan","candidate"],regeneration: body.selection } };
     if (["execution-unknown","stopped"].includes(mode)) { version = structuredClone(formal);task.state = mode === "stopped" ? "failed" : "paused";task.reason = mode === "stopped" ? "INVALID_RESPONSE" : "EXECUTION_UNCERTAIN";task.result = null; }
-    return r.fulfill({ headers,status: ["unknown","dual-pending"].includes(mode) && posts===1 ? 503 : 201,json: ["unknown","dual-pending"].includes(mode) && posts===1 ? { code: "STORAGE_UNAVAILABLE" } : task });
+    return r.fulfill({ headers,status: ["unknown","dual-pending","reconciliation"].includes(mode) && posts===1 ? 503 : 201,json: ["unknown","dual-pending","reconciliation"].includes(mode) && posts===1 ? { code: "STORAGE_UNAVAILABLE" } : task });
+  });
+  await page.route(`${base}/review`,r => {
+    if (r.request().method()==="OPTIONS") return r.fulfill({ headers,status:204 });
+    const command = r.request().postDataJSON();
+    expect(command.kind).toBe("confirm");
+    expect(command.expectedActiveVersionId).toBe("regenerated");
+    expect(version.reconciliation?.pendingAssets).toEqual([]);
+    version = { ...version,id:"confirmed-regeneration",status:"confirmed",parentVersionId:"regenerated",operation:{ requestId:command.requestId,kind:"confirm",targetId:"regenerated",reason:command.reason } };
+    return r.fulfill({ headers,json:version });
   });
   await page.route(`${base}/regenerations/*`,r => { loads++;return r.fulfill({ headers,json: response(mode === "mismatch" ? { ...version,parentVersionId: "wrong-base" } : version) }); });
   async function enter() { await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();await page.getByRole("button",{ name: "读取当前剧本",exact: true }).click(); }
@@ -845,7 +857,8 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
   if (mode === "corrupt") { await expect(panel.getByRole("status")).toContainText("暂停新的重生操作");await expect(panel.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
   if (["editor","stale","mobile"].includes(mode)) { await expect(panel.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
   if (mode === "locked" || mode === "pending") { await expect(panel.getByLabel("重生资产 庭院",{ exact: true })).toBeDisabled();expect(posts).toBe(0);return; }
-  if (mode === "failure") await panel.getByLabel("重试设定失败 missing-character",{ exact: true }).check();else await panel.getByLabel("重生资产 庭院",{ exact: true }).check();
+  if (mode === "failure") await panel.getByLabel("重试设定失败 missing-character",{ exact: true }).check();else await panel.getByLabel(reconciliation ? "重生待核对资产 庭院" : "重生资产 庭院",{ exact: true }).check();
+  if (reconciliation) await expect(panel.getByLabel("重生待核对资产 不变道具",{exact:true})).toHaveCount(0);
   if (mode === "overlap") { await expect(panel.getByLabel("重试设定失败 replace-location",{ exact: true })).toBeDisabled();expect(posts).toBe(0);return; }
   await panel.getByLabel("设定重生原因",{ exact: true }).fill("核对可见细节");
   await panel.getByRole("button",{ name: "读取重生模型",exact: true }).click();await panel.getByLabel("设定重生模型",{ exact: true }).selectOption("model");
@@ -860,7 +873,7 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
     else { await panel.getByRole("button",{ name: "结束已停止的重生任务",exact: true }).click();await expect(panel.getByRole("button",{ name: "提交设定局部重生",exact: true })).toBeEnabled(); }
     expect(posts).toBe(1);return;
   }
-  if (["unknown","missing","dual-pending"].includes(mode)) {
+  if (["unknown","missing","dual-pending","reconciliation"].includes(mode)) {
     await expect(panel.getByRole("status")).toContainText("尚未确认");expect(decodeURIComponent(page.url())).not.toContain("核对可见细节");
     if (mode === "dual-pending") await page.evaluate(() => sessionStorage.setItem(JSON.stringify(["settings-review",JSON.stringify(["p","c","s","formal","plan","candidate"])]),JSON.stringify({ kind: "lock",requestId: "other-operation",expectedActiveVersionId: "setting",assetId: "location",reason: "freeze" })));
     await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await enter();
@@ -887,6 +900,12 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
   await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");await expect(workbench.getByLabel("设定剧本依据")).toContainText("雨点打湿庭院");
   await expect(workbench.getByRole("button",{ name: "不变道具",exact: true })).toBeVisible();
   await workbench.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(workbench.getByLabel("保留正式设定")).toContainText("庭院");
+  if (reconciliation) {
+    const review = page.getByRole("region",{name:"文字设定审核"});
+    await review.getByLabel("设定操作理由",{exact:true}).fill("核对重生依据");
+    await review.getByRole("button",{name:"确认文字设定",exact:true}).click();
+    await expect(review.getByText("设定状态：正式",{exact:true})).toBeVisible();
+  }
   expect(posts).toBe(mode === "missing" ? 2 : 1);
 });
 
@@ -964,7 +983,9 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   if (mode === "unknown") { await expect(panel.getByRole("status")).toContainText("结果未知");await page.reload();await login(page);const story = page.getByRole("region",{ name: "故事知识任务" });await story.getByLabel("任务编号").fill("task");await story.getByRole("button",{ name: "读取任务",exact: true }).click();await enter();await expect(panel.getByRole("button",{ name: "核对跨上游原操作",exact: true })).toBeVisible();expect(posts).toBe(1);await panel.getByRole("button",{ name: "核对跨上游原操作",exact: true }).click(); }
   if (mode === "read-failure") { await expect(panel.getByRole("status")).toContainText("操作已保存");await panel.getByRole("button",{ name: "核对跨上游原操作",exact: true }).click();expect(posts).toBe(1); }
   await expect(panel.getByText(/待核对资产 2 项/)).toBeVisible();
-  await expect(workbench.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();
+  const regeneration = workbench.getByRole("region",{name:"文字设定局部重生"});
+  await expect(regeneration.getByLabel("重生待核对资产 庭院",{exact:true})).toBeDisabled();
+  await expect(regeneration.getByRole("button",{name:"提交设定局部重生",exact:true})).toBeDisabled();
   if (mode === "success") await panel.screenshot({ path: "/tmp/t07-settings-reconciliation.png" });
   if (cross) {
     await panel.getByLabel("跨上游处理理由").fill("unlock");

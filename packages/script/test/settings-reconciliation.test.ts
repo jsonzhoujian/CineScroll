@@ -32,8 +32,8 @@ test("same-source reconciliation explicitly retains assets in batches, preserves
   v = await f.service.execute(f.actor,"p","c",{ ...f.command,kind: "retain",requestId: "retain-a",expectedActiveVersionId: v.id,assetId: "a" });
   assert.deepEqual(v.assets,[f.asset]);assert.deepEqual(v.locks,f.old.locks);
   let modelCalls = 0;
-  const regeneration = new SettingsRegenerationRunner({ repository: new InMemorySettingsRegenerationRepository(f.repository,f.handoff,f.access),handoff: f.handoff,access: f.access,idGenerator: () => "unused",clock: () => new Date("2026-11-04"),model: { async generate() { modelCalls++;throw new Error("must not generate during pending reconciliation"); } } });
-  await assert.rejects(() => regeneration.run(f.actor,"p","c","blocked-regeneration",{ expectedActiveVersionId: v.id,assetIds: ["a"],failureScopeKeys: [],reason: "blocked" }),{ code: "INVALID_STATE" });assert.equal(modelCalls,0);
+  const regeneration = new SettingsRegenerationRunner({ repository: new InMemorySettingsRegenerationRepository(f.repository,f.handoff,f.access),handoff: f.handoff,access: f.access,idGenerator: () => "unused",clock: () => new Date("2026-11-04"),model: { async generate() { modelCalls++;throw new Error("must not regenerate an effective asset during pending reconciliation"); } } });
+  await assert.rejects(() => regeneration.run(f.actor,"p","c","blocked-regeneration",{ expectedActiveVersionId: v.id,assetIds: ["a"],failureScopeKeys: [],reason: "blocked" }),{ code: "NOT_FOUND" });assert.equal(modelCalls,0);
 
   await assert.rejects(() => f.review.execute(f.actor,"p","c",{ kind: "edit",requestId: "locked-edit",expectedActiveVersionId: v.id,assetId: "a",value: { ...f.asset,name: "changed" },reason: "change" }),{ code: "LOCKED" });
   v = await f.service.execute(f.actor,"p","c",{ ...f.command,kind: "retain",requestId: "retain-b",expectedActiveVersionId: v.id,assetId: "b" });

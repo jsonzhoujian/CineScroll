@@ -55,7 +55,7 @@ export async function assertSettingsDatabase(pool: Pool,workspaceIds: readonly s
       and exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_settings_regeneration_active_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_index where indexrelid=to_regclass('public.settings_regeneration_job_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_trigger where tgrelid='public.settings_review_versions'::regclass and tgname='settings_regeneration_transition'
-        and tgfoid='public.guard_settings_regeneration_version()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and pg_get_triggerdef(oid)=$guard$CREATE TRIGGER settings_regeneration_transition BEFORE INSERT ON public.settings_review_versions FOR EACH ROW WHEN ((((new.version_json -> 'operation'::text) ->> 'kind'::text) = 'regenerate'::text)) EXECUTE FUNCTION guard_settings_regeneration_version()$guard$)
+        and tgfoid='public.guard_settings_pending_regeneration_version()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and pg_get_triggerdef(oid)=$guard$CREATE TRIGGER settings_regeneration_transition BEFORE INSERT ON public.settings_review_versions FOR EACH ROW WHEN ((((new.version_json -> 'operation'::text) ->> 'kind'::text) = 'regenerate'::text)) EXECUTE FUNCTION guard_settings_pending_regeneration_version()$guard$)
       and exists(select 1 from pg_trigger where tgrelid='public.settings_review_versions'::regclass and tgname='settings_review_transition'
         and tgfoid='public.guard_settings_review_version()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and pg_get_triggerdef(oid)=$guard$CREATE TRIGGER settings_review_transition BEFORE INSERT ON public.settings_review_versions FOR EACH ROW WHEN ((((new.version_json -> 'operation'::text) ->> 'kind'::text) <> ALL (ARRAY['regenerate'::text, 'reconcile'::text, 'retain'::text, 'reconcileUnlock'::text, 'reconcileRepair'::text]))) EXECUTE FUNCTION guard_settings_review_version()$guard$)
       and (select count(*)=2 from pg_proc p where p.oid in (to_regprocedure('public.valid_settings_regeneration_task(jsonb)'),to_regprocedure('public.valid_settings_regeneration_asset(jsonb,text,text,text)'))
@@ -67,6 +67,10 @@ export async function assertSettingsDatabase(pool: Pool,workspaceIds: readonly s
       exists(select 1 from pg_trigger where tgrelid='public.settings_review_versions'::regclass and tgname='settings_reconciliation_transition'
         and tgfoid='public.guard_settings_reconciliation_version()'::regprocedure and tgenabled in ('O','A') and tgtype=7
         and pg_get_triggerdef(oid)=$guard$CREATE TRIGGER settings_reconciliation_transition BEFORE INSERT ON public.settings_review_versions FOR EACH ROW WHEN ((((new.version_json -> 'operation'::text) ->> 'kind'::text) = ANY (ARRAY['reconcile'::text, 'retain'::text, 'reconcileUnlock'::text, 'reconcileRepair'::text]))) EXECUTE FUNCTION guard_settings_reconciliation_version()$guard$)
+      and exists(select 1 from pg_trigger where tgrelid='public.settings_review_versions'::regclass and tgname='settings_review_unknown_regeneration'
+        and tgfoid='public.guard_settings_reconciliation_confirmation()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and tgqual is null)
+      and exists(select 1 from pg_trigger where tgrelid='public.model_tasks'::regclass and tgname='model_00_settings_reconciliation_enqueue'
+        and tgfoid='public.guard_settings_reconciliation_enqueue()'::regprocedure and tgenabled in ('O','A') and tgtype=7 and tgqual is null)
       and exists(select 1 from pg_policy where polrelid='public.script_downstream_dependencies'::regclass and polname='script_settings_reconciliation_dependencies_insert' and polcmd='a') ready`);
     if (!reconciliation.rows[0]?.ready) throw new Error();
     await client.query("commit");

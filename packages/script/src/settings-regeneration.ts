@@ -6,7 +6,11 @@ import { SettingsContentError,validateSettingsResponse,type SettingAsset } from 
 import { SettingsReviewError,type SettingsVersion,type SettingsReviewRepository } from "./settings-review.ts";
 export type SettingsRegenerationSelection = { expectedActiveVersionId: string;assetIds: string[];failureScopeKeys: string[];reason: string };
 export type SettingsRegenerationTarget = { scopeKey: string;asset?: SettingAsset;failureScopeKey?: string };
-export type SettingsRegenerationRequest = SettingsGenerationRequest & { regeneration: { baseVersionId: string;reason: string;targets: SettingsRegenerationTarget[] } };
+type SettingsRegenerationModelTarget = Omit<SettingsRegenerationTarget,"asset"> & (
+  | { asset?: SettingAsset;pendingAsset?: never }
+  | { asset?: never;pendingAsset: Pick<SettingAsset,"id" | "assetType" | "name"> }
+);
+export type SettingsRegenerationRequest = SettingsGenerationRequest & { regeneration: { baseVersionId: string;reason: string;targets: SettingsRegenerationModelTarget[] } };
 export interface SettingsRegenerationRepository {
   findActive(a: Actor,p: string,c: string): Promise<SettingsVersion | null>;
   findGeneration(a: Actor,p: string,c: string,jobId: string): Promise<SettingsVersion | null>;
@@ -29,7 +33,13 @@ export class SettingsRegenerationRunner {
     if (replay) { if (replay.regeneration?.fingerprint !== fingerprint) throw new SettingsReviewError("VERSION_CONFLICT");return replay; }
     const { base,formal,targets } = await this.prepare(a,p,c,selection);
     const identity = { jobId,projectId: p,chapterId: c,sourceVersionId: base.sourceVersionId,upstreamConfirmedVersionIds: [...base.upstreamConfirmedVersionIds] };
-    const request: SettingsRegenerationRequest = structuredClone({ ...identity,contractVersion: "0.1.0",stage: "settings",input: formal,regeneration: { baseVersionId: base.id,reason: selection.reason,targets } });
+    const modelTargets = targets.map(({ asset,...target }) => {
+      if (!asset) return target;
+      if (!base.reconciliation?.pendingAssets.some(v => v.id === asset.id)) return { ...target,asset };
+      const { id,assetType,name } = asset;
+      return { ...target,pendingAsset:{ id,assetType,name } };
+    });
+    const request: SettingsRegenerationRequest = structuredClone({ ...identity,contractVersion: "0.1.0",stage: "settings",input: formal,regeneration: { baseVersionId: base.id,reason: selection.reason,targets: modelTargets } });
     let response: unknown;
     try { response = await this.options.model.generate(request); }
     catch (error) { if (error instanceof SettingsContentError) throw error;throw new SettingsRegenerationError("EXECUTION_UNCERTAIN"); }
@@ -38,21 +48,29 @@ export class SettingsRegenerationRunner {
       || response.items.some(item => !item || typeof item !== "object" || !targets.some(t => t.scopeKey === item.scopeKey))) throw new SettingsRegenerationError("INVALID_RESPONSE");
     const result = validateSettingsResponse(response,identity,{ sourceVersionId: base.sourceVersionId,fragmentIds: formal.sourceFragments.map(f => f.id),approvedAdditionIds: [] });
     const assets = structuredClone(base.assets),failures = structuredClone(base.failures);
+    const reconciliation = structuredClone(base.reconciliation);
+    const reconciling = hasPendingReconciliation(base);
     let successes = 0;
     for (const target of targets) {
       const item = response.items.find(item => item.scopeKey === target.scopeKey);
       const invalid = result.failures.find(f => f.scopeKey === target.scopeKey);
       const asset = !invalid && item?.value ? result.assets.find(v => v.id === item.value.id) : null;
-      const wrong = !asset || (target.asset ? asset.id !== target.asset.id || asset.assetType !== target.asset.assetType : assets.some(v => v.id === asset.id));
-      const affected = (f: SettingsVersion["failures"][number]) => f.scopeKey === target.failureScopeKey || !!target.asset && f.assetId === target.asset.id;
+      const wrong = !asset || (target.asset ? asset.id !== target.asset.id || asset.assetType !== target.asset.assetType : assets.some(v => v.id === asset.id) || !!reconciliation?.pendingAssets.some(v => v.id === asset.id));
+      const affected = (f: SettingsVersion["failures"][number]) => f.scopeKey === target.failureScopeKey || !reconciling && !!target.asset && f.assetId === target.asset.id;
+      if (wrong && reconciling) continue;
       if (wrong) {
         const scopeKey = target.failureScopeKey ?? target.scopeKey;
         const failure = { scopeKey,...(target.asset ? { assetId: target.asset.id } : {}),code: invalid?.code ?? "INVALID_REGENERATION_TARGET",retryable: invalid?.retryable ?? true };
         const index = failures.findIndex(f => f.scopeKey === scopeKey);
         if (index < 0) failures.push(failure);else failures[index] = failure;
       } else {
-        if (target.asset) assets[assets.findIndex(v => v.id === target.asset!.id)] = asset;
-        else assets.push(asset);
+        const index = target.asset ? assets.findIndex(v => v.id === target.asset!.id) : -1;
+        if (index < 0) assets.push(asset);
+        else if (!reconciling) assets[index] = asset;
+        if (reconciliation) {
+          reconciliation.pendingAssets = reconciliation.pendingAssets.filter(v => v.id !== asset.id);
+          reconciliation.pendingFailureScopeKeys = reconciliation.pendingFailureScopeKeys.filter(key => key !== target.failureScopeKey);
+        }
         for (let i=failures.length-1;i>=0;i--) if (affected(failures[i]!)) failures.splice(i,1);
         successes++;
       }
@@ -61,6 +79,7 @@ export class SettingsRegenerationRunner {
     next.id = this.options.idGenerator();next.parentVersionId = base.id;next.createdBy = a.userId;next.createdAt = this.options.clock().toISOString();next.status = "candidate";
     delete next.confirmedBy;delete next.confirmedAt;
     if (base.status === "confirmed") next.revisionOfVersionId = base.id;
+    if (reconciliation) next.reconciliation = reconciliation;
     next.assets = assets;next.failures = failures;next.generationStatus = failures.length ? assets.length ? "partially_succeeded" : "failed" : "succeeded";
     next.regeneration = { jobId,fingerprint,assetIds: selection.assetIds,failureScopeKeys: selection.failureScopeKeys,reason: selection.reason,outcome: successes === targets.length ? "succeeded" : successes ? "partially_succeeded" : "failed" };
     next.operation = { requestId: settingsRegenerationOperationId(jobId),fingerprint,kind: "regenerate",targetId: base.id,reason: selection.reason };
@@ -102,7 +121,9 @@ export class InMemorySettingsRegenerationRepository implements SettingsRegenerat
   }
 }
 export function selectSettingsRegenerationTargets(base: SettingsVersion,s: SettingsRegenerationSelection): SettingsRegenerationTarget[] {
-  if (base.reconciliation && (base.reconciliation.pendingAssets.length || base.reconciliation.pendingFailureScopeKeys.length)) throw new SettingsReviewError("INVALID_STATE");
+  const pending = base.reconciliation;
+  const reconciling = hasPendingReconciliation(base);
+  const selectableAssets = reconciling ? pending!.pendingAssets : base.assets;
   const targets: SettingsRegenerationTarget[] = [],ids = new Set<string>();
   const add = (asset: SettingAsset | undefined,failureScopeKey?: string) => {
     if (asset) {
@@ -116,14 +137,17 @@ export function selectSettingsRegenerationTargets(base: SettingsVersion,s: Setti
     targets.push({ scopeKey,...(asset ? { asset: structuredClone(asset) } : {}),...(failureScopeKey === undefined ? {} : { failureScopeKey }) });
   };
   for (const id of s.assetIds) {
-    const asset = base.assets.find(v => v.id === id);if (!asset) throw new SettingsReviewError("NOT_FOUND");add(asset,base.failures.find(f => f.assetId === id)?.scopeKey);
+    const asset = selectableAssets.find(v => v.id === id);if (!asset) throw new SettingsReviewError("NOT_FOUND");add(asset,reconciling ? undefined : base.failures.find(f => f.assetId === id)?.scopeKey);
   }
   for (const key of s.failureScopeKeys) {
-    const failure = base.failures.find(f => f.scopeKey === key);if (!failure || !failure.retryable) throw new SettingsReviewError("INVALID_STATE");
-    const asset = failure.assetId ? base.assets.find(v => v.id === failure.assetId) : undefined;
+    const failure = base.failures.find(f => f.scopeKey === key);if (!failure || !failure.retryable || reconciling && !pending!.pendingFailureScopeKeys.includes(key)) throw new SettingsReviewError("INVALID_STATE");
+    const asset = failure.assetId ? selectableAssets.find(v => v.id === failure.assetId) ?? base.assets.find(v => v.id === failure.assetId) : undefined;
     if (failure.assetId && !asset) throw new SettingsReviewError("INVALID_STATE");add(asset,key);
   }
   return targets;
+}
+function hasPendingReconciliation(base: SettingsVersion) {
+  return !!(base.reconciliation?.pendingAssets.length || base.reconciliation?.pendingFailureScopeKeys.length);
 }
 async function reviewer(access: ProjectAccessReader,a: Actor,p: string) {
   const found = await access.findProjectAccess(a,p);if (!found) throw new SettingsReviewError("NOT_FOUND");

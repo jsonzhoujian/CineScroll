@@ -4,7 +4,7 @@
 
 **Blocked by:** T07-02a、T07-02b、T07-02c全部完成。
 
-**Status:** ready-for-agent（阻塞于上述任务）
+**Status:** ready-for-agent（T07-02a、T07-02b、T07-02c 已完成）
 
 ## Acceptance criteria
 

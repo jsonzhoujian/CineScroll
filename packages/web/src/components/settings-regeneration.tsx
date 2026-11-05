@@ -21,7 +21,11 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
   },[key]);
   useEffect(() => { onBlockedChange(restoring || !!pending); },[restoring,pending,onBlockedChange]);
   useEffect(() => { setAssets([]);setFailures([]);setReason(""); },[view.version.id]);
-  const eligible = view.current && view.active === true && view.permissions?.canDecide === true && !view.version.reconciliation?.pendingAssets.length && !view.version.reconciliation?.pendingFailureScopeKeys.length;
+  const reconciliation = view.version.reconciliation;
+  const reconciling = !!(reconciliation?.pendingAssets.length || reconciliation?.pendingFailureScopeKeys.length);
+  const assetTargets = reconciling ? reconciliation!.pendingAssets : view.version.assets;
+  const failureTargets = reconciling ? view.version.failures.filter(f => reconciliation!.pendingFailureScopeKeys.includes(f.scopeKey)) : view.version.failures;
+  const eligible = view.current && view.active === true && view.permissions?.canDecide === true;
   const blocked = disabled || restoring || !!pending || !eligible;
   const unavailableAsset = (id: string) => Object.hasOwn(view.version.locks ?? {},id) || !!view.version.suggestions?.some(s => s.assetId === id && s.status === "pending");
   function save(value: SettingsRegenerationSubmission | null) {
@@ -86,8 +90,9 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
     <h3>局部重生设定</h3><p role="status">{notice}</p>
     <div className="desktop-task-action">
       {eligible ? <>
-        {view.version.assets.map(a => <label className="regeneration-target" key={a.id}><input type="checkbox" aria-label={`重生资产 ${a.name}`} checked={assets.includes(a.id)} disabled={blocked || unavailableAsset(a.id) || failures.some(key => view.version.failures.find(f => f.scopeKey === key)?.assetId === a.id)} onChange={e => setAssets(toggle(assets,a.id,e.target.checked))} />{a.name}{unavailableAsset(a.id) ? " · 已锁定或有待决建议" : ""}</label>)}
-        {view.version.failures.map(f => <label className="regeneration-target" key={f.scopeKey}><input type="checkbox" aria-label={`重试设定失败 ${f.scopeKey}`} checked={failures.includes(f.scopeKey)} disabled={blocked || !f.retryable || !!f.assetId && (unavailableAsset(f.assetId) || assets.includes(f.assetId) || failures.some(key => key !== f.scopeKey && view.version.failures.find(other => other.scopeKey === key)?.assetId === f.assetId))} onChange={e => setFailures(toggle(failures,f.scopeKey,e.target.checked))} />失败范围 {f.scopeKey}{!f.retryable ? " · 不可重试" : ""}</label>)}
+        {reconciling && <p>选择待核对资产或待处理失败范围。成功项载入后可继续审核。</p>}
+        {assetTargets.map(a => <label className="regeneration-target" key={a.id}><input type="checkbox" aria-label={`重生${reconciling ? "待核对" : ""}资产 ${a.name}`} checked={assets.includes(a.id)} disabled={blocked || unavailableAsset(a.id) || failures.some(key => view.version.failures.find(f => f.scopeKey === key)?.assetId === a.id)} onChange={e => setAssets(toggle(assets,a.id,e.target.checked))} />{a.name}{unavailableAsset(a.id) ? " · 已锁定或有待决建议" : ""}</label>)}
+        {failureTargets.map(f => <label className="regeneration-target" key={f.scopeKey}><input type="checkbox" aria-label={`重试设定失败 ${f.scopeKey}`} checked={failures.includes(f.scopeKey)} disabled={blocked || !f.retryable || !!f.assetId && (unavailableAsset(f.assetId) || assets.includes(f.assetId) || failures.some(key => key !== f.scopeKey && view.version.failures.find(other => other.scopeKey === key)?.assetId === f.assetId))} onChange={e => setFailures(toggle(failures,f.scopeKey,e.target.checked))} />失败范围 {f.scopeKey}{!f.retryable ? " · 不可重试" : ""}</label>)}
         <label>重生原因<textarea aria-label="设定重生原因" maxLength={2000} disabled={blocked} value={reason} onChange={e => setReason(e.target.value)} /></label>
         <button type="button" disabled={blocked} onClick={() => void run(async () => { const next = (await api.modelConfiguration()).configuration;if (alive.current) { setConfig(next?.tested && next.processingRegion === "mainland" ? next : null);setModel(""); } })}>读取重生模型</button>
         <label>重生模型<select aria-label="设定重生模型" disabled={blocked} value={model} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{config?.availableModelIds.map(id => <option key={id}>{id}</option>)}</select></label>
