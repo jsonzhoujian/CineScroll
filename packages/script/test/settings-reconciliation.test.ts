@@ -60,3 +60,38 @@ test("reconciliation CAS rejects competing retained targets and later authority 
   const next = await f.service.execute(f.actor,"p","c",{ ...f.command,requestId: "next-authority",expectedActiveVersionId: active.id,expectedUpstreamConfirmedVersionIds: preview.upstreamConfirmedVersionIds });
   assert.equal(next.reconciliation!.pendingAssets.length,2);assert.equal(new Set(next.reconciliation!.pendingAssets.map(a => a.id)).size,2);assert.deepEqual(next.locks,f.old.locks);
 });
+
+test("cross-source reconciliation requires explicit unlock, exact evidence migration and authorized repair", async () => {
+  const f = await fixture();
+  f.changeSource();
+  let evidenceMatches = true;
+  let sequence = 0;
+  const service = new SettingsReconciliationService({
+    repository: f.repository, handoff: f.handoff, access: f.access,
+    idGenerator: () => `cross-${++sequence}`, clock: () => new Date("2026-11-05"),
+    async readEvidence() {
+      return ["source_1","new-source"].map(id => ({ id,fragments: context.fragments.map(fragment => ({
+        ...fragment, contentHash: id === "new-source" && !evidenceMatches ? "different" : "matching",
+      })) }));
+    },
+  });
+  const v = await service.execute(f.actor,"p","c",f.command);
+  assert.equal(v.sourceVersionId,"new-source");
+  assert.deepEqual(v.assets,[]);
+  const retain = { ...f.command,kind:"retain" as const,requestId:"retain-cross",expectedActiveVersionId:v.id,assetId:"a" };
+  await assert.rejects(() => service.execute(f.actor,"p","c",retain),{ code:"LOCKED" });
+  const unlocked = await service.execute(f.actor,"p","c",{ ...retain,kind:"unlock",requestId:"unlock-cross" });
+  assert.deepEqual(unlocked.reconciliation?.pendingAssets,v.reconciliation?.pendingAssets);
+  const retained = await service.execute(f.actor,"p","c",{ ...retain,expectedActiveVersionId:unlocked.id });
+  assert.deepEqual(retained.assets[0],{ ...f.asset,provenance:f.asset.provenance.map(ref => ({ ...ref,sourceVersionId:"new-source" })) });
+  evidenceMatches = false;
+  await assert.rejects(() => service.execute(f.actor,"p","c",{ ...retain,assetId:"b",requestId:"mismatch",expectedActiveVersionId:retained.id }),{ code:"INVALID_STATE" });
+  const repair = { ...retain,kind:"repair" as const,assetId:"b",requestId:"repair",expectedActiveVersionId:retained.id };
+  await assert.rejects(() => service.execute(f.actor,"p","c",{ ...repair,value:{ ...f.asset,id:"b" } }),{ code:"INVALID_STATE" });
+  const repaired = await service.execute(f.actor,"p","c",{ ...repair,value:{ ...retained.assets[0],id:"b",name:"revised" } });
+  assert.deepEqual(repaired.reconciliation?.pendingAssets,[]);
+  assert.equal((await f.repository.findConfirmed(f.actor,"p","c"))?.id,f.old.id);
+  const confirmed = await f.review.execute(f.actor,"p","c",{ kind:"confirm",requestId:"cross-confirm",expectedActiveVersionId:repaired.id,reason:"checked" });
+  assert.equal(confirmed.status,"confirmed");
+  assert.deepEqual(await f.repository.findVersion(f.actor,"p","c",f.old.id),f.old);
+});

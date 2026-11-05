@@ -100,7 +100,7 @@ function validPending(v: unknown): v is SettingsReviewCommand {
     && (b.kind === "confirm" || b.kind === "decide" ? b.kind === "confirm" || id(b.suggestionId) && ["accepted","rejected"].includes(String(b.decision)) : id(b.assetId))
     && (!(b.kind === "edit" || b.kind === "suggest") || !!b.value && typeof b.value === "object" && !Array.isArray(b.value));
 }
-function DefinitionFields({ label,value,onChange }: { label: string;value: unknown;onChange(v: unknown): void }) {
+export function DefinitionFields({ label,value,onChange }: { label: string;value: unknown;onChange(v: unknown): void }) {
   if (Array.isArray(value)) return <fieldset><legend>{label}</legend>{value.map((v,i) => <DefinitionFields key={i} label={`${label} ${i+1}`} value={v} onChange={next => onChange(value.map((old,n) => n === i ? next : old))} />)}</fieldset>;
   if (value && typeof value === "object") return <fieldset><legend>{label}</legend>{Object.entries(value).map(([key,v]) => <DefinitionFields key={key} label={`${label} ${key}`} value={v} onChange={next => onChange({ ...value,[key]: next })} />)}</fieldset>;
   if (typeof value === "boolean") return <label>{label}<input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} /></label>;

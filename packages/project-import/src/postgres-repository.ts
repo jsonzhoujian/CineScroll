@@ -61,7 +61,7 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     return this.inTransaction(actor, async (client) => {
       const project = await client.query("select id from projects where id = $1 for key share", [projectId]);
       if (project.rowCount === 0) throw new ProjectImportError("PROJECT_NOT_FOUND", "项目不存在或无权访问");
-      await insertChapter(client, projectId, chapter, new Set());
+      await insertChapter(client, projectId, chapter, new Map());
       await insertImportedDocument(client, projectId, document);
       return structuredClone(chapter);
     });
@@ -93,7 +93,7 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
       );
       if (!candidate.rows[0]) throw new ProjectImportError("CHAPTER_SELECTION_REQUIRED", "请选择需要处理的章节");
       if (candidate.rows[0].status === "imported") throw new ProjectImportError("CHAPTER_ALREADY_IMPORTED", "该章节已经入卷");
-      await insertChapter(client, projectId, chapter, new Set());
+      await insertChapter(client, projectId, chapter, new Map());
       await client.query(
         `update imported_document_chapters set status = 'imported', chapter_id = $1
          where project_id = $2 and document_id = $3 and chapter_index = $4`,
@@ -130,7 +130,7 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
       if (change.sourceVersion.ordinal !== previousVersion.ordinal + 1) {
         throw new Error("Source version ordinal must increment by one");
       }
-      const knownFragmentIds = new Set(previousVersion.fragments.map(({ id }) => id));
+      const knownFragmentIds = new Map(previousVersion.fragments.map(fragment => [fragment.id,fragment]));
       await insertSourceVersion(client, projectId, chapterId, change.sourceVersion, knownFragmentIds);
       await client.query(
         "update chapters set title = $1, active_source_version_id = $2 where project_id = $3 and id = $4",
@@ -182,7 +182,7 @@ async function insertProject(client: PoolClient, project: Project): Promise<void
       [project.id, project.workspaceId, member.userId, member.role],
     );
   }
-  for (const chapter of project.chapters) await insertChapter(client, project.id, chapter, new Set());
+  for (const chapter of project.chapters) await insertChapter(client, project.id, chapter, new Map());
 }
 
 async function insertImportedDocument(client: PoolClient, projectId: string, document: ImportedDocument): Promise<void> {
@@ -206,7 +206,7 @@ async function insertChapter(
   client: PoolClient,
   projectId: string,
   chapter: Chapter,
-  knownFragmentIds: Set<string>,
+  knownFragmentIds: Map<string, Pick<SourceFragment,"text" | "contentHash">>,
 ): Promise<void> {
   await client.query(
     "insert into chapters (id, project_id, title, active_source_version_id) values ($1,$2,$3,null)",
@@ -226,7 +226,7 @@ async function insertSourceVersion(
   projectId: string,
   chapterId: string,
   version: SourceVersion,
-  knownFragmentIds: Set<string>,
+  knownFragmentIds: Map<string, Pick<SourceFragment,"text" | "contentHash">>,
 ): Promise<void> {
   await client.query(
     `insert into source_versions
@@ -246,18 +246,26 @@ async function insertFragment(
   chapterId: string,
   sourceVersionId: string,
   fragment: SourceFragment,
-  knownFragmentIds: Set<string>,
+  knownFragmentIds: Map<string, Pick<SourceFragment,"text" | "contentHash">>,
 ): Promise<void> {
-  if (!knownFragmentIds.has(fragment.id)) {
-    const existing = await client.query("select 1 from source_fragments where id = $1", [fragment.id]);
-    if (existing.rowCount === 0) {
+  let known = knownFragmentIds.get(fragment.id);
+  if (!known) {
+    const existing = await client.query<{text_content:string;content_hash:string}>(
+      "select text_content,content_hash from source_fragments where id=$1 and project_id=$2 and chapter_id=$3",
+      [fragment.id,projectId,chapterId],
+    );
+    const row = existing.rows[0];
+    if (row) known = { text:row.text_content,contentHash:row.content_hash };
+    else {
       await client.query(
         "insert into source_fragments (id, project_id, chapter_id, text_content, content_hash) values ($1,$2,$3,$4,$5)",
         [fragment.id, projectId, chapterId, fragment.text, fragment.contentHash],
       );
+      known = fragment;
     }
-    knownFragmentIds.add(fragment.id);
+    knownFragmentIds.set(fragment.id,known);
   }
+  if (known.text !== fragment.text || known.contentHash !== fragment.contentHash) throw new Error("Source fragment identity collision");
   await client.query(
     `insert into source_version_fragments
      (source_version_id, fragment_id, project_id, chapter_id, ordinal, start_offset, end_offset)

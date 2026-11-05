@@ -201,7 +201,7 @@ async function login(page: Page) {
   await page.getByLabel("验证码").fill("123456");
   await page.getByRole("button", { name: "验证并进入" }).click();
 }
-async function setup(page: Page, reason: string | null = null, chapterContext = false) {
+async function setup(page: Page, reason: string | null = null, chapterContext = false, sourceVersionId = "s") {
   let posts = 0;
   await page.route(`${origin}/**`, async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
@@ -215,13 +215,13 @@ async function setup(page: Page, reason: string | null = null, chapterContext = 
       expect(request.headers().authorization).toBe("Bearer session");
       if (path.endsWith("/story-knowledge-tasks/availability")) return route.fulfill({ headers, contentType: "application/json", body: JSON.stringify({ available: true, reason: null }) });
       if (path === "/projects/p/chapters/c/story-knowledge-tasks") {
-        await route.fulfill({ headers, contentType: "application/json", body: JSON.stringify({ tasks: [{ id: "task", projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: "succeeded", reason: null, result: { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } }], nextCursor: null }) });
+        await route.fulfill({ headers, contentType: "application/json", body: JSON.stringify({ tasks: [{ id: "task", projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId }, state: "succeeded", reason: null, result: { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } }], nextCursor: null }) });
         return;
       }
       if (path.endsWith("/resubmit")) { posts++; expect(request.postDataJSON()).toEqual({ configurationVersionId: "config", modelId: "model" }); }
-      if (path.includes("/story-knowledge-tasks/")) body = { id: path.endsWith("/resubmit") ? "new-task" : path.split("/").at(-1), projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId: "s" }, state: path.endsWith("/resubmit") || !reason ? "succeeded" : "paused", reason: path.endsWith("/resubmit") ? null : reason, result: reason && !path.endsWith("/resubmit") ? null : { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } };
+      if (path.includes("/story-knowledge-tasks/")) body = { id: path.endsWith("/resubmit") ? "new-task" : path.split("/").at(-1), projectId: "p", chapterId: "c", input: { stage: "story_knowledge", sourceVersionId }, state: path.endsWith("/resubmit") || !reason ? "succeeded" : "paused", reason: path.endsWith("/resubmit") ? null : reason, result: reason && !path.endsWith("/resubmit") ? null : { candidateVersionId: "candidate", extractionStatus: "partially_succeeded" } };
       else if (path === "/workspace/model-settings") body = { configuration: { id: "config", tested: true, providerId: "deepseek", processingRegion: "mainland", availableModelIds: ["model"] } };
-      else if (path.endsWith("/versions/candidate")) body = { id: "candidate", extractionJobId: posts ? "new-task" : "task", projectId: "p", chapterId: "c", sourceVersionId: "s", status: "candidate", extractionStatus: "partially_succeeded", facts: [{ id: "rain", statement: "雨落", evidence: [] }], failures: [{ scopeKey: "identity", message: "待确认" }] };
+      else if (path.endsWith("/versions/candidate")) body = { id: "candidate", extractionJobId: posts ? "new-task" : "task", projectId: "p", chapterId: "c", sourceVersionId, status: "candidate", extractionStatus: "partially_succeeded", facts: [{ id: "rain", statement: "雨落", evidence: [] }], failures: [{ scopeKey: "identity", message: "待确认" }] };
       else return route.fulfill({ status: 404, headers, contentType: "application/json", body: JSON.stringify({ code: "TASK_NOT_FOUND" }) });
     }
     await route.fulfill({ headers, contentType: "application/json", body: JSON.stringify(body) });
@@ -712,7 +712,7 @@ for (const mode of ["success","uncertain","stale","mismatch","mobile"]) test(`�
 
 for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mobile","read-failure","definition","impact","impact-parent"]) test(`文字设定单项审核与正式修订：${mode}`,async ({ page }) => {
   const impacted = mode === "impact" || mode === "impact-parent";
-  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  await setup(page, null, false, mode === "cross-source" ? "new-source" : "s");if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
   await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
@@ -800,7 +800,7 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
 });
 
 for (const mode of ["success","unknown","missing","mismatch","failure","locked","editor","stale","mobile","storage","execution-unknown","stopped","pending","overlap","dual-pending","corrupt"]) test(`文字设定局部重生与提交恢复：${mode}`,async ({ page }) => {
-  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  await setup(page, null, false, mode === "cross-source" ? "new-source" : "s");if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
   await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
@@ -891,14 +891,17 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
 });
 
 for (const mode of ["success","unknown","read-failure","conflict","editor","mobile","cross-source","missing-conflict","replay-read-404"]) test(`同源跨上游分批原样保留：${mode}`,async ({ page }) => {
-  await setup(page);if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
+  await setup(page, null, false, mode === "cross-source" ? "new-source" : "s");if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
-  const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  const cross = mode === "cross-source";
+  const currentSource = cross ? "new-source" : "s";
+  const chapter = { id: "c",title: "雨落",activeSourceVersionId: currentSource,versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
+  if (cross) chapter.versions.push({ id:currentSource,ordinal:2,text:"晴天",fragments:[{ id:"new-fragment",ordinal:1,text:"晴天" }] });
   await page.route(`${origin}/projects/p/chapters/c/context`,r => r.fulfill({ headers,json: { project: { id: "p",title: "作品",role: mode === "editor" ? "editor" : "owner" },chapter } }));
   await page.route(`${origin}/projects/p/chapters/c`,r => r.fulfill({ headers,json: chapter }));
-  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
-  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
-  const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "visualized" }] }],failures: [] };
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,r => r.fulfill({ headers,json: { id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: currentSource,status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [] } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: currentSource,storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] } } }));
+  const script = { id: "formal",jobId: "script-task",projectId: "p",chapterId: "c",sourceVersionId: currentSource,planVersionId: "plan",status: "confirmed",generationStatus: "succeeded",scenes: [],elements: [{ id: "action",sceneId: "scene",elementType: "action",text: "雨点打湿庭院",provenance: [{ type: "source_fragment",sourceVersionId: currentSource,fragmentId: "f",transformation: "visualized" }] }],failures: [] };
   await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: mode !== "impact-parent",version: { ...script,id: "new-formal" },sourceFragments: [{ id: "f",text: "雨落" }] } }));
 
   type Version = import("../src/lib/api").SettingsView["version"];
@@ -910,14 +913,14 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
     if (mode === "replay-read-404" && posts===2 && !failedRead) { failedRead = true;return r.fulfill({ headers,status: 404,json: { code: "NOT_FOUND" } }); }
     if (mode === "read-failure" && posts===1 && !failedRead) { failedRead = true;return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } }); }
     const current = version.scriptVersionId === "new-formal",reviewer = mode !== "editor";
-    return r.fulfill({ headers,json: { version,current,active: true,impacts: [],permissions: { canEdit: current && reviewer && version.status === "candidate",canSuggest: current,canDecide: current && reviewer,canConfirm: current && reviewer && version.status === "candidate",canLock: current && reviewer && version.status === "confirmed" },scriptVersion: { ...script,id: version.scriptVersionId },sourceFragments: [{ id: "f",text: "雨落" }] } });
+    return r.fulfill({ headers,json: { version,current,active: true,impacts: [],permissions: { canEdit: current && reviewer && version.status === "candidate",canSuggest: current,canDecide: current && reviewer,canConfirm: current && reviewer && version.status === "candidate",canLock: current && reviewer && version.status === "confirmed" },scriptVersion: { ...script,id: version.scriptVersionId,sourceVersionId:version.sourceVersionId },sourceFragments: cross && current ? [{ id:"new-fragment",text:"晴天" }] : [{ id: "f",text: "雨落" }] } });
   });
   await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: formal } }));
   await page.route(`${base}/versions/old-setting`,r => r.fulfill({ headers,json: { version: old } }));
   await page.route(`${base}/operations/*`,r => { const v = operations.get(new URL(r.request().url()).pathname.split("/").at(-1)!);return r.fulfill({ headers,status: v ? 200 : 404,json: v ? { version: v } : {} }); });
   await page.route(`${base}/reconciliation`,r => {
     if (r.request().method()==="OPTIONS") return r.fulfill({ headers,status: 204 });
-    if (r.request().method()==="GET") return r.fulfill({ headers,json: { baseVersionId: version.id,sourceVersionId: mode === "cross-source" ? "new-source" : "s",upstreamConfirmedVersionIds: ["new-formal","plan","candidate"],sameSource: mode !== "cross-source",requiresReconciliation: version.scriptVersionId !== "new-formal",canBegin: mode !== "editor" && mode !== "cross-source" && version.scriptVersionId !== "new-formal" } });
+    if (r.request().method()==="GET") return r.fulfill({ headers,json: { baseVersionId: version.id,sourceVersionId: mode === "cross-source" ? "new-source" : "s",upstreamConfirmedVersionIds: ["new-formal","plan","candidate"],sameSource: mode !== "cross-source",requiresReconciliation: version.scriptVersionId !== "new-formal",canBegin: mode !== "editor" && version.scriptVersionId !== "new-formal" } });
     const b = r.request().postDataJSON();posts++;expect(b.expectedUpstreamConfirmedVersionIds).toEqual(["new-formal","plan","candidate"]);expect(b.reason).toBeTruthy();
     if (mode === "missing-conflict") {
       expect(b.expectedActiveVersionId).toBe(old.id);
@@ -927,9 +930,10 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
     if (mode === "replay-read-404" && posts===2) return r.fulfill({ headers,status: 403,json: { code: "FORBIDDEN" } });
     expect(b.expectedActiveVersionId).toBe(version.id);
     if (mode === "conflict") return r.fulfill({ headers,status: 409,json: { code: "VERSION_CONFLICT" } });
-    const previous = version;version = { ...structuredClone(previous),id: `reconciled-${posts}`,parentVersionId: previous.id,status: "candidate",operation: { requestId: b.requestId,kind: b.kind === "begin" ? "reconcile" : "retain",targetId: b.kind === "begin" ? previous.id : b.assetId,reason: b.reason } };
-    if (b.kind === "begin") { version.assets = [];version.suggestions = [];version.scriptVersionId = "new-formal";version.upstreamConfirmedVersionIds = b.expectedUpstreamConfirmedVersionIds;version.reconciliation = { originVersionId: previous.id,pendingAssets: previous.assets,pendingFailureScopeKeys: [] }; }
-    else { const a = version.reconciliation!.pendingAssets.find(a => a.id===b.assetId)!;version.assets = [...version.assets,a];version.reconciliation!.pendingAssets = version.reconciliation!.pendingAssets.filter(a => a.id!==b.assetId); }
+    const previous = version;version = { ...structuredClone(previous),id: `reconciled-${posts}`,parentVersionId: previous.id,status: "candidate",operation: { requestId: b.requestId,kind: b.kind === "begin" ? "reconcile" : b.kind === "unlock" ? "reconcileUnlock" : b.kind === "repair" ? "reconcileRepair" : "retain",targetId: b.kind === "begin" ? previous.id : b.assetId,reason: b.reason } };
+    if (b.kind === "begin") { version.sourceVersionId = currentSource;version.assets = [];version.suggestions = [];version.scriptVersionId = "new-formal";version.upstreamConfirmedVersionIds = b.expectedUpstreamConfirmedVersionIds;version.reconciliation = { originVersionId: previous.id,pendingAssets: previous.assets,pendingFailureScopeKeys: [] }; }
+    else if (b.kind === "unlock") { delete version.locks?.[b.assetId]; }
+    else { const a = version.reconciliation!.pendingAssets.find(a => a.id===b.assetId)!;version.assets = [...version.assets,b.kind === "repair" ? b.value : a];version.reconciliation!.pendingAssets = version.reconciliation!.pendingAssets.filter(a => a.id!==b.assetId); }
     operations.set(b.requestId,structuredClone(version));
     return r.fulfill({ headers,status: ["unknown","replay-read-404"].includes(mode) && posts===1 ? 503 : 201,json: ["unknown","replay-read-404"].includes(mode) && posts===1 ? { code: "STORAGE_UNAVAILABLE" } : version });
   });
@@ -941,8 +945,8 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   async function enter() { await page.getByRole("button",{ name: "进入审核",exact: true }).click();await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();await page.getByRole("button",{ name: "读取当前剧本",exact: true }).click(); }
   await enter();const workbench = page.getByRole("region",{ name: "设定候选生成与追溯" });await workbench.getByRole("button",{ name: "读取当前设定",exact: true }).click();
   const panel = page.getByRole("region",{ name: "设定跨上游核对" });await panel.getByRole("button",{ name: "预览设定跨上游处理",exact: true }).click();expect(posts).toBe(0);
-  if (["editor","mobile","cross-source"].includes(mode)) { await expect(panel.getByRole("button",{ name: "明确开始同源核对",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
-  await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("review new script");await panel.getByRole("button",{ name: "明确开始同源核对",exact: true }).click();
+  if (["editor","mobile"].includes(mode)) { await expect(panel.getByRole("button",{ name: "明确开始同源核对",exact: true })).not.toBeVisible();expect(posts).toBe(0);return; }
+  await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("review new script");await panel.getByRole("button",{ name: cross ? "明确开始跨源核对" : "明确开始同源核对",exact: true }).click();
   if (mode === "conflict") { await expect(panel.getByRole("status")).toContainText("操作被拒绝");expect(posts).toBe(1);return; }
   if (mode === "missing-conflict") {
     await expect(panel.getByRole("status")).toContainText("结果未知");
@@ -962,6 +966,36 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   await expect(panel.getByText(/待核对资产 2 项/)).toBeVisible();
   await expect(workbench.getByRole("button",{ name: "提交设定局部重生",exact: true })).not.toBeVisible();
   if (mode === "success") await panel.screenshot({ path: "/tmp/t07-settings-reconciliation.png" });
+  if (cross) {
+    await panel.getByLabel("跨上游处理理由").fill("unlock");
+    await panel.getByRole("button",{name:"明确解锁待核对资产 庭院"}).click();
+    await panel.getByRole("button",{name:"人工修订 庭院"}).click();
+    await panel.getByLabel("修订当前状态").fill("dry");
+    await panel.getByRole("checkbox",{name:"晴天"}).check();
+    await panel.getByLabel("跨上游处理理由").fill("update state");
+    await panel.getByRole("button",{name:"保存人工修订"}).click();
+    await expect(panel.getByText(/待核对资产 1 项/)).toBeVisible();
+    expect(version.assets[0]?.state).toBe("dry");
+    expect(version.assets[0]?.provenance[0]).toMatchObject({sourceVersionId:currentSource,fragmentId:"new-fragment"});
+    const review = page.getByRole("region",{ name:"文字设定审核" });
+    await expect(review.getByRole("button",{name:"确认文字设定",exact:true})).toBeDisabled();
+    await panel.getByRole("button",{name:"人工修订 道具"}).click();
+    await panel.getByRole("checkbox",{name:"晴天"}).check();
+    await panel.getByLabel("跨上游处理理由").fill("trace prop");
+    await panel.getByRole("button",{name:"保存人工修订"}).click();
+    await expect(panel.getByText(/待核对资产 0 项/)).toBeVisible();
+    await panel.getByRole("button",{name:"读取原版本建议历史",exact:true}).click();
+    await panel.getByRole("button",{name:"读取历史原文依据",exact:true}).click();
+    const history = panel.getByRole("complementary",{name:"原版本依据与锁"});
+    await history.getByText("庭院的历史依据",{exact:true}).click();
+    await expect(history.locator("details[open]").getByText("雨落",{exact:true})).toBeVisible();
+    await expect(history.getByText(/原锁：owner/)).toBeVisible();
+    expect(formal.id).toBe(old.id);
+    await review.getByLabel("设定操作理由",{exact:true}).fill("confirm current evidence");
+    await review.getByRole("button",{name:"确认文字设定",exact:true}).click();
+    await expect(review.getByText("设定状态：正式",{exact:true})).toBeVisible();
+    return;
+  }
   const review = page.getByRole("region",{ name: "文字设定审核" });await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
   await panel.getByRole("button",{ name: "读取原版本建议历史",exact: true }).click();await expect(panel.getByLabel("原版本建议历史")).toContainText("pending · 未迁移");
   await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain courtyard");await panel.getByRole("button",{ name: "原样保留 庭院",exact: true }).click();await expect(panel.getByText(/待核对资产 1 项/)).toBeVisible();

@@ -52,8 +52,8 @@ T07-02跨上游处理的[规则及四项拆分](../../../docs/plans/2026-11-04-t
 | ID | Ticket | Status | Blocked by |
 | --- | --- | --- | --- |
 | T07-02a | [同源跨上游分批核对与原样保留](./t07/02a-reconcile-same-source.md) | done | None |
-| T07-02b | [跨源依据迁移与人工修订闭环](./t07/02b-reconcile-source-evidence.md) | ready | T07-02a completed |
-| T07-02c | [待核对目标局部重生与未知结果恢复](./t07/02c-reconcile-regeneration.md) | blocked | T07-02b |
+| T07-02b | [跨源依据迁移与人工修订闭环](./t07/02b-reconcile-source-evidence.md) | done | T07-02a completed |
+| T07-02c | [待核对目标局部重生与未知结果恢复](./t07/02c-reconcile-regeneration.md) | ready | T07-02b completed |
 | T07-02d | [跨上游整体验收与分镜交接](./t07/02d-reconcile-acceptance.md) | blocked | T07-02a、T07-02b、T07-02c |
 
-T07-02a已完成[同源核对交付](../../../docs/plans/2026-11-04-t07-same-source-reconciliation-delivery.md)，T07-02b解锁；T07-02/T07继续in_progress，T07-03及T08/T09整体验收不解锁，T09基础设施保持独立追踪。
+T07-02a已完成[同源核对交付](../../../docs/plans/2026-11-04-t07-same-source-reconciliation-delivery.md)，T07-02b已完成，T07-02c就绪。T07-02/T07继续in_progress，T07-03及T08/T09整体验收不解锁，T09基础设施保持独立追踪。

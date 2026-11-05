@@ -26,7 +26,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -473,6 +473,50 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal(Object.hasOwn(unlockedReconciled.locks,settingAsset.id),false);
     assert.equal((await reconciliation.execute(actor,projectId,chapterId,begin)).id,begun.id);
     assert.deepEqual(await reconciliationRepo.findVersion(actor,projectId,chapterId,lockedSetting.id),lockedSetting);
+
+    // Seed the already-published authority for the reimport. The application role
+    // executes the reconciliation itself with all transaction guards enabled.
+    const crossBible = `cross-bible-${suffix}`, crossPlan = `cross-plan-${suffix}`, crossScript = `cross-script-${suffix}`;
+    const seed = await admin.connect();
+    try {
+      await seed.query("begin");
+      await seed.query("set local session_replication_role=replica");
+      await seed.query("insert into story_knowledge_versions select (jsonb_populate_record(null::story_knowledge_versions,to_jsonb(v)||jsonb_build_object('id',$2::text,'source_version_id','123','extraction_job_id',$2::text,'version_json',v.version_json||jsonb_build_object('id',$2::text,'sourceVersionId','123')))).* from story_knowledge_versions v where id=$1",[bibleId,crossBible]);
+      await seed.query("insert into story_bibles select (jsonb_populate_record(null::story_bibles,to_jsonb(v)||jsonb_build_object('id',$2::text,'version_id',$2::text))).* from story_bibles v where version_id=$1",[bibleId,crossBible]);
+      await seed.query("insert into episode_plan_versions select (jsonb_populate_record(null::episode_plan_versions,to_jsonb(v)||jsonb_build_object('id',$2::text,'source_version_id','123','story_bible_version_id',$3::text,'version_json',v.version_json||jsonb_build_object('id',$2::text,'sourceVersionId','123','storyBibleVersionId',$3::text)))).* from episode_plan_versions v where id=$1",[confirmed.id,crossPlan,crossBible]);
+      await seed.query("insert into script_content_versions select (jsonb_populate_record(null::script_content_versions,to_jsonb(v)||jsonb_build_object('id',$2::text,'source_version_id','123','plan_version_id',$3::text,'job_id',$2::text,'version_json',jsonb_set(v.version_json,'{publicationOperation,requestId}',to_jsonb($2::text))||jsonb_build_object('id',$2::text,'sourceVersionId','123','planVersionId',$3::text,'jobId',$2::text)))).* from script_content_versions v where id=$1",[upstreamConfirmed.id,crossScript,crossPlan]);
+      await seed.query("update chapters set active_source_version_id='123' where project_id=$1 and id=$2",[projectId,chapterId]);
+      await seed.query("update story_knowledge_heads set active_version_id=$2,confirmed_version_id=$2 where chapter_id=$1",[chapterId,crossBible]);
+      await seed.query("update episode_plan_heads set active_version_id=$2,confirmed_version_id=$2 where chapter_id=$1",[chapterId,crossPlan]);
+      await seed.query("update script_content_heads set active_version_id=$2,confirmed_version_id=$2 where chapter_id=$1",[chapterId,crossScript]);
+      await seed.query("commit");
+    } finally { await seed.query("rollback");seed.release(); }
+    const crossHandoff = { async read() { return { version:{ ...upstreamConfirmed,id:crossScript,sourceVersionId:"123",planVersionId:crossPlan }, sourceFragments:[{ id:"42",text:"雨落" }],upstreamConfirmedVersionIds:[crossPlan,crossBible] }; } };
+    const crossRepo = new PostgresSettingsReviewRepository(app,crossHandoff);
+    const crossOptions = { repository:crossRepo,handoff:crossHandoff,access:accessReader,idGenerator:() => `cross-setting-${suffix}-${++sequence}`,clock:() => new Date("2026-11-05") };
+    const cross = new SettingsReconciliationService({ ...crossOptions,async readEvidence() { return []; } });
+    const crossBegin = { ...begin,requestId:"cross-begin",expectedActiveVersionId:unlockedReconciled.id,expectedUpstreamConfirmedVersionIds:[crossScript,crossPlan,crossBible] };
+    const crossCandidate = await cross.execute(actor,projectId,chapterId,crossBegin);
+    assert.equal(crossCandidate.sourceVersionId,"123");
+    assert.equal(crossCandidate.assets.length,0);
+    const migrationProbe = await app.connect();
+    try {
+      await migrationProbe.query("begin");
+      await migrationProbe.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
+      const migrated = { ...crossCandidate,id:"migration-probe",parentVersionId:crossCandidate.id,assets:crossCandidate.reconciliation!.pendingAssets.map(asset => ({ ...asset,provenance:asset.provenance.map(ref => ({ ...ref,sourceVersionId:"123" })) })),reconciliation:{ ...crossCandidate.reconciliation!,pendingAssets:[] },operation:{ kind:"retain",requestId:"probe",targetId:settingAsset.id,reason:"probe",fingerprint:"a".repeat(64) } };
+      const insert = () => migrationProbe.query("insert into settings_review_versions(workspace_id,project_id,chapter_id,id,origin_version_id,parent_review_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8)",[actor.workspaceId,projectId,chapterId,migrated.id,savedSettings.id,crossCandidate.id,actor.userId,JSON.stringify(migrated)]);
+      await migrationProbe.query("savepoint evidence");
+      await assert.rejects(insert,{code:"42501",message:/evidence migration denied/});
+      await migrationProbe.query("rollback to savepoint evidence");
+      await admin.query("insert into source_version_fragments values('123','f',$1,$2,2,0,2)",[projectId,chapterId]);
+      await insert();
+    } finally { await migrationProbe.query("rollback");migrationProbe.release(); }
+    const repair = { ...crossBegin,kind:"repair" as const,assetId:settingAsset.id,requestId:"cross-repair",expectedActiveVersionId:crossCandidate.id };
+    const repairedAsset = { ...settingAsset,state:"repaired",provenance:[{ type:"source_fragment",sourceVersionId:"123",fragmentId:"42",transformation:"retained" }] };
+    const crossRepaired = await cross.execute(actor,projectId,chapterId,{ ...repair,value:repairedAsset });
+    assert.deepEqual(crossRepaired.assets,[repairedAsset]);
+    assert.equal((await crossRepo.findConfirmed(actor,projectId,chapterId))?.id,unlockedReconciled.id);
+    assert.equal((await new SettingsReviewService(crossOptions).execute(actor,projectId,chapterId,{kind:"confirm",requestId:"cross-confirm",expectedActiveVersionId:crossRepaired.id,reason:"checked"})).status,"confirmed");
 
     await admin.query("update chapters set active_source_version_id=null where project_id=$1 and id=$2",[projectId,chapterId]);
     const head = await content.findActive(actor,projectId,chapterId);

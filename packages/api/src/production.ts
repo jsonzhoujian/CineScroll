@@ -399,7 +399,8 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       apiModule.imports!.push(SettingsWorkerModule.forWorker(settingsWorker,settingsRegenerationWorker),
         SettingsRegenerationTaskApiModule.register({ sessionVerifier: sessions,tasks: regenerationTasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
         SettingsTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
-        SettingsReviewApiModule.register({ sessionVerifier: sessions,repository: reviews,review,reconciliation: new SettingsReconciliationService({ repository: reviews,handoff,access: projects,idGenerator: () => `settingsr_${randomUUID()}`,clock: () => new Date() }),context: new SettingsTaskContext(context,handoff) }),
+        SettingsReviewApiModule.register({ sessionVerifier: sessions,repository: reviews,review,reconciliation: new SettingsReconciliationService({ repository: reviews,handoff,access: projects,
+          async readEvidence(actor,p,c) { return (await projects.findChapter(actor,p,c))?.versions ?? []; },idGenerator: () => `settingsr_${randomUUID()}`,clock: () => new Date() }),context: new SettingsTaskContext(context,handoff) }),
         SettingsApiModule.register({ sessionVerifier: sessions,tasks,repository: candidates,reviews,review,context: new SettingsTaskContext(context,handoff),handoff,projects,scripts: contentRepository,regeneration: { tasks: regenerationTasks,repository: regenerationRepository } }));
       apiModule.providers!.push({ provide: "SETTINGS_REGENERATION_TASK_SERVICE",useValue: regenerationTasks },{ provide: "SETTINGS_TASK_SERVICE",useValue: tasks },{ provide: "SETTINGS_DATABASE_STARTUP_CHECK",useValue: {
         onModuleInit: () => assertSettingsDatabase(restrictedPool,taskConfig.workspaceIds),

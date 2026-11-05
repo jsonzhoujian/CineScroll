@@ -4,7 +4,7 @@
 
 **Blocked by:** T07-02b — 需要跨源有效/待核对依据划分、人工核对及明确解锁路径；经其依赖包含T07-02a。
 
-**Status:** ready-for-agent（阻塞于上述任务）
+**Status:** ready-for-agent（T07-02b 已完成）
 
 ## Accepted rules
 
