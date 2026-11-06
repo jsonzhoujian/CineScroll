@@ -951,6 +951,9 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   });
   await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: formal } }));
   await page.route(`${base}/versions/old-setting`,r => r.fulfill({ headers,json: { version: old } }));
+  await page.route(`${base}/versions/old-setting/impacts`,r => r.fulfill({ headers,json:{ versionId:old.id,impacts:[
+    { confirmed_version_id:"new-formal",source_version_id:"formal",source_element_id:"action",target_stage:"settings",target_version_id:old.id,target_item_id:"location",status:"unreviewed" },
+  ] } }));
   await page.route(`${base}/operations/*`,r => { const v = operations.get(new URL(r.request().url()).pathname.split("/").at(-1)!);return r.fulfill({ headers,status: v ? 200 : 404,json: v ? { version: v } : {} }); });
   await page.route(`${base}/reconciliation`,r => {
     if (r.request().method()==="OPTIONS") return r.fulfill({ headers,status: 204 });
@@ -1039,6 +1042,10 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   }
   const review = page.getByRole("region",{ name: "文字设定审核" });await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
   await panel.getByRole("button",{ name: "读取原版本建议历史",exact: true }).click();await expect(panel.getByLabel("原版本建议历史")).toContainText("pending · 未迁移");
+  const comparison = panel.getByRole("complementary",{name:"历史影响与本轮处理"});
+  await panel.getByRole("button",{name:"对照历史影响与本轮处理",exact:true}).click();
+  await expect(comparison).toContainText("待核对");
+  await expect(comparison).toContainText("unreviewed");
   await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain courtyard");await panel.getByRole("button",{ name: "原样保留 庭院",exact: true }).click();await expect(panel.getByText(/待核对资产 1 项/)).toBeVisible();
   await review.getByLabel("设定操作理由",{ exact: true }).fill("too early");await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
   await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain prop");await panel.getByRole("button",{ name: "原样保留 道具",exact: true }).click();
@@ -1046,4 +1053,6 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   expect(version.locks).toEqual(old.locks);expect(version.suggestions).toEqual([]);
   await workbench.getByRole("button",{ name: "庭院",exact: true }).click();await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");
   await review.getByLabel("设定操作理由",{ exact: true }).fill("checked all");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();expect(posts).toBe(3);
+  await expect(comparison).toContainText("已纳入本轮正式设定");
+  await expect(comparison).toContainText("unreviewed");
 });
