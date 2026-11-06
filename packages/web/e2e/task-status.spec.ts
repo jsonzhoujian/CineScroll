@@ -47,14 +47,14 @@ for (const mode of ["success","uncertain","stale","expired","mobile","disabled"]
   if (mode === "success") { await panel.scrollIntoViewIfNeeded(); await page.screenshot({ path: "/private/tmp/episode-task-panel.png" }); }
   expect(posts).toBe(mode === "expired" ? 3 : mode === "uncertain" ? 2 : 1);
 });
-for (const mode of ["owner", "editor", "stale", "empty"]) test(`已确认知识后拆集审核：${mode}`, async ({ page }) => {
+for (const mode of ["owner", "editor", "stale", "empty", "old-source"]) test(`已确认知识后拆集审核：${mode}`, async ({ page }) => {
   await setup(page);
   const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type", "access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c", title: "雨落", activeSourceVersionId: "s", versions: [{ id: "s", ordinal: 1, text: "雨落", fragments: [{ id: "f", ordinal: 1, text: "雨落" }] }] };
   await page.route(`${origin}/projects/p/chapters/c/context`, route => route.fulfill({ headers, json: { project: { id: "p", title: "作品", role: mode === "editor" ? "editor" : "owner", aspectRatio: "9:16", targetDurationSeconds: 180, narrativeMode: "dialogue" }, chapter } }));
   await page.route(`${origin}/projects/p/chapters/c`, route => route.fulfill({ headers, json: chapter }));
   await page.route(`${origin}/projects/p/chapters/c/story-knowledge`, route => route.fulfill({ headers, json: { id: "candidate", extractionJobId: "task", projectId: "p", chapterId: "c", sourceVersionId: "s", status: "confirmed", extractionStatus: "succeeded", facts: [], failures: [] } }));
-  let plan = { id: "plan-1", projectId: "p", chapterId: "c", sourceVersionId: "s", storyBibleVersionId: "candidate", status: "candidate", targetDurationSeconds: 180, recommendationRationale: "围绕落雨事件安排一集", episodes: [{ id: "e", ordinal: 1, title: "风雨将至", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }],
+  let plan = { id: "plan-1", projectId: "p", chapterId: "c", sourceVersionId: mode === "old-source" ? "old" : "s", storyBibleVersionId: "candidate", status: "candidate", targetDurationSeconds: 180, recommendationRationale: "围绕落雨事件安排一集", episodes: [{ id: "e", ordinal: 1, title: "风雨将至", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }],
     majorAdaptationProposals: [{ id: "proposal", summary: "调整事件顺序", rationale: "节奏", affectedFactIds: ["event"], decision: undefined as unknown }] };
   await page.route(`${origin}/projects/p/chapters/c/episode-plan**`, async route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ headers, status: 204 });
@@ -65,7 +65,7 @@ for (const mode of ["owner", "editor", "stale", "empty"]) test(`已确认知识�
       return route.fulfill({ headers, json: plan });
     }
     if (mode === "empty") return route.fulfill({ headers, status: 404, json: { code: "EPISODE_PLAN_NOT_FOUND" } });
-    return route.fulfill({ headers, json: { plan, current: mode !== "stale", canReview: mode === "owner" && plan.status === "candidate", sourceFragments: [{ id: "f", text: "雨落" }], coreEvents: [{ id: "event", statement: "开始下雨" }] } });
+    return route.fulfill({ headers, json: { plan, current: mode !== "stale" && mode !== "old-source", canReview: mode === "owner" && plan.status === "candidate", sourceFragments: [{ id: "f", text: "雨落" }], coreEvents: [{ id: "event", statement: "开始下雨" }] } });
   });
   await page.getByRole("button", { name: "进入审核", exact: true }).click();
   const desk = page.getByRole("region", { name: "拆集方案审核" });
@@ -73,6 +73,9 @@ for (const mode of ["owner", "editor", "stale", "empty"]) test(`已确认知识�
   if (mode === "empty") { await expect(desk.getByText(/尚无拆集候选/)).toBeVisible(); await expect(desk.getByRole("button", { name: "确认拆集方案", exact: true })).toHaveCount(0); return; }
   await expect(desk.getByText("3 分钟 / 集", { exact: true })).toBeVisible();
   await expect(desk.getByRole("button", { name: "确认拆集方案", exact: true })).toBeDisabled();
+  const modelButton = desk.getByRole("button",{name:"读取拆集模型"});
+  if (mode === "old-source") await expect(modelButton).toBeEnabled();
+  if (mode === "stale") await expect(modelButton).toBeDisabled();
   if (mode !== "owner") { await expect(desk.getByRole("button", { name: "拒绝 proposal" })).toBeDisabled(); return; }
   await desk.getByRole("button", { name: "第1集 · 风雨将至" }).click();
   await expect(desk.getByText("雨落", { exact: true })).toBeVisible();

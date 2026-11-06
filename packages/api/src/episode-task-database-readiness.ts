@@ -27,9 +27,9 @@ export async function assertEpisodeTaskDatabase(pool: Pool, workspaceIds: readon
       and (select count(*)=3 from pg_trigger where tgenabled in ('O','A') and not tgisinternal and
         ((tgrelid='public.episode_plan_versions'::regclass and tgname='episode_plan_versions_immutable' and tgfoid='public.reject_immutable_change()'::regprocedure)
         or (tgrelid='public.episode_plan_operations'::regclass and tgname='episode_plan_operations_immutable' and tgfoid='public.reject_immutable_change()'::regprocedure)
-        or (tgrelid='public.episode_plan_heads'::regclass and tgname='episode_plan_head_transition' and tgfoid='public.guard_episode_plan_head()'::regprocedure)))
+        or (tgrelid='public.episode_plan_heads'::regclass and tgname='episode_plan_head_transition' and tgfoid='public.guard_episode_plan_source_head()'::regprocedure)))
       and (select count(*)=2 and bool_and(not prosecdef and not pg_has_role(session_user,proowner,'MEMBER'))
-        from pg_proc where oid in ('public.reject_immutable_change()'::regprocedure,'public.guard_episode_plan_head()'::regprocedure)) as ready`);
+        from pg_proc where oid in ('public.reject_immutable_change()'::regprocedure,'public.guard_episode_plan_source_head()'::regprocedure)) as ready`);
     if (!guards.rows[0]?.ready) throw new Error();
     await client.query("commit");
   } catch {

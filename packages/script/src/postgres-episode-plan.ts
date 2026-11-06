@@ -35,7 +35,7 @@ export class PostgresScriptRepository implements ScriptRepository {
       if (expected !== undefined && current !== expected || version.parentVersionId !== current) throw new ScriptError("VERSION_CONFLICT", "拆集方案版本冲突");
       if (current) {
         const old = decode((await client.query("select version_json from episode_plan_versions where workspace_id=$1 and project_id=$2 and chapter_id=$3 and id=$4", [...params,current])).rows[0]);
-        if (old?.status === "confirmed") throw new ScriptError("CONFIRMED_PLAN_REQUIRES_SUGGESTION", "已确认方案不可覆盖");
+        if (old?.status === "confirmed" && (version.status !== "candidate" || old.sourceVersionId === version.sourceVersionId || !version.generationJobId || operation?.key !== `generation:${version.generationJobId}`)) throw new ScriptError("CONFIRMED_PLAN_REQUIRES_SUGGESTION", "已确认方案不可覆盖");
       }
       if (version.createdBy !== actor.userId || version.status === "confirmed" && (version.confirmedBy !== actor.userId || !version.parentVersionId || version.majorAdaptationProposals.some(p => !p.decision))) throw new ScriptError("INVALID_EPISODE_PLAN", "确认元数据或改编裁决无效");
       await client.query("insert into episode_plan_versions(workspace_id,project_id,chapter_id,id,parent_version_id,source_version_id,story_bible_version_id,status,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)", [...params,version.id,version.parentVersionId,version.sourceVersionId,version.storyBibleVersionId,version.status,version.createdBy,JSON.stringify(version)]);

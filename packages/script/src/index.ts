@@ -255,7 +255,7 @@ export class ScriptService {
     if ((active?.id ?? null) !== input.expectedActiveVersionId) {
       throw new ScriptError("VERSION_CONFLICT", "拆集方案已被其他操作更新，请刷新后重试");
     }
-    if (active?.status === "confirmed") {
+    if (active?.status === "confirmed" && (!generationOperation || active.sourceVersionId === input.sourceVersionId)) {
       throw new ScriptError("CONFIRMED_PLAN_REQUIRES_SUGGESTION", "已确认拆集方案只能通过修改建议创建后续版本");
     }
     validateEpisodePlan(input, storyBible);

@@ -122,7 +122,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -512,6 +512,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const chapter = `/projects/${projectId}/chapters/${chapterId}`;
       const settings = `${chapter}/settings`;
       const knowledge = `${chapter}/story-knowledge`;
+      const episodePath = `${chapter}/episode-plan`;
+      const previousPlan = (await cross.http.get(episodePath).set("authorization",bearer).expect(200)).body.plan;
       const previousKnowledge = (await cross.http.get(knowledge).set("authorization",bearer).expect(200)).body;
       assert.equal(previousKnowledge.status,"confirmed");
       const old = (await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version;
@@ -557,6 +559,48 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const currentKnowledge = (await cross.http.get(knowledge).set("authorization",bearer).expect(200)).body;
       assert.equal(currentKnowledge.status,"confirmed");
       assert.equal(currentKnowledge.sourceVersionId,reimportedSourceId);
+      const previousPlanView = (await cross.http.get(episodePath).set("authorization",bearer).expect(200)).body;
+      assert.equal(previousPlanView.current,false);
+      const forged = await admin.connect();
+      try {
+        await forged.query("begin");
+        await forged.query("set local role novel_app");
+        await forged.query("select set_config('app.current_workspace_id',$1,true),set_config('app.current_user_id',$2,true),set_config('app.story_knowledge_operation','confirm',true)",[workspaceId,userId]);
+        const fake = { ...previousPlan,id:`fake-plan-${suffix}`,parentVersionId:previousPlan.id,sourceVersionId:reimportedSourceId,
+          storyBibleVersionId:currentKnowledge.id,status:"candidate",generationJobId:"missing-running-task",createdBy:userId };
+        await forged.query("insert into episode_plan_versions(workspace_id,project_id,chapter_id,id,parent_version_id,source_version_id,story_bible_version_id,status,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,'candidate',$8,$9)",
+          [workspaceId,projectId,chapterId,fake.id,previousPlan.id,reimportedSourceId,currentKnowledge.id,userId,JSON.stringify(fake)]);
+        await assert.rejects(() => forged.query("update episode_plan_heads set active_version_id=$4 where workspace_id=$1 and project_id=$2 and chapter_id=$3",
+          [workspaceId,projectId,chapterId,fake.id]),{ code:"42501",message:/running episode plan task/ });
+      } finally { await forged.query("rollback");forged.release(); }
+      const beforePlan = modelCalls;
+      await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
+      const planInput = {configurationVersionId:version!,modelId:"m",requestId:"cross-source-plan"};
+      const planTaskPath = `${chapter}/episode-plan-tasks`;
+      async function runPlan(requestId: string) {
+        const task = (await cross.http.post(planTaskPath).set("authorization",bearer).send({ ...planInput,requestId }).expect(201)).body;
+        for (let i=0;i<100;i++) {
+          const result = (await cross.http.get(`/episode-plan-tasks/${task.id}`).set("authorization",bearer).expect(200)).body;
+          if (["succeeded","failed","paused"].includes(result.state)) return result;
+          await new Promise(resolve => setTimeout(resolve,20));
+        }
+        assert.fail("拆集任务超时");
+      }
+      const newPlanTask = await runPlan(planInput.requestId);
+      assert.equal(newPlanTask.state,"succeeded",JSON.stringify(newPlanTask));
+      const newPlan = (await cross.http.get(episodePath).set("authorization",bearer).expect(200)).body.plan;
+      assert.equal(newPlan.id,newPlanTask.result.candidateVersionId);
+      assert.equal(newPlan.sourceVersionId,reimportedSourceId);
+      assert.equal(newPlan.storyBibleVersionId,currentKnowledge.id);
+      assert.equal((await admin.query("select confirmed_version_id from episode_plan_heads where workspace_id=$1 and project_id=$2 and chapter_id=$3",
+        [workspaceId,projectId,chapterId])).rows[0].confirmed_version_id,previousPlan.id);
+      assert.equal(newPlan.parentVersionId,previousPlan.id);
+      assert.equal((await runPlan("cross-source-plan-duplicate")).reason,"CANDIDATE_EXISTS");
+      assert.equal(modelCalls,beforePlan+1);
+      await cross.http.post(`${episodePath}/confirm`).set("authorization",bearer).send({expectedActiveVersionId:newPlan.id}).expect(201);
+      assert.equal((await cross.http.get(episodePath).set("authorization",bearer).expect(200)).body.plan.status,"confirmed");
+      assert.deepEqual((await cross.http.get(`${episodePath}/versions/${previousPlan.id}`).set("authorization",bearer).expect(200)).body.plan,previousPlan);
+
       assert.deepEqual((await cross.http.get(`${knowledge}/versions/${previousKnowledge.id}`).set("authorization",bearer).expect(200)).body,previousKnowledge);
       assert.deepEqual((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,old);
     } finally { compliance.mock.restore();await cross.close(); }

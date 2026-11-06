@@ -54,7 +54,12 @@ export class EpisodePlanTaskExecutor {
     return tasks.run(actor,id,async credentials => {
       let guardedError: unknown;
       try {
-        try { await script.getEpisodePlan(actor,task.projectId,task.chapterId); throw new TaskExecutionError("CANDIDATE_EXISTS"); }
+        let expectedActiveVersionId: string | null = null;
+        try {
+          const active = await script.getEpisodePlan(actor,task.projectId,task.chapterId);
+          if (active.sourceVersionId === task.input.sourceVersionId) throw new TaskExecutionError("CANDIDATE_EXISTS");
+          expectedActiveVersionId = active.id;
+        }
         catch (error) { if (!(error instanceof ScriptError && error.code === "EPISODE_PLAN_NOT_FOUND")) throw error; }
         const readUpstream = async () => {
           await tasks.assertGenerationAllowed(actor,task.projectId,task.chapterId,task.input);
@@ -81,7 +86,7 @@ export class EpisodePlanTaskExecutor {
           try { await readUpstream(); } catch (error) { guardedError = error; throw error; }
           return response;
         } } });
-        const candidate = await runner.run(actor,request,null);
+        const candidate = await runner.run(actor,request,expectedActiveVersionId);
         return { candidateVersionId: candidate.id, extractionStatus: "succeeded" };
       } catch (caught) {
         const error = guardedError ?? caught;
