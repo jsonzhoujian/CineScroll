@@ -19,7 +19,7 @@ Unauthenticated requests return 401; inaccessible projects/results or wrong-stag
 
 ## T07-02 review API
 
-The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0033 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
+The same opt-in `settingsTasks` switch now mounts review routes after migrations 0025–0034 and the expanded startup checks succeed. Existing enabled installations require that trusted-owner migration before upgrading; startup does not install it.
 
 | Method | Route | Input / result |
 |---|---|---|
@@ -98,6 +98,8 @@ The default-off settings switch mounts reconciliation after trusted-owner migrat
 - `retain` adds `assetId` and moves the selected pending asset into effective assets. On the same source it preserves the asset and its lock. Across sources it requires an unlocked asset and checks that each referenced fragment belongs to both source versions with the same identity, full hash and text. The server rebinds the references.
 - `unlock` adds `assetId` and removes that pending asset's lock through an explicit audited operation. The asset remains pending.
 - `repair` adds `assetId` and `value`. It validates the revised asset's identity, type and references against the current source before making the asset effective. It applies to unlocked pending assets on either source path.
+
+- `resolveFailure` adds `failureScopeKey` and records an explicit “no settings output required” decision for one pending nonretryable failure. The immutable version and decision retain the original failure, actor, reason and request identity. Only that failure leaves the active queue. A later upstream reconciliation reopens the range against the new authority. Migration 0034 validates the decision in the same transaction.
 
 All existing review operations continue through exact prior-state reconstruction and current epoch authority. Confirmation requires both pending collections empty, no unresolved regeneration task on the current reconciliation chain, and the existing review gates. New-version dependencies use the actual new formal script and shared source evidence, not the original generation's script. Version/head/formal pointer/dependencies commit or roll back together; role revocation cannot interleave through the held member lock. Historical generation, operations and formal pointers remain readable.
 

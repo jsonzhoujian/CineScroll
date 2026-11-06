@@ -3,7 +3,7 @@ import type { Actor,ProjectAccessReader } from "./index.ts";
 import type { ConfirmedScriptHandoff } from "./script-handoff.ts";
 import { SettingsReviewError,type SettingsReviewRepository,type SettingsVersion } from "./settings-review.ts";
 import { validateSettingAsset } from "./settings-content.ts";
-export type SettingsReconciliationCommand = { requestId: string;expectedActiveVersionId: string;expectedUpstreamConfirmedVersionIds: string[];reason: string } & ({ kind: "begin" } | { kind: "retain" | "unlock";assetId: string } | { kind: "repair";assetId: string;value: unknown });
+export type SettingsReconciliationCommand = { requestId: string;expectedActiveVersionId: string;expectedUpstreamConfirmedVersionIds: string[];reason: string } & ({ kind: "begin" } | { kind: "retain" | "unlock";assetId: string } | { kind: "repair";assetId: string;value: unknown } | { kind: "resolveFailure";failureScopeKey: string });
 export class SettingsReconciliationService {
   private readonly options: { repository: SettingsReviewRepository;handoff: Pick<ConfirmedScriptHandoff,"read">;access: ProjectAccessReader;readEvidence?(a: Actor,p: string,c: string): Promise<readonly { id: string;fragments: readonly { id: string;text: string;contentHash: string }[] }[]>;idGenerator(): string;clock(): Date };
   constructor(options: SettingsReconciliationService["options"]) { this.options = options; }
@@ -37,11 +37,24 @@ export class SettingsReconciliationService {
     const next = structuredClone(base);
     if (command.kind === "begin") {
       if (same(base.upstreamConfirmedVersionIds,ids)) throw new SettingsReviewError("INVALID_STATE");
-      next.reconciliation = { originVersionId: base.id,pendingAssets: structuredClone([...base.assets,...(base.reconciliation?.pendingAssets ?? [])]),pendingFailureScopeKeys: base.failures.map(f => f.scopeKey) };
+      for (const decision of base.reconciliation?.failureDecisions ?? []) {
+        if (!next.failures.some(failure => failure.scopeKey === decision.failure.scopeKey)) next.failures.push(structuredClone(decision.failure));
+      }
+      if (next.failures.length > base.failures.length) next.generationStatus = "failed";
+      next.reconciliation = { originVersionId: base.id,pendingAssets: structuredClone([...base.assets,...(base.reconciliation?.pendingAssets ?? [])]),pendingFailureScopeKeys: next.failures.map(f => f.scopeKey) };
       next.sourceVersionId = formal.version.sourceVersionId;
       next.assets = [];next.suggestions = [];next.status = "candidate";next.scriptVersionId = formal.version.id;next.upstreamConfirmedVersionIds = ids;
       delete next.confirmedAt;delete next.confirmedBy;delete next.regeneration;
       if (base.status === "confirmed") next.revisionOfVersionId = base.id;
+    } else if (command.kind === "resolveFailure") {
+      if (!same(base.upstreamConfirmedVersionIds,ids) || base.sourceVersionId !== formal.version.sourceVersionId) throw new SettingsReviewError("UPSTREAM_CHANGED");
+      const failure = base.failures.find(f => f.scopeKey === command.failureScopeKey);
+      const pending = next.reconciliation;
+      if (base.status !== "candidate" || failure?.retryable !== false || !pending?.pendingFailureScopeKeys.includes(command.failureScopeKey)) throw new SettingsReviewError("INVALID_STATE");
+      next.failures = next.failures.filter(f => f.scopeKey !== command.failureScopeKey);
+      next.generationStatus = next.failures.length ? next.assets.length ? "partially_succeeded" : "failed" : "succeeded";
+      pending.pendingFailureScopeKeys = pending.pendingFailureScopeKeys.filter(key => key !== command.failureScopeKey);
+      pending.failureDecisions = [...(pending.failureDecisions ?? []),{ failure,requestId:command.requestId,reason:command.reason,actorId:a.userId }];
     } else {
       if (!same(base.upstreamConfirmedVersionIds,ids)) throw new SettingsReviewError("UPSTREAM_CHANGED");
       const asset = base.reconciliation?.pendingAssets.find(v => v.id === command.assetId);
@@ -65,7 +78,7 @@ export class SettingsReconciliationService {
       }
     }
     next.id = this.options.idGenerator();next.createdBy = a.userId;next.createdAt = this.options.clock().toISOString();next.parentVersionId = base.id;
-    next.operation = { requestId: command.requestId,fingerprint,kind: command.kind === "begin" ? "reconcile" : command.kind === "unlock" ? "reconcileUnlock" : command.kind === "repair" ? "reconcileRepair" : "retain",targetId: command.kind === "begin" ? base.id : command.assetId,reason: command.reason };
+    next.operation = { requestId: command.requestId,fingerprint,kind: command.kind === "begin" ? "reconcile" : command.kind === "unlock" ? "reconcileUnlock" : command.kind === "repair" ? "reconcileRepair" : command.kind === "resolveFailure" ? "reconcileResolveFailure" : "retain",targetId: command.kind === "begin" ? base.id : command.kind === "resolveFailure" ? command.failureScopeKey : command.assetId,reason: command.reason };
     return repo.save(a,next,base.id);
   }
   private async migrateEvidence(a: Actor,p: string,c: string,asset: SettingsVersion["assets"][number],sourceId: string) {
@@ -88,7 +101,7 @@ function same(a: readonly string[],b: readonly string[]) { return a.length===b.l
 function parse(v: SettingsReconciliationCommand): SettingsReconciliationCommand {
   if (!v || typeof v!=="object" || Array.isArray(v) || ![v.requestId,v.expectedActiveVersionId].every(id) || typeof v.reason!=="string" || !v.reason.trim() || v.reason.length>2000
     || !Array.isArray(v.expectedUpstreamConfirmedVersionIds) || v.expectedUpstreamConfirmedVersionIds.length!==3 || !v.expectedUpstreamConfirmedVersionIds.every(id)
-    || !["begin","retain","unlock","repair"].includes(v.kind) || v.kind !== "begin" && !id(v.assetId)
-    || Object.keys(v).some(k => !["requestId","expectedActiveVersionId","expectedUpstreamConfirmedVersionIds","reason","kind",...(v.kind !== "begin" ? ["assetId"] : []),...(v.kind === "repair" ? ["value"] : [])].includes(k))) throw new SettingsReviewError("INVALID_COMMAND");
-  return { requestId: v.requestId,expectedActiveVersionId: v.expectedActiveVersionId,expectedUpstreamConfirmedVersionIds: [...v.expectedUpstreamConfirmedVersionIds],reason: v.reason.trim(),kind: v.kind,...(v.kind !== "begin" ? { assetId: v.assetId } : {}),...(v.kind === "repair" ? { value: v.value } : {}) } as SettingsReconciliationCommand;
+    || !["begin","retain","unlock","repair","resolveFailure"].includes(v.kind) || (v.kind === "resolveFailure" ? !id(v.failureScopeKey) : v.kind !== "begin" && !id(v.assetId))
+    || Object.keys(v).some(k => !["requestId","expectedActiveVersionId","expectedUpstreamConfirmedVersionIds","reason","kind",...(v.kind === "resolveFailure" ? ["failureScopeKey"] : v.kind !== "begin" ? ["assetId"] : []),...(v.kind === "repair" ? ["value"] : [])].includes(k))) throw new SettingsReviewError("INVALID_COMMAND");
+  return { requestId: v.requestId,expectedActiveVersionId: v.expectedActiveVersionId,expectedUpstreamConfirmedVersionIds: [...v.expectedUpstreamConfirmedVersionIds],reason: v.reason.trim(),kind: v.kind,...(v.kind === "resolveFailure" ? { failureScopeKey:v.failureScopeKey } : v.kind !== "begin" ? { assetId:v.assetId } : {}),...(v.kind === "repair" ? { value: v.value } : {}) } as SettingsReconciliationCommand;
 }

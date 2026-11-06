@@ -39,7 +39,7 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
     const ids = c.expectedUpstreamConfirmedVersionIds;
     if (v.projectId !== projectId || v.chapterId !== chapterId || v.sourceVersionId !== (JSON.parse(recovery?.context ?? context) as string[])[2] || !v.reconciliation
       || v.parentVersionId !== c.expectedActiveVersionId || v.scriptVersionId !== ids[0] || v.upstreamConfirmedVersionIds.length!==ids.length || v.upstreamConfirmedVersionIds.some((id,i) => id!==ids[i])
-      || v.operation?.requestId !== c.requestId || v.operation.reason !== c.reason || v.operation.kind !== ({ begin: "reconcile",retain: "retain",unlock: "reconcileUnlock",repair: "reconcileRepair" }[c.kind]) || v.operation.targetId !== (c.kind === "begin" ? c.expectedActiveVersionId : c.assetId)) throw new Error("WRONG_RECONCILIATION");
+      || v.operation?.requestId !== c.requestId || v.operation.reason !== c.reason || v.operation.kind !== ({ begin: "reconcile",retain: "retain",unlock: "reconcileUnlock",repair: "reconcileRepair",resolveFailure:"reconcileResolveFailure" }[c.kind]) || v.operation.targetId !== (c.kind === "begin" ? c.expectedActiveVersionId : c.kind === "resolveFailure" ? c.failureScopeKey : c.assetId)) throw new Error("WRONG_RECONCILIATION");
   }
   async function completed(v: SettingsView["version"],c: SettingsReconciliationCommand) {
     validateResult(v,c);await onChanged();
@@ -48,7 +48,7 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
   async function send(kind: SettingsReconciliationCommand["kind"],assetId?: string,replay = false,value?: unknown) {
     if (replay ? recovery?.context !== context : blocked) return;
     if (!replay && (kind === "begin" ? !preview?.canBegin || preview.baseVersionId!==view.version.id : !canRetain)) return;
-    const command: SettingsReconciliationCommand = replay ? pending! : { kind,requestId: crypto.randomUUID(),expectedActiveVersionId: view.version.id,expectedUpstreamConfirmedVersionIds: [...(kind === "begin" ? preview!.upstreamConfirmedVersionIds : view.version.upstreamConfirmedVersionIds)],reason: reason.trim(),...(kind !== "begin" ? { assetId } : {}),...(kind === "repair" ? { value } : {}) } as SettingsReconciliationCommand;
+    const command: SettingsReconciliationCommand = replay ? pending! : { kind,requestId: crypto.randomUUID(),expectedActiveVersionId: view.version.id,expectedUpstreamConfirmedVersionIds: [...(kind === "begin" ? preview!.upstreamConfirmedVersionIds : view.version.upstreamConfirmedVersionIds)],reason: reason.trim(),...(kind === "resolveFailure" ? { failureScopeKey:assetId } : kind !== "begin" ? { assetId } : {}),...(kind === "repair" ? { value } : {}) } as SettingsReconciliationCommand;
     if (!command) return;
     try { sessionStorage.setItem(key,JSON.stringify(command)); } catch { setRestoring(true);setNotice("无法保存操作身份，尚未提交跨上游操作。");return; }
     setRecovery({ key,context,command });setCanEnd(false);let acknowledged = false;
@@ -126,7 +126,14 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
           </fieldset>}
         </div>}
       </article>)}
-      {view.version.reconciliation.pendingFailureScopeKeys.map(id => <p key={id}>待处理失败范围 {id} · 保持未完成，不能确认。</p>)}
+      {view.version.reconciliation.pendingFailureScopeKeys.map(id => <div key={id}>
+        <p>待处理失败范围 {id} · 保持未完成，不能确认。</p>
+        {canRetain && view.version.failures.some(f => f.scopeKey === id && f.retryable === false) && <div className="desktop-task-action">
+          <button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => send("resolveFailure",id))}>裁决无需产出设定 {id}</button>
+        </div>}
+      </div>)}
+      {view.version.reconciliation.failureDecisions?.map(({ failure,reason,actorId }) =>
+        <p key={failure.scopeKey}>失败范围 {failure.scopeKey} · 原失败 {failure.code} · 已裁决无需产出设定 · {actorId} · {reason}</p>)}
       {(view.version.reconciliation.pendingAssets.some(a => a.provenance.some(ref => ref.sourceVersionId !== view.version.sourceVersionId)) || !!old) && <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const chapter = await api.getChapter(projectId,chapterId);if (alive.current) setHistory(chapter); })}>读取历史原文依据</button>}
       <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const id = view.version.reconciliation!.originVersionId,result = await api.getSettingsVersion(projectId,chapterId,id);if (result.version.id!==id || result.version.projectId!==projectId || result.version.chapterId!==chapterId) throw new Error("WRONG_ORIGIN");if (alive.current) setOld(result.version); })}>读取原版本建议历史</button>
       {old && <aside aria-label="原版本依据与锁">
@@ -168,7 +175,7 @@ function valid(v: unknown): v is SettingsReconciliationCommand {
   if (!v || typeof v!=="object" || Array.isArray(v)) return false;
   const b = v as Record<string,unknown>;
   return id(b.requestId) && id(b.expectedActiveVersionId) && typeof b.reason==="string" && !!b.reason.trim() && b.reason.length<=2000 && Array.isArray(b.expectedUpstreamConfirmedVersionIds) && b.expectedUpstreamConfirmedVersionIds.length===3 && b.expectedUpstreamConfirmedVersionIds.every(id)
-    && (b.kind === "begin" || ["retain","unlock","repair"].includes(String(b.kind)) && id(b.assetId)) && Object.keys(b).every(k => ["requestId","expectedActiveVersionId","expectedUpstreamConfirmedVersionIds","reason","kind",...(b.kind !== "begin" ? ["assetId"] : []),...(b.kind === "repair" ? ["value"] : [])].includes(k));
+    && (b.kind === "begin" || b.kind === "resolveFailure" && id(b.failureScopeKey) || ["retain","unlock","repair"].includes(String(b.kind)) && id(b.assetId)) && Object.keys(b).every(k => ["requestId","expectedActiveVersionId","expectedUpstreamConfirmedVersionIds","reason","kind",...(b.kind === "resolveFailure" ? ["failureScopeKey"] : b.kind !== "begin" ? ["assetId"] : []),...(b.kind === "repair" ? ["value"] : [])].includes(k));
 }
 
 function readReconciliation(context: string) {

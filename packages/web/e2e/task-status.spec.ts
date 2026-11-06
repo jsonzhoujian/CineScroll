@@ -940,6 +940,7 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   type Version = import("../src/lib/api").SettingsView["version"];
   const asset = { id: "location",assetType: "location",name: "庭院",visibleDefinition: { rain: true },state: "wet",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "retained" }] };
   const old: Version = { id: "old-setting",jobId: "initial",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: "confirmed",generationStatus: "succeeded",assets: [asset,{ ...asset,id: "prop",name: "道具" }],failures: [],locks: { location: { lockedBy: "owner",lockedAt: "2026-11-04" } },suggestions: [{ id: "old-suggestion",assetId: "prop",value: { ...asset,id: "prop",name: "旧建议" },reason: "old advice",status: "pending",submittedBy: "editor" }] };
+  if (mode === "success") old.failures = [{ scopeKey:"unbound",code:"PROVIDER_ITEM_FAILED",retryable:false }];
   let version = structuredClone(old),formal = structuredClone(old),posts = 0,failedRead = false;
   const operations = new Map<string,Version>(),base = `${origin}/projects/p/chapters/c/settings`;
   await page.route(base,r => {
@@ -967,8 +968,15 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
     if (mode === "replay-read-404" && posts===2) return r.fulfill({ headers,status: 403,json: { code: "FORBIDDEN" } });
     expect(b.expectedActiveVersionId).toBe(version.id);
     if (mode === "conflict") return r.fulfill({ headers,status: 409,json: { code: "VERSION_CONFLICT" } });
-    const previous = version;version = { ...structuredClone(previous),id: `reconciled-${posts}`,parentVersionId: previous.id,status: "candidate",operation: { requestId: b.requestId,kind: b.kind === "begin" ? "reconcile" : b.kind === "unlock" ? "reconcileUnlock" : b.kind === "repair" ? "reconcileRepair" : "retain",targetId: b.kind === "begin" ? previous.id : b.assetId,reason: b.reason } };
-    if (b.kind === "begin") { version.sourceVersionId = currentSource;version.assets = [];version.suggestions = [];version.scriptVersionId = "new-formal";version.upstreamConfirmedVersionIds = b.expectedUpstreamConfirmedVersionIds;version.reconciliation = { originVersionId: previous.id,pendingAssets: previous.assets,pendingFailureScopeKeys: [] }; }
+    const previous = version;version = { ...structuredClone(previous),id: `reconciled-${posts}`,parentVersionId: previous.id,status: "candidate",operation: { requestId: b.requestId,kind: b.kind === "begin" ? "reconcile" : b.kind === "unlock" ? "reconcileUnlock" : b.kind === "repair" ? "reconcileRepair" : b.kind === "resolveFailure" ? "reconcileResolveFailure" : "retain",targetId: b.kind === "begin" ? previous.id : b.failureScopeKey ?? b.assetId,reason: b.reason } };
+    if (b.kind === "begin") { version.sourceVersionId = currentSource;version.assets = [];version.suggestions = [];version.scriptVersionId = "new-formal";version.upstreamConfirmedVersionIds = b.expectedUpstreamConfirmedVersionIds;version.reconciliation = { originVersionId: previous.id,pendingAssets: previous.assets,pendingFailureScopeKeys: previous.failures.map(f => f.scopeKey) }; }
+    else if (b.kind === "resolveFailure") {
+      const failure = previous.failures.find(f => f.scopeKey === b.failureScopeKey)!;
+      expect(failure.retryable).toBe(false);
+      version.failures = previous.failures.filter(f => f.scopeKey !== b.failureScopeKey);
+      version.reconciliation!.pendingFailureScopeKeys = [];
+      version.reconciliation!.failureDecisions = [{ failure,requestId:b.requestId,reason:b.reason,actorId:"owner" }];
+    }
     else if (b.kind === "unlock") { delete version.locks?.[b.assetId]; }
     else { const a = version.reconciliation!.pendingAssets.find(a => a.id===b.assetId)!;version.assets = [...version.assets,b.kind === "repair" ? b.value : a];version.reconciliation!.pendingAssets = version.reconciliation!.pendingAssets.filter(a => a.id!==b.assetId); }
     operations.set(b.requestId,structuredClone(version));
@@ -1052,7 +1060,13 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("old-setting");
   expect(version.locks).toEqual(old.locks);expect(version.suggestions).toEqual([]);
   await workbench.getByRole("button",{ name: "庭院",exact: true }).click();await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");
-  await review.getByLabel("设定操作理由",{ exact: true }).fill("checked all");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();expect(posts).toBe(3);
+  if (mode === "success") {
+    await expect(review.getByRole("button",{name:"确认文字设定",exact:true})).toBeDisabled();
+    await panel.getByLabel("跨上游处理理由").fill("无需设定");
+    await panel.getByRole("button",{name:"裁决无需产出设定 unbound",exact:true}).click();
+    await expect(panel.getByText(/已裁决无需产出设定/)).toContainText("PROVIDER_ITEM_FAILED");
+  }
+  await review.getByLabel("设定操作理由",{ exact: true }).fill("checked all");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();expect(posts).toBe(mode === "success" ? 4 : 3);
   await expect(comparison).toContainText("已纳入本轮正式设定");
   await expect(comparison).toContainText("unreviewed");
 });

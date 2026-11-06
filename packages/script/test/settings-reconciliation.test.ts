@@ -95,3 +95,31 @@ test("cross-source reconciliation requires explicit unlock, exact evidence migra
   assert.equal(confirmed.status,"confirmed");
   assert.deepEqual(await f.repository.findVersion(f.actor,"p","c",f.old.id),f.old);
 });
+
+test("reviewers adjudicate only one nonretryable pending failure while other failures block confirmation", async () => {
+  const f = await fixture();
+  const failures = ["one","two","retry"].map(scopeKey => ({ scopeKey,code:"PROVIDER_ITEM_FAILED",retryable:scopeKey === "retry" }));
+  const repository = new InMemorySettingsReviewRepository(f.actor,{ ...f.old,status:"candidate",failures,generationStatus:"partially_succeeded" });
+  let id = 0;
+  const options = { repository,handoff:f.handoff,access:f.access,idGenerator:() => `decision-${++id}`,clock:() => new Date("2026-11-06") };
+  const service = new SettingsReconciliationService(options),review = new SettingsReviewService(options);
+  let v = await service.execute(f.actor,"p","c",f.command);
+  const decide = { ...f.command,kind:"resolveFailure" as const,failureScopeKey:"one",requestId:"one",expectedActiveVersionId:v.id,reason:"当前原文无需设定" };
+  await assert.rejects(() => service.execute({ ...f.actor,userId:"editor" },"p","c",decide),{ code:"FORBIDDEN" });
+  await assert.rejects(() => service.execute(f.actor,"p","c",{ ...decide,failureScopeKey:"retry" }),{ code:"INVALID_STATE" });
+  v = await service.execute(f.actor,"p","c",decide);
+  assert.deepEqual(v.failures,failures.slice(1));
+  assert.deepEqual(v.reconciliation?.pendingFailureScopeKeys,["two","retry"]);
+  assert.deepEqual(v.reconciliation?.failureDecisions?.[0]?.failure,failures[0]);
+  assert.deepEqual(await service.execute(f.actor,"p","c",decide),v);
+  assert.deepEqual((await repository.findVersion(f.actor,"p","c",decide.expectedActiveVersionId))?.failures,failures);
+  await assert.rejects(() => review.execute(f.actor,"p","c",{kind:"confirm",requestId:"blocked",expectedActiveVersionId:v.id,reason:"checked"}),{ code:"INVALID_STATE" });
+  await assert.rejects(() => service.execute(f.actor,"p","c",{ ...decide,requestId:"stale" }),{ code:"VERSION_CONFLICT" });
+  f.change();
+  await assert.rejects(() => service.execute(f.actor,"p","c",{ ...decide,requestId:"stale-upstream",expectedActiveVersionId:v.id }),{ code:"UPSTREAM_CHANGED" });
+  const next = await service.execute(f.actor,"p","c",{ ...f.command,requestId:"new-begin",expectedActiveVersionId:v.id,expectedUpstreamConfirmedVersionIds:["later-formal","plan_1","bible_1"] });
+  assert.deepEqual(next.reconciliation?.pendingFailureScopeKeys,["two","retry","one"]);
+  assert.equal(next.reconciliation?.failureDecisions,undefined);
+  assert.deepEqual((await repository.findVersion(f.actor,"p","c",v.id))?.reconciliation?.failureDecisions,v.reconciliation?.failureDecisions);
+
+});

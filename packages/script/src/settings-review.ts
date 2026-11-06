@@ -7,10 +7,10 @@ export type SettingsReviewCommand = { requestId: string;expectedActiveVersionId:
   { kind: "edit" | "suggest";assetId: string;value: unknown } | { kind: "decide";suggestionId: string;decision: "accepted" | "rejected" }
   | { kind: "confirm" } | { kind: "lock" | "unlock";assetId: string });
 export type SettingsSuggestion = { id: string;assetId: string;baseVersionId: string;baseAssetHash: string;value: SettingAsset;reason: string;submittedBy: string;submittedAt: string;status: "pending" | "accepted" | "rejected";decidedBy?: string;decidedAt?: string;decisionReason?: string };
-export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"] | "regenerate" | "reconcile" | "retain" | "reconcileUnlock" | "reconcileRepair";targetId: string;reason: string };
+export type SettingsReviewOperation = { requestId: string;fingerprint: string;kind: SettingsReviewCommand["kind"] | "regenerate" | "reconcile" | "retain" | "reconcileUnlock" | "reconcileRepair" | "reconcileResolveFailure";targetId: string;reason: string };
 export type SettingsVersion = Omit<SettingsCandidate,"status"> & { status: "candidate" | "confirmed";parentVersionId: string | null;
   suggestions: SettingsSuggestion[];locks: Record<string,{ lockedBy: string;lockedAt: string }>;
-  reconciliation?: { originVersionId: string;pendingAssets: SettingAsset[];pendingFailureScopeKeys: string[] };
+  reconciliation?: { originVersionId: string;pendingAssets: SettingAsset[];pendingFailureScopeKeys: string[];failureDecisions?: { failure: SettingsCandidate["failures"][number];requestId: string;reason: string;actorId: string }[] };
   regeneration?: { jobId: string;fingerprint: string;assetIds: string[];failureScopeKeys: string[];reason: string;outcome: "succeeded" | "partially_succeeded" | "failed" };
   operation?: SettingsReviewOperation;confirmedBy?: string;confirmedAt?: string;revisionOfVersionId?: string };
 export interface SettingsReviewRepository {

@@ -26,7 +26,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -520,8 +520,23 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
         operation:{ ...migrated.operation,kind:"reconcileRepair",requestId:"repair-probe" },
       });
     } finally { await migrationProbe.query("rollback");migrationProbe.release(); }
+    const failedScope = { scopeKey:"unbound",code:"PROVIDER_ITEM_FAILED",retryable:false };
+    const failureSeed = await admin.connect();
+    try {
+      await failureSeed.query("begin");
+      await failureSeed.query("set local session_replication_role=replica");
+      await failureSeed.query("update settings_review_versions set version_json=jsonb_set(version_json||jsonb_build_object('failures',$2::jsonb,'generationStatus','failed'),'{reconciliation,pendingFailureScopeKeys}',jsonb_build_array('unbound')) where id=$1",
+        [crossCandidate.id,JSON.stringify([failedScope])]);
+      await failureSeed.query("commit");
+    } finally { await failureSeed.query("rollback");failureSeed.release(); }
+    const decideFailure = { ...crossBegin,kind:"resolveFailure" as const,requestId:"cross-failure-decision",expectedActiveVersionId:crossCandidate.id,failureScopeKey:"unbound",reason:"no setting required" };
+    const adjudicated = await cross.execute(actor,projectId,chapterId,decideFailure);
+    assert.deepEqual(adjudicated.reconciliation?.failureDecisions?.[0]?.failure,failedScope);
+    assert.deepEqual(adjudicated.reconciliation?.pendingFailureScopeKeys,[]);
+    assert.deepEqual((await crossRepo.findVersion(actor,projectId,chapterId,crossCandidate.id))?.failures,[failedScope]);
+    assert.deepEqual(await cross.execute(actor,projectId,chapterId,decideFailure),adjudicated);
     const regeneratedAsset = { ...settingAsset,state:"regenerated",provenance:[{ type:"source_fragment",sourceVersionId:"123",fragmentId:"f",transformation:"retained" }] };
-    const selection = { expectedActiveVersionId:crossCandidate.id,assetIds:[settingAsset.id],failureScopeKeys:[],reason:"new source evidence" };
+    const selection = { expectedActiveVersionId:adjudicated.id,assetIds:[settingAsset.id],failureScopeKeys:[],reason:"new source evidence" };
     const pendingTask: ModelTask = { ...regenerationTask,id:`pending-regeneration-${suffix}`,input:{ ...regenerationTask.input,sourceVersionId:"123",upstreamConfirmedVersionIds:[crossScript,crossPlan,crossBible],regeneration:selection } };
     await taskRepository.insert(pendingTask);
     await taskRepository.transition(actor.workspaceId,pendingTask.id,0,"running",null);
