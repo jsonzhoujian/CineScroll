@@ -87,9 +87,13 @@ export function SettingsWorkbench({ api,projectId,chapterId,sourceVersionId,scri
     const next = await api.getSettings(projectId,chapterId);
     let saved: ReturnType<typeof readSettingsRegenerationSubmission> = null;
     try { saved = readSettingsRegenerationSubmission(context); } catch { next.active = false; }
-    if (saved && next.version.id !== saved.selection.expectedActiveVersionId) {
-      const baseline = (await api.getSettingsVersion(projectId,chapterId,saved.selection.expectedActiveVersionId)).version;
-      if (baseline.id !== saved.selection.expectedActiveVersionId) throw new Error("WRONG_REGENERATION_BASELINE");
+    if (saved?.context === context && next.version.sourceVersionId === sourceVersionId
+      && next.version.scriptVersionId === scriptVersionId && next.version.id !== saved.submission.selection.expectedActiveVersionId) {
+      const baseline = (await api.getSettingsVersion(projectId,chapterId,saved.submission.selection.expectedActiveVersionId)).version;
+      if (baseline.id !== saved.submission.selection.expectedActiveVersionId) throw new Error("WRONG_REGENERATION_BASELINE");
+      if (baseline.sourceVersionId !== next.version.sourceVersionId || baseline.scriptVersionId !== next.version.scriptVersionId
+        || baseline.upstreamConfirmedVersionIds.length !== next.version.upstreamConfirmedVersionIds.length
+        || baseline.upstreamConfirmedVersionIds.some((id,i) => id !== next.version.upstreamConfirmedVersionIds[i])) throw new Error("WRONG_REGENERATION_BASELINE");
       next.version = baseline;
       const impactView = await api.getSettingsImpacts(projectId,chapterId,baseline.id);
       if (impactView.versionId !== baseline.id) throw new Error("WRONG_IMPACT_VERSION");

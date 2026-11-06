@@ -1,4 +1,5 @@
 "use client";
+import { archiveSettingsRecovery,findSettingsRecovery } from "../lib/settings-recovery";
 import { useEffect,useRef,useState } from "react";
 import { ApiClientError,type ApiClient,type ModelConfiguration,type SettingsRegenerationSubmission,type SettingsRegenerationTask,type SettingsView } from "../lib/api";
 export function SettingsRegeneration({ api,projectId,chapterId,context,view,disabled,readDisabled = disabled,run,onLoaded,onBlockedChange }: {
@@ -7,14 +8,15 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
 }) {
   const [assets,setAssets] = useState<string[]>([]),[failures,setFailures] = useState<string[]>([]),[reason,setReason] = useState("");
   const [config,setConfig] = useState<ModelConfiguration | null>(null),[model,setModel] = useState("");
-  const [pending,setPending] = useState<SettingsRegenerationSubmission | null>(null),[task,setTask] = useState<SettingsRegenerationTask | null>(null);
+  const [recovery,setRecovery] = useState<ReturnType<typeof readSettingsRegenerationSubmission>>(null),[task,setTask] = useState<SettingsRegenerationTask | null>(null);
   const [restoring,setRestoring] = useState(true),[missing,setMissing] = useState(false),[notice,setNotice] = useState("只重生明确选择的未锁定目标，完成后需重新审核确认。");
   const alive = useRef(false),key = JSON.stringify(["settings-regeneration",context]);
+  const pending = recovery?.submission;
   useEffect(() => {
     alive.current = true;
     try {
       const saved = readSettingsRegenerationSubmission(context);
-      if (saved) { setPending(saved);setNotice("有待核对的局部重生提交；刷新不会重新发送。"); }
+      if (saved) { setRecovery(saved);setNotice("有待核对的局部重生提交；刷新不会重新发送。"); }
       setRestoring(false);
     } catch { setNotice("无法读取重生提交身份，请人工核对，暂停新的重生操作。"); }
     return () => { alive.current = false; };
@@ -29,17 +31,28 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
   const blocked = disabled || restoring || !!pending || !eligible;
   const unavailableAsset = (id: string) => Object.hasOwn(view.version.locks ?? {},id) || !!view.version.suggestions?.some(s => s.assetId === id && s.status === "pending");
   function save(value: SettingsRegenerationSubmission | null) {
-    if (value) sessionStorage.setItem(key,JSON.stringify(value));else sessionStorage.removeItem(key);
-    if (alive.current) setPending(value);
+    if (value) {
+      sessionStorage.setItem(key,JSON.stringify(value));
+      if (alive.current) setRecovery({ key,context,submission:value });
+    } else {
+      sessionStorage.removeItem(recovery?.key ?? key);
+      setMissing(false);
+      if (alive.current) {
+        try { setRecovery(readSettingsRegenerationSubmission(context)); }
+        catch { setRecovery(null);setRestoring(true); }
+      }
+    }
   }
   function validTask(t: SettingsRegenerationTask,p: SettingsRegenerationSubmission) {
-    const v = view.version,ids = v.upstreamConfirmedVersionIds,s = t.input.regeneration;
-    if (t.projectId !== projectId || t.chapterId !== chapterId || t.input.stage !== "settings" || t.input.resultType !== "settingsRegeneration" || t.input.sourceVersionId !== v.sourceVersionId
+    const [,,sourceId,...ids] = JSON.parse(recovery?.context ?? context) as string[];
+    const s = t.input.regeneration;
+    if (t.projectId !== projectId || t.chapterId !== chapterId || t.input.stage !== "settings" || t.input.resultType !== "settingsRegeneration" || t.input.sourceVersionId !== sourceId
       || t.input.upstreamConfirmedVersionIds.length !== ids.length || t.input.upstreamConfirmedVersionIds.some((id,i) => id !== ids[i])
       || !s || s.expectedActiveVersionId !== p.selection.expectedActiveVersionId || s.reason !== p.selection.reason || !same(s.assetIds,p.selection.assetIds) || !same(s.failureScopeKeys,p.selection.failureScopeKeys)) throw new Error("WRONG_REGENERATION_TASK");
     return t;
   }
   async function send(original?: SettingsRegenerationSubmission) {
+    if (original && recovery?.context !== context) return;
     if (!original && (blocked || !config || !model || !reason.trim() || !assets.length && !failures.length)) return;
     const body = original ?? { requestId: crypto.randomUUID(),configurationVersionId: config!.id,modelId: model,selection: { expectedActiveVersionId: view.version.id,assetIds: [...assets].sort(),failureScopeKeys: [...failures].sort(),reason: reason.trim() } };
     let posted = false;
@@ -69,7 +82,7 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
     } catch (error) {
       if (!alive.current) return;
       setMissing(error instanceof ApiClientError && error.status === 404);
-      setNotice(error instanceof ApiClientError && error.status === 404 ? "尚未找到原提交，可明确重新发送同一提交；不会创建新的请求身份。" : "核对失败，请稍后继续核对原提交。");
+      setNotice(recovery?.context === context && error instanceof ApiClientError && error.status === 404 ? "尚未找到原提交，可明确重新发送同一提交；不会创建新的请求身份。" : "核对失败，请稍后继续核对原提交。");
     }
   }
   async function load() {
@@ -82,7 +95,9 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
     }
     if (alive.current) {
       // Keep recovery identity if browser storage cannot acknowledge the explicit load.
-      save(null);setTask(null);onLoaded(next);setNotice(next.current ? "已载入局部重生候选，正式版本保留；请重新审核确认。" : "上游已变化，已载入结果仅供历史追溯。");
+      const current = next.current && recovery?.context === context;
+      save(null);setTask(null);onLoaded(current ? next : { ...next,current:false,active:false });
+      setNotice(current ? "已载入局部重生候选，正式版本保留；请重新审核确认。" : "上游已变化，已载入结果仅供历史追溯。");
     }
   }
   const toggle = (values: string[],id: string,checked: boolean) => checked ? [...values,id] : values.filter(v => v !== id);
@@ -98,7 +113,10 @@ export function SettingsRegeneration({ api,projectId,chapterId,context,view,disa
         <label>重生模型<select aria-label="设定重生模型" disabled={blocked} value={model} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{config?.availableModelIds.map(id => <option key={id}>{id}</option>)}</select></label>
         <button type="button" disabled={blocked || !model || !reason.trim() || assets.length+failures.length<1 || assets.length+failures.length>100} onClick={() => void run(() => send())}>提交设定局部重生</button>
       </> : <p>当前身份或核对状态尚不开放局部重生。</p>}
-      {pending && missing && <button type="button" disabled={disabled || restoring} onClick={() => void run(() => send(pending))}>重新发送设定重生原提交</button>}
+      {pending && missing && recovery?.context === context && <button type="button" disabled={disabled || restoring} onClick={() => void run(() => send(pending))}>重新发送设定重生原提交</button>}
+      {recovery && missing && recovery.context !== context && <button type="button" disabled={readDisabled || restoring} onClick={() => void run(async () => {
+        archiveSettingsRecovery(recovery.key);save(null);setTask(null);setNotice("已归档旧上游的原重生提交身份。");
+      })}>归档旧上游重生请求</button>}
       {task && (task.state === "failed" || task.state === "paused" && task.reason !== "EXECUTION_UNCERTAIN") && <button type="button" disabled={readDisabled || restoring} onClick={() => void run(async () => { save(null);setTask(null);setNotice("已结束停止任务的核对；请读取当前设定后重新选择。"); })}>结束已停止的重生任务</button>}
     </div>
     {pending && <button type="button" disabled={readDisabled || restoring} onClick={() => void run(reconcile)}>核对设定重生原提交</button>}
@@ -115,8 +133,10 @@ function validSaved(v: unknown): v is SettingsRegenerationSubmission {
     && "assetIds" in s && "failureScopeKeys" in s && Array.isArray(s.assetIds) && Array.isArray(s.failureScopeKeys) && s.assetIds.length+s.failureScopeKeys.length>=1 && s.assetIds.length+s.failureScopeKeys.length<=100 && [...s.assetIds,...s.failureScopeKeys].every(id) && new Set(s.assetIds).size===s.assetIds.length && new Set(s.failureScopeKeys).size===s.failureScopeKeys.length;
 }
 
-export function readSettingsRegenerationSubmission(context: string): SettingsRegenerationSubmission | null {
-  const raw = sessionStorage.getItem(JSON.stringify(["settings-regeneration",context]));
-  if (!raw) return null;
-  const saved: unknown = JSON.parse(raw);if (!validSaved(saved)) throw new Error("INVALID_SAVED_REGENERATION");return saved;
+export function readSettingsRegenerationSubmission(context: string) {
+  const saved = findSettingsRecovery("settings-regeneration",context);
+  if (!saved) return null;
+  const submission: unknown = JSON.parse(saved.raw);
+  if (!validSaved(submission)) throw new Error("INVALID_SAVED_REGENERATION");
+  return { key:saved.key,context:saved.context,submission };
 }
