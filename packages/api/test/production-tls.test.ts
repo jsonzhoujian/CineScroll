@@ -3,7 +3,7 @@ import type { ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import "reflect-metadata";
 import { Pool } from "pg";
 import { Test } from "@nestjs/testing";
@@ -18,7 +18,7 @@ import { EPISODE_PLAN_WORKER } from "../src/episode-plan-worker-module.ts";
 // Opt-in: only a disposable admin-owned TLS database, never a business database.
 test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅撤销并拒绝额外角色", {
   skip: !process.env.TEST_TLS_DATABASE_URL || !process.env.TEST_TLS_CA_PATH,
-}, async () => {
+}, async t => {
   const databaseUrl = process.env.TEST_TLS_DATABASE_URL!;
   const ca = await readFile(process.env.TEST_TLS_CA_PATH!, "utf8");
   const admin = new Pool({ connectionString: databaseUrl, ssl: { ca, rejectUnauthorized: true } });
@@ -46,7 +46,20 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
     if (input.stage === "settings") {
-      const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "settings",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "succeeded",items: [{ scopeKey: input.regeneration?.targets[0].scopeKey ?? "location",status: "succeeded",value: { id: "location",assetType: "location",name: input.regeneration ? "重生庭院" : "庭院",visibleDefinition: { weather: "rain" },state: "",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+      const targets = input.regeneration?.targets ?? [
+        { scopeKey:"location",asset:{id:"location",assetType:"location"} },
+        { scopeKey:"repair-prop",asset:{id:"repair-prop",assetType:"prop"} },
+        { scopeKey:"regen-prop",asset:{id:"regen-prop",assetType:"prop"} },
+      ];
+      const items = targets.map((target: {scopeKey:string;asset?:{id:string;assetType:string};pendingAsset?:{id:string;assetType:string}}) => {
+        const asset = target.asset ?? target.pendingAsset!;
+        const fragment = input.input.sourceFragments[asset.id === "location" || input.regeneration ? 0 : 1];
+        return { scopeKey:target.scopeKey,status:"succeeded",value:{ id:asset.id,assetType:asset.assetType,name:asset.id === "location" ? input.regeneration ? "重生庭院" : "庭院" : "道具",
+          visibleDefinition:{weather:"rain"},state:"",stateChanges:[],restrictions:[],
+          provenance:[{type:"source_fragment",sourceVersionId:input.sourceVersionId,fragmentId:fragment.id,transformation:"retained"}] } };
+      });
+      const result = { contractVersion:"0.1.0",jobId:input.jobId,stage:"settings",projectId:input.projectId,chapterId:input.chapterId,
+        sourceVersionId:input.sourceVersionId,upstreamConfirmedVersionIds:input.upstreamConfirmedVersionIds,status:"succeeded",items };
       return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify(result) } }] });
     }
     if (input.version) {
@@ -152,10 +165,15 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       await admin.query("grant execute on function generation_allowed_locked(text,text,text,text) to novel_app");
     }
     const projectId = `p_${suffix}`, chapterId = `c_${suffix}`, sourceId = `s_${suffix}`;
+    const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+    const fragment = (text: string,ordinal: number,startOffset: number) => ({
+      id:`frag_${hash(`${chapterId}\0${hash(text)}\0${1}`).slice(0,24)}`,
+      text,contentHash:hash(text),ordinal,startOffset,endOffset:startOffset+text.length,
+    });
     await new PostgresProjectImportRepository(admin).saveProject({ userId, workspaceId }, { id: projectId, workspaceId, ownerUserId: userId,
       members: [{ userId, role: "owner" }], title: "fixture", aspectRatio: "9:16", targetDurationSeconds: 60, narrativeMode: "narration", dataRegion: "CN", createdAt: new Date().toISOString(),
       chapters: [{ id: chapterId, title: "chapter", activeSourceVersionId: sourceId, versions: [{ id: sourceId, ordinal: 1, createdAt: new Date().toISOString(), createdBy: userId,
-        characterCount: 2, text: "雨落", fragments: [{ id: `f_${suffix}`, ordinal: 1, startOffset: 0, endOffset: 2, text: "雨落", contentHash: "hash" }] }] }] });
+        characterCount: 6, text: "雨落\n\n旧伞", fragments: [fragment("雨落",1,0),fragment("旧伞",2,4)] }] }] });
     await admin.query("insert into project_generation_policy(workspace_id,project_id,state) values($1,$2,'allowed')", [workspaceId,projectId]);
     await admin.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,$2,$3,$4,'allowed')", [workspaceId,projectId,chapterId,sourceId]);
     const taskApp = await start(ca, true);
@@ -471,16 +489,55 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const begin = { kind: "begin",requestId: "tls-reconciliation",expectedActiveVersionId: locked.id,expectedUpstreamConfirmedVersionIds: preview.upstreamConfirmedVersionIds,reason: "retain for new script" };
       await impactApp.http.post(`${settingsBase}/reconciliation`).send(begin).expect(401);
       const begun = (await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send(begin).expect(201)).body;
-      assert.equal(begun.assets.length,0);assert.equal(begun.reconciliation.pendingAssets.length,1);
+      assert.equal(begun.assets.length,0);assert.equal(begun.reconciliation.pendingAssets.length,3);
       assert.equal((await impactApp.http.get(`${settingsBase}/operations/${begin.requestId}`).set("authorization",bearer).expect(200)).body.version.id,begun.id);
       await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "tls-pending-confirm",expectedActiveVersionId: begun.id,reason: "check" }).expect(409);
-      const retained = (await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send({ ...begin,kind: "retain",assetId: "location",requestId: "tls-retain",expectedActiveVersionId: begun.id }).expect(201)).body;
+      let retained = (await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send({ ...begin,kind: "retain",assetId: "location",requestId: "tls-retain",expectedActiveVersionId: begun.id }).expect(201)).body;
+      for (const assetId of ["repair-prop","regen-prop"]) {
+        retained = (await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer)
+          .send({ ...begin,kind:"retain",assetId,requestId:`tls-retain-${assetId}`,expectedActiveVersionId:retained.id }).expect(201)).body;
+      }
       assert.deepEqual(retained.assets,locked.assets);assert.deepEqual(retained.locks,locked.locks);
       assert.equal((await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send(begin).expect(201)).body.id,begun.id);
       const final = (await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "tls-reconfirm",expectedActiveVersionId: retained.id,reason: "checked" }).expect(201)).body;
       assert.equal((await impactApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,final.id);
 
     } finally { await impactApp.close(); }
+    const compliance = t.mock.method(globalThis,"fetch",async (url: Parameters<typeof fetch>[0]) => {
+      assert.equal(String(url),config.complianceEndpoint);
+      return Response.json({ allowed:true,requestId:"cross-source-compliance" });
+    });
+    const cross = await start(ca,true,true,true,true);
+    try {
+      const chapter = `/projects/${projectId}/chapters/${chapterId}`;
+      const settings = `${chapter}/settings`;
+      const old = (await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version;
+      const imported = (await cross.http.post(`${chapter}/reimport`).set("authorization",bearer)
+        .send({fileName:"chapter.txt",text:"雨落\n\n新伞",selectedChapterIndex:0}).expect(201)).body;
+      assert.equal(compliance.mock.callCount(),1);
+      const reimportedSourceId = imported.sourceVersion.id;
+      assert.notEqual(reimportedSourceId,sourceId);
+      assert.deepEqual(imported.sourceVersion.fragments.map((f:{id:string}) => f.id),[fragment("雨落",1,0).id,fragment("新伞",2,4).id]);
+      await admin.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,$2,$3,$4,'allowed')",[workspaceId,projectId,chapterId,reimportedSourceId]);
+      assert.equal(imported.chapter.activeSourceVersionId,reimportedSourceId);
+      assert.deepEqual((await cross.http.get(`${settings}/versions/${old.id}`).set("authorization",bearer).expect(200)).body.version,old);
+      const before = modelCalls;
+      const submitted = (await cross.http.post(`${chapter}/story-knowledge-tasks`).set("authorization",bearer)
+        .send({configurationVersionId:version!,modelId:"m"}).expect(201)).body;
+      assert.equal(submitted.input.sourceVersionId,reimportedSourceId);
+      let status = submitted;
+      for (let i=0;i<100;i++) {
+        status = (await cross.http.get(`/story-knowledge-tasks/${submitted.id}`).set("authorization",bearer).expect(200)).body;
+        if (["failed","paused","succeeded"].includes(status.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      // Characterize the known acceptance blocker. Once old heads can advance,
+      // replace this assertion with the rest of the public cross-source flow.
+      assert.equal(status.state,"failed",JSON.stringify(status));
+      assert.equal(status.reason,"CANDIDATE_EXISTS");
+      assert.equal(modelCalls,before);
+      assert.deepEqual((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,old);
+    } finally { compliance.mock.restore();await cross.close(); }
     const second = await start();
     try {
       const read = await second.http.get("/workspace/model-settings").set("authorization", bearer).expect(200);
