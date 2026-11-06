@@ -511,6 +511,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     try {
       const chapter = `/projects/${projectId}/chapters/${chapterId}`;
       const settings = `${chapter}/settings`;
+      const knowledge = `${chapter}/story-knowledge`;
+      const previousKnowledge = (await cross.http.get(knowledge).set("authorization",bearer).expect(200)).body;
+      assert.equal(previousKnowledge.status,"confirmed");
       const old = (await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version;
       const imported = (await cross.http.post(`${chapter}/reimport`).set("authorization",bearer)
         .send({fileName:"chapter.txt",text:"雨落\n\n新伞",selectedChapterIndex:0}).expect(201)).body;
@@ -531,11 +534,30 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         if (["failed","paused","succeeded"].includes(status.state)) break;
         await new Promise(resolve => setTimeout(resolve,20));
       }
-      // Characterize the known acceptance blocker. Once old heads can advance,
-      // replace this assertion with the rest of the public cross-source flow.
-      assert.equal(status.state,"failed",JSON.stringify(status));
-      assert.equal(status.reason,"CANDIDATE_EXISTS");
-      assert.equal(modelCalls,before);
+      assert.equal(status.state,"succeeded",JSON.stringify(status));
+      assert.equal(modelCalls,before+1);
+      const candidate = (await cross.http.get(knowledge).set("authorization",bearer).expect(200)).body;
+      assert.equal(candidate.id,status.result.candidateVersionId);
+      assert.equal(candidate.sourceVersionId,reimportedSourceId);
+      assert.equal(candidate.parentVersionId,null);
+      const duplicate = (await cross.http.post(`${chapter}/story-knowledge-tasks`).set("authorization",bearer)
+        .send({configurationVersionId:version!,modelId:"m"}).expect(201)).body;
+      let duplicateStatus = duplicate;
+      for (let i=0;i<100;i++) {
+        duplicateStatus = (await cross.http.get(`/story-knowledge-tasks/${duplicate.id}`).set("authorization",bearer).expect(200)).body;
+        if (["failed","paused","succeeded"].includes(duplicateStatus.state)) break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(duplicateStatus.reason,"CANDIDATE_EXISTS");
+      assert.equal(modelCalls,before+1);
+      const reviewed = (await cross.http.post(`${knowledge}/facts/rain/review`).set("authorization",bearer)
+        .send({expectedActiveVersionId:candidate.id,outcome:"accepted",reason:"核对新原文"}).expect(201)).body;
+      await cross.http.post(`${knowledge}/confirm`).set("authorization",bearer)
+        .send({expectedActiveVersionId:reviewed.id,reason:"确认新源知识"}).expect(201);
+      const currentKnowledge = (await cross.http.get(knowledge).set("authorization",bearer).expect(200)).body;
+      assert.equal(currentKnowledge.status,"confirmed");
+      assert.equal(currentKnowledge.sourceVersionId,reimportedSourceId);
+      assert.deepEqual((await cross.http.get(`${knowledge}/versions/${previousKnowledge.id}`).set("authorization",bearer).expect(200)).body,previousKnowledge);
       assert.deepEqual((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,old);
     } finally { compliance.mock.restore();await cross.close(); }
     const second = await start();

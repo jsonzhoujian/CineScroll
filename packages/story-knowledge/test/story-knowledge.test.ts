@@ -539,3 +539,29 @@ test("负责人或审核人可以确认候选版本并发布可追溯故事圣�
   assert.equal(published.versionId, "skv_unlocked");
   assert.equal(published.facts[0]?.locked, false);
 });
+
+test("新源提取竞争同一个旧活动头时只有一个结果可保存并按初始任务读取", async () => {
+  const repository = new InMemoryStoryKnowledgeRepository();
+  let sequence = 0;
+  const service = new StoryKnowledgeService({
+    repository,
+    sourceReader: { async findSourceVersion(_actor,_project,_chapter,id) { return { id,fragmentIds:["frag_1"] }; } },
+    idGenerator: () => `extraction-${++sequence}`,
+    clock: () => new Date("2026-11-06"),
+  });
+  const extract = (jobId: string,sourceVersionId: string) => ({
+    contractVersion:"0.1.0",jobId,stage:"storyKnowledge",projectId:"prj_1",chapterId:"chp_1",sourceVersionId,status:"succeeded",
+    items:[{ scopeKey:"event",status:"succeeded",value:{ id:"rain",factType:"event",statement:"雨落",assertionKind:"explicit",resolutionStatus:"resolved",resolutionGroupId:null,
+      evidence:[{sourceVersionId,fragmentId:"frag_1"}] } }],
+  });
+  const old = await service.recordExtraction(actor,extract("old-job","old-source"));
+  const results = await Promise.allSettled(["one","two"].map(job => service.recordExtraction(actor,extract(job,"new-source"),old.id)));
+  const winner = results.find(result => result.status === "fulfilled");
+  assert.ok(winner);
+  assert.equal(results.filter(result => result.status === "fulfilled").length,1);
+  const loser = results.find(result => result.status === "rejected");
+  assert.equal(loser?.reason.code,"VERSION_CONFLICT");
+  assert.equal(winner.value.parentVersionId,null);
+  assert.deepEqual(await service.getInitialExtraction(actor,"prj_1","chp_1",winner.value.extractionJobId),winner.value);
+  assert.deepEqual(await service.getVersion(actor,"prj_1","chp_1",old.id),old);
+});

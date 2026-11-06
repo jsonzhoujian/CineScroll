@@ -32,9 +32,11 @@ export class StoryKnowledgeTaskExecutor {
     if (task.input.stage !== "story_knowledge") throw new ModelTaskError("TASK_NOT_FOUND");
     return tasks.run(actor, id, async credentials => {
       try {
+        let expectedActiveVersionId = task.input.retry?.expectedActiveVersionId ?? null;
         if (!task.input.retry) try {
-          await storyKnowledge.getActive(actor, task.projectId, task.chapterId);
-          throw new TaskExecutionError("CANDIDATE_EXISTS");
+          const active = await storyKnowledge.getActive(actor, task.projectId, task.chapterId);
+          if (active.sourceVersionId === task.input.sourceVersionId) throw new TaskExecutionError("CANDIDATE_EXISTS");
+          expectedActiveVersionId = active.id;
         } catch (error) {
           if (!(error instanceof StoryKnowledgeError && error.code === "STAGE_RESULT_NOT_FOUND")) throw error;
         }
@@ -66,7 +68,7 @@ export class StoryKnowledgeTaskExecutor {
           await readSource();
           return response;
         } } });
-        const candidate = await runner.run(actor, request, task.input.retry?.expectedActiveVersionId ?? null);
+        const candidate = await runner.run(actor, request, expectedActiveVersionId);
         return { candidateVersionId: candidate.id, extractionStatus: candidate.extractionStatus };
       } catch (error) {
         if (error instanceof StoryKnowledgeModelError && error.code === "INVALID_RESPONSE") throw new TaskExecutionError("INVALID_RESPONSE");

@@ -402,9 +402,16 @@ export class StoryKnowledgeService {
       facts.push(structuredClone(item.value));
     }
 
+    let parentVersionId = expectedActiveVersionId;
+    if (expectedActiveVersionId !== null) {
+      const active = await this.#repository.findActive(actor, extraction.projectId, extraction.chapterId);
+      if (active?.id !== expectedActiveVersionId) throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+      // A new source starts a fresh extraction lineage. The old head still serves as the CAS token.
+      if (active.sourceVersionId !== extraction.sourceVersionId) parentVersionId = null;
+    }
     return this.#repository.saveCandidate(actor, {
       id: this.#idGenerator(),
-      parentVersionId: expectedActiveVersionId,
+      parentVersionId,
       projectId: extraction.projectId,
       chapterId: extraction.chapterId,
       sourceVersionId: extraction.sourceVersionId,
