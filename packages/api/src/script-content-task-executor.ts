@@ -39,7 +39,7 @@ export class ScriptContentTaskExecutor {
       };
       await guard();
       const active = await repository.findActive(actor,task.projectId,task.chapterId);
-      if (!task.input.retry && active) throw new TaskExecutionError("CANDIDATE_EXISTS");
+      if (!task.input.retry && active?.sourceVersionId === task.input.sourceVersionId) throw new TaskExecutionError("CANDIDATE_EXISTS");
       if (task.input.retry && active?.id !== task.input.retry.expectedActiveVersionId) throw new TaskExecutionError("UPSTREAM_CHANGED");
       let guardedError: TaskExecutionError | null = null;
       let modelInvoked = false;
@@ -50,7 +50,7 @@ export class ScriptContentTaskExecutor {
           try { await guard(); } catch (error) { guardedError = error instanceof TaskExecutionError ? error : new TaskExecutionError("EXECUTION_UNCERTAIN"); throw guardedError; }
           return response;
         } } });
-        const candidate = await runner.run(actor,{ projectId: task.projectId,chapterId: task.chapterId,jobId: task.id,expectedActiveVersionId: task.input.retry?.expectedActiveVersionId ?? null,...(task.input.retry ? { retry: task.input.retry } : {}),generationParameters: task.input.generationParameters });
+        const candidate = await runner.run(actor,{ projectId: task.projectId,chapterId: task.chapterId,jobId: task.id,expectedActiveVersionId: task.input.retry?.expectedActiveVersionId ?? active?.id ?? null,...(task.input.retry ? { retry: task.input.retry } : {}),generationParameters: task.input.generationParameters });
         return { candidateVersionId: candidate.id,extractionStatus: candidate.generationStatus };
       } catch (error) {
         if (guardedError) throw guardedError;

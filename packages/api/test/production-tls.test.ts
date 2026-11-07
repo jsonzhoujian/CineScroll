@@ -39,6 +39,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   const entered = new Promise<void>(resolve => { modelEntered = resolve; });
   const gate = new Promise<void>(resolve => { modelRelease = resolve; });
   let modelCalls = 0;
+  let reimportedScriptSource: string | undefined;
   const modelFetch: typeof fetch = async (url, init) => {
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fixture-not-real-key");
     if (String(url).endsWith("/models")) return Response.json({ object: "list", data: [{ object: "model", id: "m" }] });
@@ -74,6 +75,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     if (input.stage === "script" && input.scopeKeys[0] === "script") {
       const result = { contractVersion: "0.1.0",jobId: input.jobId,stage: "script",projectId: input.projectId,chapterId: input.chapterId,sourceVersionId: input.sourceVersionId,upstreamConfirmedVersionIds: input.upstreamConfirmedVersionIds,status: "partially_succeeded",
         scenes: [{ id: "scene",episodeId: "e1",ordinal: 1,title: "rain",environment: "outside",characters: [] }],items: [{ scopeKey: "action",status: "succeeded",value: { id: "action",sceneId: "scene",elementType: "action",ordinal: 1,text: "雨落",provenance: [{ type: "source_fragment",sourceVersionId: input.sourceVersionId,fragmentId: input.input.sourceFragments[0].id,transformation: "retained" }] } }] };
+      if (input.sourceVersionId === reimportedScriptSource) {
+        return Response.json({ object:"chat.completion",model:"m",choices:[{index:0,finish_reason:"stop",message:{role:"assistant",content:JSON.stringify({ ...result,status:"succeeded" })}}] });
+      }
       return Response.json({ object: "chat.completion",model: "m",choices: [{ index: 0,finish_reason: "stop",message: { role: "assistant",content: JSON.stringify({ ...result,items: [...result.items,{ scopeKey: "dialogue",status: "failed",error: { code: "INVALID_ELEMENT",message: "missing dialogue",retryable: true } }] }) } }] });
     }
     if (input.stage === "script") {
@@ -122,7 +126,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -601,6 +605,57 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal((await cross.http.get(episodePath).set("authorization",bearer).expect(200)).body.plan.status,"confirmed");
       assert.deepEqual((await cross.http.get(`${episodePath}/versions/${previousPlan.id}`).set("authorization",bearer).expect(200)).body.plan,previousPlan);
 
+      reimportedScriptSource = reimportedSourceId;
+      const scriptPath = `${chapter}/script-content`;
+      const previousScript = (await cross.http.get(`${scriptPath}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version;
+      const currentPlanId = (await cross.http.get(episodePath).set("authorization",bearer).expect(200)).body.plan.id;
+      const forgedScript = await admin.connect();
+      try {
+        await forgedScript.query("begin");
+        await forgedScript.query("set local role novel_app");
+        await forgedScript.query("select set_config('app.current_workspace_id',$1,true),set_config('app.current_user_id',$2,true),set_config('app.story_knowledge_operation','confirm',true)",[workspaceId,userId]);
+        const fake = { id:`fake-script-${suffix}`,parentVersionId:previousScript.id,projectId,chapterId,sourceVersionId:reimportedSourceId,
+          planVersionId:currentPlanId,jobId:"missing-script-task",status:"candidate",generationStatus:"succeeded",createdBy:userId,
+          createdAt:previousScript.createdAt,scenes:previousScript.scenes,elements:previousScript.elements,failures:[] };
+        await assert.rejects(() => forgedScript.query("insert into script_content_versions(workspace_id,project_id,chapter_id,id,parent_version_id,source_version_id,plan_version_id,job_id,created_by,version_json) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+          [workspaceId,projectId,chapterId,fake.id,previousScript.id,reimportedSourceId,currentPlanId,fake.jobId,userId,JSON.stringify(fake)]),
+        { code:"42501",message:/running script task/ });
+      } finally { await forgedScript.query("rollback");forgedScript.release(); }
+      const beforeScript = modelCalls;
+      async function finishTask(id: string,path: string) {
+        for (let i=0;i<100;i++) {
+          const body = (await cross.http.get(`${path}/${id}`).set("authorization",bearer).expect(200)).body;
+          if (["succeeded","failed","paused"].includes((body.task ?? body).state)) return body;
+          await new Promise(resolve => setTimeout(resolve,20));
+        }
+        assert.fail("剧本任务超时");
+      }
+      const scriptTasks = `${chapter}/script-content-tasks`;
+      const scriptInput = {configurationVersionId:version!,modelId:"m",requestId:"cross-source-script"};
+      const submittedScript = (await cross.http.post(scriptTasks).set("authorization",bearer).send(scriptInput).expect(201)).body;
+      const scriptTask = await finishTask(submittedScript.id,"/script-content-tasks");
+      assert.equal(scriptTask.state,"succeeded",JSON.stringify(scriptTask));
+      const generated = (await cross.http.get(scriptPath).set("authorization",bearer).expect(200)).body.version;
+      assert.equal(generated.id,scriptTask.result.candidateVersionId);
+      assert.equal(generated.sourceVersionId,reimportedSourceId);
+      assert.equal(generated.planVersionId,currentPlanId);
+      assert.deepEqual((await cross.http.get(`${scriptPath}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,previousScript);
+      const duplicateScript = (await cross.http.post(scriptTasks).set("authorization",bearer).send({ ...scriptInput,requestId:"cross-source-script-duplicate" }).expect(201)).body;
+      assert.equal((await finishTask(duplicateScript.id,"/script-content-tasks")).reason,"CANDIDATE_EXISTS");
+      assert.equal(modelCalls,beforeScript+1);
+      const quality = (await cross.http.post(`${scriptPath}/quality`).set("authorization",bearer)
+        .send({ ...scriptInput,requestId:"cross-source-script-quality",expectedActiveVersionId:generated.id }).expect(201)).body;
+      const assessed = await finishTask(quality.id,`${scriptPath}/quality`);
+      assert.equal(assessed.task.state,"succeeded");
+      assert.equal(assessed.report.passed,true);
+      const published = (await cross.http.post(`${scriptPath}/publication`).set("authorization",bearer).send({
+        kind:"confirm",requestId:"cross-source-script-confirm",expectedActiveVersionId:generated.id,reportId:quality.id,reason:"核对新源剧本",
+      }).expect(201)).body;
+      assert.equal((await cross.http.get(`${scriptPath}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,published.id);
+      const effects = (await cross.http.get(`${scriptPath}/versions/${published.id}/impacts`).set("authorization",bearer).expect(200)).body.impacts;
+      assert.ok(effects.some((row:{source_version_id:string;target_version_id:string;status:string}) =>
+        row.source_version_id === previousScript.id && row.target_version_id === old.id && row.status === "unreviewed"));
+      assert.deepEqual((await cross.http.get(`${scriptPath}/versions/${previousScript.id}`).set("authorization",bearer).expect(200)).body.version,previousScript);
       assert.deepEqual((await cross.http.get(`${knowledge}/versions/${previousKnowledge.id}`).set("authorization",bearer).expect(200)).body,previousKnowledge);
       assert.deepEqual((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,old);
     } finally { compliance.mock.restore();await cross.close(); }

@@ -48,11 +48,12 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
     catch (error) { if (alive.current) setNotice(error instanceof ApiClientError && error.status === 401 ? "登录已失效，请重新登录后核对。" : "操作失败，请核对；不会自动重新生成。"); }
     finally { if (alive.current) { locked.current = false; setBusy(false); } }
   }
+  const hasCurrentSourceScript = view?.version.sourceVersionId === sourceVersionId;
   async function submit() {
-    if (view && !view.current) return;
+    if (hasCurrentSourceScript && !view?.current) return;
     const reconciling = !!pending.current;
     if (!pending.current) {
-      if (!config || !model || task || view) return;
+      if (!config || !model || task || hasCurrentSourceScript) return;
       pending.current = { requestId: crypto.randomUUID(),configurationVersionId: config.id,modelId: model };
     }
     remember(pending.current);
@@ -120,9 +121,9 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
   return <section className="task-panel" aria-label="剧本候选生成与追溯">
     <h2>生成剧本候选</h2><p role="status">{notice}</p>
     <div className="desktop-task-action">
-      <button type="button" disabled={busy || uncertain || !!task || !!view} onClick={() => void act(async () => { const next = (await api.modelConfiguration()).configuration; if (alive.current) { setConfig(next?.tested && next.processingRegion === "mainland" ? next : null); setModel(""); } })}>读取剧本模型</button>
-      <label>剧本模型<select disabled={busy || uncertain || !!task || !!view} value={model} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{config?.availableModelIds.map(id => <option key={id}>{id}</option>)}</select></label>
-      <button type="button" disabled={!!view && !view.current || busy || (!uncertain && (!model || !!task || !!view))} onClick={() => void act(submit)}>{uncertain ? "核对剧本原提交" : "生成剧本候选"}</button>
+      <button type="button" disabled={busy || uncertain || !!task || hasCurrentSourceScript} onClick={() => void act(async () => { const next = (await api.modelConfiguration()).configuration; if (alive.current) { setConfig(next?.tested && next.processingRegion === "mainland" ? next : null); setModel(""); } })}>读取剧本模型</button>
+      <label>剧本模型<select disabled={busy || uncertain || !!task || hasCurrentSourceScript} value={model} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{config?.availableModelIds.map(id => <option key={id}>{id}</option>)}</select></label>
+      <button type="button" disabled={hasCurrentSourceScript && !view?.current || busy || (!uncertain && (!model || !!task || hasCurrentSourceScript))} onClick={() => void act(submit)}>{uncertain ? "核对剧本原提交" : "生成剧本候选"}</button>
     </div>
     <button type="button" disabled={busy} onClick={() => void act(refresh)}>刷新剧本任务</button>
     {history.map(t => <button type="button" key={t.id} disabled={busy || uncertain} onClick={() => { setTask(t); setView(null); remember(null,t.id); }}>{t.id} · {t.state}</button>)}

@@ -26,7 +26,7 @@ export async function assertScriptContentDatabase(pool: Pool,workspaceIds: reado
       and exists(select 1 from pg_index where indexrelid=to_regclass('public.script_publication_request_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_publication_operation_valid' and convalidated)
       and exists(select 1 from pg_trigger where tgrelid='public.script_quality_reports'::regclass and tgname='script_quality_reports_immutable' and tgenabled in ('O','A') and tgfoid='public.reject_immutable_change()'::regprocedure)
-      and exists(select 1 from pg_trigger where tgrelid='public.script_content_versions'::regclass and tgname='script_publication_guard' and tgenabled in ('O','A') and tgfoid='public.guard_script_publication()'::regprocedure)
+      and exists(select 1 from pg_trigger where tgrelid='public.script_content_versions'::regclass and tgname='script_publication_guard' and tgtype=7 and tgqual is null and tgenabled in ('O','A') and tgfoid='public.guard_script_source_publication()'::regprocedure)
       and exists(select 1 from pg_index where indexrelid=to_regclass('public.model_tasks_script_retry_active_idx') and indisvalid and indisunique)
       and exists(select 1 from pg_constraint where conrelid='public.script_content_versions'::regclass and conname='script_content_retry_valid' and convalidated)
       and exists(select 1 from pg_index where indexrelid=to_regclass('public.script_content_review_request_idx') and indisvalid and indisunique)

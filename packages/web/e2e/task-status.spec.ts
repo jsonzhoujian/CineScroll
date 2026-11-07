@@ -362,7 +362,7 @@ test("切换任务后忽略晚到的旧候选响应", async ({ page }) => {
   await expect(panel).not.toContainText("旧候选不应显示");
 });
 
-for (const mode of ["success","uncertain","stale","mobile"]) test(`确认拆集后剧本生成与原文追溯：${mode}`,async ({ page }) => {
+for (const mode of ["success","uncertain","stale","mobile","old-source"]) test(`确认拆集后剧本生成与原文追溯：${mode}`,async ({ page }) => {
   await setup(page);
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
@@ -386,13 +386,17 @@ for (const mode of ["success","uncertain","stale","mobile"]) test(`确认拆集�
     return r.fulfill({ headers,json: r.request().url().includes("availability") ? { available: true,reason: null } : { tasks: [task],nextCursor: null } });
   });
   await page.route(`${origin}/script-content-tasks/script-task`,r => r.fulfill({ headers,json: task }));
-  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: mode !== "stale",sourceFragments: [{ id: "f",text: "雨落" }],version: {
-    id: "script",jobId: task.id,projectId: "p",chapterId: "c",sourceVersionId: "s",planVersionId: "plan",generationStatus: "partially_succeeded",
-    scenes: [{ id: "scene",title: "雨中庭院" }],elements: [{ id: "action",sceneId: "scene",text: "雨点打湿庭院",elementType: "action",provenance: [{ type: "source_fragment",fragmentId: "f",transformation: "visualized" }] }],failures: [{ scopeKey: "dialogue",code: "INVALID_ELEMENT",retryable: true }]
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,r => r.fulfill({ headers,json: { current: mode !== "stale" && !(mode === "old-source" && posts === 0),sourceFragments: [{ id: "f",text: "雨落" }],version: {
+    id: "script",jobId: task.id,projectId: "p",chapterId: "c",sourceVersionId: mode === "old-source" && posts === 0 ? "old" : "s",status: mode === "old-source" && posts === 0 ? "confirmed" : "candidate",planVersionId: "plan",generationStatus: "partially_succeeded",
+    scenes: [{ id: "scene",title: mode === "old-source" && posts === 0 ? "旧剧本庭院" : "雨中庭院" }],elements: [{ id: "action",sceneId: "scene",text: "雨点打湿庭院",elementType: "action",provenance: [{ type: "source_fragment",fragmentId: "f",transformation: "visualized" }] }],failures: [{ scopeKey: "dialogue",code: "INVALID_ELEMENT",retryable: true }]
   } } }));
   await page.getByRole("button",{ name: "进入审核",exact: true }).click();
   await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
   const panel = page.getByRole("region",{ name: "剧本候选生成与追溯" });
+  if (mode === "old-source") {
+    await panel.getByRole("button",{name:"读取当前剧本",exact:true}).click();
+    await expect(panel.getByText("历史正式剧本仅供追溯，写入已关闭。")).toBeVisible();
+  }
   await panel.getByRole("button",{ name: "读取剧本模型",exact: true }).click();
   await panel.getByLabel("剧本模型").selectOption("model");
   await panel.getByRole("button",{ name: "生成剧本候选",exact: true }).click();

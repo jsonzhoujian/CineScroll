@@ -342,7 +342,7 @@ export class ScriptContentService {
     const context = await this.dependencies.contextReader.findGenerationContext(actor, input.projectId, input.chapterId);
     if (!context) throw new ScriptContentError("CONTEXT_NOT_FOUND", "项目不存在或拆集方案尚未确认");
     const active = await this.dependencies.repository.findActive(actor, input.projectId, input.chapterId);
-    if (active && active.status !== "candidate") throw new ScriptContentError("INVALID_STATE", "正式剧本不可被生成任务覆盖");
+    if (active && active.status !== "candidate" && active.sourceVersionId === input.sourceVersionId) throw new ScriptContentError("INVALID_STATE", "正式剧本不可被生成任务覆盖");
     if (context.planVersionId !== input.planVersionId || context.sourceVersionId !== input.sourceVersionId) {
       throw new ScriptContentError("INVALID_GENERATION", "剧本生成依据与已确认方案不一致");
     }
