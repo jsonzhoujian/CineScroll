@@ -86,17 +86,21 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
     catch { if (alive.current) setNotice("已读取原操作记录，但身份或当前版本尚未核对，保留原请求。"); }
   }
   const originId = view.version.reconciliation?.originVersionId;
-  const comparison = impactHistory?.origin.id === originId ? impactHistory : null;
-  async function readImpactHistory(id: string) {
+  const priorFormalId = view.version.revisionOfVersionId;
+  const comparison = impactHistory && (impactHistory.origin.id === originId || impactHistory.origin.id === priorFormalId) ? impactHistory : null;
+  async function readImpactHistory(id: string,formal = false) {
     const [{ version },result] = await Promise.all([
       api.getSettingsVersion(projectId,chapterId,id),
       api.getSettingsImpacts(projectId,chapterId,id),
     ]);
-    if (version.id !== id || version.projectId !== projectId || version.chapterId !== chapterId
+    if (version.id !== id || (formal && version.status !== "confirmed") || version.projectId !== projectId || version.chapterId !== chapterId
       || result.versionId !== id || result.impacts?.some(row => row.target_version_id !== id || row.target_stage !== "settings")) {
       throw new Error("WRONG_IMPACT_HISTORY");
     }
-    if (alive.current) setImpactHistory({ origin:version,impacts:result.impacts });
+    if (alive.current) {
+      setImpactHistory({ origin:version,impacts:result.impacts });
+      if (formal) setOld(version);
+    }
   }
   return <section aria-label="设定跨上游核对"><h3>跨上游核对</h3><p role="status">{notice}</p>
     <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const next = await api.previewSettingsReconciliation(projectId,chapterId);if (next.baseVersionId!==view.version.id || next.upstreamConfirmedVersionIds.length!==3) throw new Error("WRONG_PREVIEW");const [,,sourceId,...ids] = JSON.parse(context) as string[];if (next.sourceVersionId !== sourceId || next.upstreamConfirmedVersionIds.some((id,i) => id !== ids[i])) throw new Error("STALE_PREVIEW");if (alive.current) setPreview(next); })}>预览设定跨上游处理</button>
@@ -136,7 +140,7 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
         <p key={failure.scopeKey}>失败范围 {failure.scopeKey} · 原失败 {failure.code} · 已裁决无需产出设定 · {actorId} · {reason}</p>)}
       {(view.version.reconciliation.pendingAssets.some(a => a.provenance.some(ref => ref.sourceVersionId !== view.version.sourceVersionId)) || !!old) && <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const chapter = await api.getChapter(projectId,chapterId);if (alive.current) setHistory(chapter); })}>读取历史原文依据</button>}
       <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const id = view.version.reconciliation!.originVersionId,result = await api.getSettingsVersion(projectId,chapterId,id);if (result.version.id!==id || result.version.projectId!==projectId || result.version.chapterId!==chapterId) throw new Error("WRONG_ORIGIN");if (alive.current) setOld(result.version); })}>读取原版本建议历史</button>
-      {old && <aside aria-label="原版本依据与锁">
+      {old && <aside aria-label={old.id === originId ? "原版本依据与锁" : "旧正式版依据与锁"}>
         {[...old.assets,...(old.reconciliation?.pendingAssets ?? [])].map(asset => <details key={asset.id}>
           <summary>{asset.name}的历史依据</summary>
           {old.locks && Object.hasOwn(old.locks,asset.id) && <p>原锁：{old.locks[asset.id]?.lockedBy} · {old.locks[asset.id]?.lockedAt}</p>}
@@ -144,9 +148,10 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
         </details>)}
       </aside>}
       {originId && <button type="button" disabled={readDisabled} onClick={() => void run(() => readImpactHistory(originId))}>对照历史影响与本轮处理</button>}
+      {priorFormalId && priorFormalId !== originId && <button type="button" disabled={readDisabled} onClick={() => void run(() => readImpactHistory(priorFormalId,true))}>对照旧正式版影响与本轮处理</button>}
       {comparison && <aside aria-label="历史影响与本轮处理">
         <h4>历史影响与本轮处理</h4>
-        <p>历史设定版本 {comparison.origin.id} · 本轮设定版本 {view.version.id}</p>
+        <p>{comparison.origin.status === "confirmed" ? "历史正式设定版本" : "历史候选设定版本"} {comparison.origin.id} · 本轮设定版本 {view.version.id}</p>
         {comparison.impacts == null ? <p>历史影响记录暂不可用。</p> : comparison.impacts.length === 0 ? <p>原版本没有已登记的影响记录。</p> :
           <ul>{comparison.impacts.map((row,i) => {
             const target = row.target_item_id;
@@ -161,7 +166,7 @@ export function SettingsReconciliation({ api,projectId,chapterId,context,view,di
             </li>;
           })}</ul>}
       </aside>}
-      {old && <aside aria-label="原版本建议历史">{old.suggestions?.length ? old.suggestions.map(s => <p key={s.id}>{s.value.name} · {s.reason} · {s.status} · 未迁移至新上游</p>) : <p>原版本没有建议。</p>}</aside>}
+      {old && <aside aria-label={old.id === originId ? "原版本建议历史" : "旧正式版建议历史"}>{old.suggestions?.length ? old.suggestions.map(s => <p key={s.id}>{s.value.name} · {s.reason} · {s.status} · 未迁移至新上游</p>) : <p>原版本没有建议。</p>}</aside>}
     </>}
     {recovery && canArchive && <div className="desktop-task-action"><button type="button" disabled={readDisabled || restoring} onClick={() => void run(async () => {
       archiveSettingsRecovery(recovery.key);clearRecovery();setNotice("已归档旧上游的原操作身份。");

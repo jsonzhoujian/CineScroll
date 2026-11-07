@@ -929,7 +929,7 @@ for (const mode of ["success","unknown","missing","mismatch","failure","locked",
   expect(posts).toBe(mode === "missing" ? 2 : 1);
 });
 
-for (const mode of ["success","unknown","read-failure","conflict","editor","mobile","cross-source","missing-conflict","replay-read-404","advanced","advanced-read-404"]) test(`同源跨上游分批原样保留：${mode}`,async ({ page }) => {
+for (const mode of ["success","unknown","read-failure","conflict","editor","mobile","cross-source","missing-conflict","replay-read-404","advanced","advanced-read-404","distinct-formal"]) test(`同源跨上游分批原样保留：${mode}`,async ({ page }) => {
   await setup(page, null, false, mode === "cross-source" ? "new-source" : "s");if (mode === "mobile") await page.setViewportSize({ width: 390,height: 844 });
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   let advanced = false,advancedReads = 0;
@@ -948,7 +948,9 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   const asset = { id: "location",assetType: "location",name: "庭院",visibleDefinition: { rain: true },state: "wet",stateChanges: [],restrictions: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f",transformation: "retained" }] };
   const old: Version = { id: "old-setting",jobId: "initial",projectId: "p",chapterId: "c",sourceVersionId: "s",scriptVersionId: "formal",upstreamConfirmedVersionIds: ["formal","plan","candidate"],status: "confirmed",generationStatus: "succeeded",assets: [asset,{ ...asset,id: "prop",name: "道具" }],failures: [],locks: { location: { lockedBy: "owner",lockedAt: "2026-11-04" } },suggestions: [{ id: "old-suggestion",assetId: "prop",value: { ...asset,id: "prop",name: "旧建议" },reason: "old advice",status: "pending",submittedBy: "editor" }] };
   if (mode === "success") old.failures = [{ scopeKey:"unbound",code:"PROVIDER_ITEM_FAILED",retryable:false }];
-  let version = structuredClone(old),formal = structuredClone(old),posts = 0,failedRead = false;
+  const previousFormal = mode === "distinct-formal" ? { ...old,id:"previous-formal" } : old;
+  if (mode === "distinct-formal") { old.status = "candidate";old.revisionOfVersionId = previousFormal.id; }
+  let version = structuredClone(old),formal = structuredClone(previousFormal),posts = 0,failedRead = false;
   const operations = new Map<string,Version>(),base = `${origin}/projects/p/chapters/c/settings`;
   await page.route(base,r => {
     if (mode === "advanced-read-404" && advanced && ++advancedReads === 2) return r.fulfill({ headers,status:404,json:{code:"NOT_FOUND"} });
@@ -958,6 +960,8 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
     return r.fulfill({ headers,json: { version,current,active: true,impacts: [],permissions: { canEdit: current && reviewer && version.status === "candidate",canSuggest: current,canDecide: current && reviewer,canConfirm: current && reviewer && version.status === "candidate",canLock: current && reviewer && version.status === "confirmed" },scriptVersion: { ...script,id: version.scriptVersionId,sourceVersionId:version.sourceVersionId },sourceFragments: cross && current ? [{ id:"new-fragment",text:"晴天" }] : [{ id: "f",text: "雨落" }] } });
   });
   await page.route(`${base}/versions/confirmed`,r => r.fulfill({ headers,json: { version: formal } }));
+  await page.route(`${base}/versions/previous-formal`,r => r.fulfill({headers,json:{version:previousFormal}}));
+  await page.route(`${base}/versions/previous-formal/impacts`,r => r.fulfill({headers,json:{versionId:previousFormal.id,impacts:[]}}));
   await page.route(`${base}/versions/old-setting`,r => r.fulfill({ headers,json: { version: old } }));
   await page.route(`${base}/versions/old-setting/impacts`,r => r.fulfill({ headers,json:{ versionId:old.id,impacts:[
     { confirmed_version_id:"new-formal",source_version_id:"formal",source_element_id:"action",target_stage:"settings",target_version_id:old.id,target_item_id:"location",status:"unreviewed" },
@@ -1064,7 +1068,7 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain courtyard");await panel.getByRole("button",{ name: "原样保留 庭院",exact: true }).click();await expect(panel.getByText(/待核对资产 1 项/)).toBeVisible();
   await review.getByLabel("设定操作理由",{ exact: true }).fill("too early");await expect(review.getByRole("button",{ name: "确认文字设定",exact: true })).toBeDisabled();
   await panel.getByLabel("跨上游处理理由",{ exact: true }).fill("retain prop");await panel.getByRole("button",{ name: "原样保留 道具",exact: true }).click();
-  await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText("old-setting");
+  await review.getByRole("button",{ name: "读取保留正式设定",exact: true }).click();await expect(review.getByLabel("保留正式设定")).toContainText(previousFormal.id);
   expect(version.locks).toEqual(old.locks);expect(version.suggestions).toEqual([]);
   await workbench.getByRole("button",{ name: "庭院",exact: true }).click();await expect(workbench.getByLabel("设定原文依据")).toContainText("雨落");
   if (mode === "success") {
@@ -1076,4 +1080,16 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
   await review.getByLabel("设定操作理由",{ exact: true }).fill("checked all");await review.getByRole("button",{ name: "确认文字设定",exact: true }).click();await expect(review.getByText("设定状态：正式",{ exact: true })).toBeVisible();expect(posts).toBe(mode === "success" ? 4 : 3);
   await expect(comparison).toContainText("已纳入本轮正式设定");
   await expect(comparison).toContainText("unreviewed");
+  if (mode === "distinct-formal") {
+    await expect(comparison).toContainText("历史候选设定版本 old-setting");
+    await panel.getByRole("button",{name:"对照旧正式版影响与本轮处理",exact:true}).click();
+    await expect(comparison).toContainText("历史正式设定版本 previous-formal");
+    await expect(comparison).not.toContainText("unreviewed");
+    const formalEvidence = panel.getByRole("complementary",{name:"旧正式版依据与锁"});
+    await formalEvidence.getByText("庭院的历史依据",{exact:true}).click();
+    await expect(formalEvidence.getByText(/原锁：owner/)).toBeVisible();
+    await panel.getByRole("button",{name:"读取历史原文依据",exact:true}).click();
+    await expect(formalEvidence.locator("details[open]").getByText("雨落",{exact:true})).toBeVisible();
+    expect(posts).toBe(3);
+  }
 });

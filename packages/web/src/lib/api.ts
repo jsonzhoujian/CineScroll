@@ -14,7 +14,7 @@ export type SettingsView = { impacts?: SettingsImpact[] | null; active?: boolean
   assets: Array<{ id: string;assetType: string;name: string;visibleDefinition: Record<string,unknown>;state: string;stateChanges: string[];restrictions: string[];provenance: Array<{ type: string;sourceVersionId?: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
   locks?: Record<string,{ lockedBy: string;lockedAt: string }>;
   suggestions?: Array<{ id: string;assetId: string;value: SettingsView["version"]["assets"][number];reason: string;status: "pending" | "accepted" | "rejected";submittedBy: string }>;
-  parentVersionId?: string | null;operation?: { requestId: string;kind: string;targetId: string;reason: string };
+  parentVersionId?: string | null;revisionOfVersionId?: string;operation?: { requestId: string;kind: string;targetId: string;reason: string };
   reconciliation?: { originVersionId: string;pendingAssets: SettingsView["version"]["assets"];pendingFailureScopeKeys: string[];failureDecisions?: { failure: SettingsView["version"]["failures"][number];requestId: string;reason: string;actorId: string }[] };
   regeneration?: { jobId: string;assetIds: string[];failureScopeKeys: string[];reason: string;outcome: string };
   failures: Array<{ scopeKey: string;assetId?: string;code: string;retryable: boolean }>;
