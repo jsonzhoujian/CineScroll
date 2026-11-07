@@ -34,3 +34,19 @@ test("script generation is default-off, request-idempotent and independently dis
   const outcome = await disabled.run(f.actor,a.id,async () => { assert.fail("disabled task must not invoke provider"); });
   assert.equal(outcome.state,"paused");
 });
+
+test("storyboard task snapshots require independent admission, four formal pointers and original requester", async () => {
+  const f = await fixture();
+  const storyboard = { ...f.context, stage: "storyboard" as const, resultType: "storyboardContent" as const,
+    upstreamConfirmedVersionIds: ["script", "settings", "plan", "bible"] };
+  const options = { ...f.options, contextReader: { ...f.options.contextReader, read: async () => storyboard } };
+  const admission = { workspaceIds: ["studio"], providerIds: ["deepseek"] };
+  await assert.rejects(() => new ModelTaskService({ ...options, settingsAdmission: admission }).submitStoryboard(f.actor,f.input),
+    { code: "WORKSPACE_TASK_DISABLED" });
+  const tasks = new ModelTaskService({ ...options, storyboardAdmission: admission });
+  const original = await tasks.submitStoryboard(f.actor,f.input);
+  assert.deepEqual(await tasks.submitStoryboard(f.actor,f.input),original);
+  await assert.rejects(() => tasks.submitStoryboard({ ...f.actor,userId: "other" },f.input),{ code: "STATE_CONFLICT" });
+  storyboard.upstreamConfirmedVersionIds = ["script","plan","bible"];
+  await assert.rejects(() => tasks.submitStoryboard(f.actor,{ ...f.input,requestId: "invalid" }),{ code: "INVALID_CONTEXT" });
+});
