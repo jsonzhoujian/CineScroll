@@ -40,20 +40,20 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 | ID | Ticket | Status | Blocked by |
 | --- | --- | --- | --- |
 | T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | done | T06 completed |
-| T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | in_progress | T07-01 completed |
-| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | blocked | T07-02 |
+| T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | done | T07-01 completed |
+| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | ready | T07-02 completed |
 | T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |
 | T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
 
-盘点与实施顺序见[T07交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01已完成[文字设定候选纵向验收](../../../docs/plans/2026-11-03-t07-settings-candidate-delivery.md)，T07-02已完成审核核心与数据库事务增量；审核Session API及浏览器单项操作已接通，局部重生核心、任务恢复及结果事务仓储已实现，生产原生传输与独立Worker已接通，局部重生Session API与浏览器闭环已接通，上游影响只读展示及独立复核已补齐，跨上游设定处理与分镜仍待完成，父项T07保持in_progress。
+交付顺序见[T07 交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01、T07-02 已完成，T07-03 已就绪，父项 T07 保持进行中。
 
-T07-02跨上游处理的[规则及四项拆分](../../../docs/plans/2026-11-04-t07-upstream-settings-decisions.md)均已确认：受限锁沿用、相同片段依据迁移、分批核对及旧建议留在旧版本。以下为已发布任务；T07-02及其父项保持原状态，不因计划发布而关闭。
+T07-02跨上游处理的[规则及四项拆分](../../../docs/plans/2026-11-04-t07-upstream-settings-decisions.md)均已确认：受限锁沿用、相同片段依据迁移、分批核对及旧建议留在旧版本。
 
 | ID | Ticket | Status | Blocked by |
 | --- | --- | --- | --- |
 | T07-02a | [同源跨上游分批核对与原样保留](./t07/02a-reconcile-same-source.md) | done | None |
 | T07-02b | [跨源依据迁移与人工修订闭环](./t07/02b-reconcile-source-evidence.md) | done | T07-02a completed |
 | T07-02c | [待核对目标局部重生与未知结果恢复](./t07/02c-reconcile-regeneration.md) | done | T07-02b completed |
-| T07-02d | [跨上游整体验收与分镜交接](./t07/02d-reconcile-acceptance.md) | in_progress | 跨源 TLS 和旧正式版导航复验通过，待主线确认交接 |
+| T07-02d | [跨上游整体验收与分镜交接](./t07/02d-reconcile-acceptance.md) | done | T07-02a、T07-02b、T07-02c completed |
 
-T07-02a已完成[同源核对交付](../../../docs/plans/2026-11-04-t07-same-source-reconciliation-delivery.md)，T07-02b和T07-02c已完成，T07-02d已记录[验收缺口与分镜交接结论](../../../docs/plans/2026-11-05-t07-cross-upstream-acceptance.md)，待修复后复验。T07-02/T07继续in_progress，T07-03及T08/T09整体验收不解锁，T09基础设施保持独立追踪。
+T07-02d 已完成[验收与分镜交接](../../../docs/plans/2026-11-05-t07-cross-upstream-acceptance.md)。T08/T09 整体验收仍按各自依赖推进，T09 基础设施独立追踪。
