@@ -658,6 +658,62 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.deepEqual((await cross.http.get(`${scriptPath}/versions/${previousScript.id}`).set("authorization",bearer).expect(200)).body.version,previousScript);
       assert.deepEqual((await cross.http.get(`${knowledge}/versions/${previousKnowledge.id}`).set("authorization",bearer).expect(200)).body,previousKnowledge);
       assert.deepEqual((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,old);
+
+      const reconciliationPath = `${settings}/reconciliation`;
+      const preview = (await cross.http.get(reconciliationPath).set("authorization",bearer).expect(200)).body;
+      assert.equal(preview.baseVersionId,old.id);
+      assert.equal(preview.sameSource,false);
+      assert.equal(preview.canBegin,true);
+      assert.deepEqual(preview.upstreamConfirmedVersionIds,[published.id,currentPlanId,currentKnowledge.id]);
+      const binding = {expectedUpstreamConfirmedVersionIds:preview.upstreamConfirmedVersionIds,reason:"核对重导入后的设定"};
+      async function reconcile(input: object,expectedStatus = 201) {
+        return (await cross.http.post(reconciliationPath).set("authorization",bearer)
+          .send({ ...binding,...input }).expect(expectedStatus)).body;
+      }
+      const beforeSettings = modelCalls;
+      const begun = await reconcile({kind:"begin",requestId:"cross-settings-begin",expectedActiveVersionId:old.id});
+      assert.equal(begun.sourceVersionId,reimportedSourceId);
+      assert.deepEqual(begun.assets,[]);
+      assert.equal(begun.reconciliation.pendingAssets.length,3);
+      const retain = {kind:"retain",requestId:"cross-settings-retain",expectedActiveVersionId:begun.id,assetId:"location"};
+      assert.equal((await reconcile(retain,409)).code,"LOCKED");
+      const unlocked = await reconcile({kind:"unlock",requestId:"cross-settings-unlock",expectedActiveVersionId:begun.id,assetId:"location"});
+      const migrated = await reconcile({ ...retain,expectedActiveVersionId:unlocked.id });
+      const oldLocation = old.assets.find((asset:{id:string}) => asset.id === "location");
+      assert.deepEqual(migrated.assets[0],{ ...oldLocation,provenance:oldLocation.provenance.map((ref:object) => ({...ref,sourceVersionId:reimportedSourceId})) });
+      await reconcile({kind:"retain",requestId:"cross-settings-retain-changed",expectedActiveVersionId:migrated.id,assetId:"repair-prop"},409);
+      const oldProp = old.assets.find((asset:{id:string}) => asset.id === "repair-prop");
+      const repaired = await reconcile({kind:"repair",requestId:"cross-settings-repair",expectedActiveVersionId:migrated.id,assetId:"repair-prop",
+        value:{ ...oldProp,name:"新伞",provenance:[{type:"source_fragment",sourceVersionId:reimportedSourceId,fragmentId:fragment("新伞",2,4).id,transformation:"retained"}] }});
+      assert.equal(repaired.assets.find((asset:{id:string}) => asset.id === "repair-prop").name,"新伞");
+      assert.equal((await cross.http.get(`${settings}/operations/cross-settings-repair`).set("authorization",bearer).expect(200)).body.version.id,repaired.id);
+      await cross.http.post(`${settings}/review`).set("authorization",bearer).send({kind:"confirm",requestId:"cross-too-early",expectedActiveVersionId:repaired.id,reason:"check"}).expect(409);
+      assert.equal(modelCalls,beforeSettings);
+      const regenPath = `${chapter}/settings-regeneration-tasks`;
+      const regen = {configurationVersionId:version!,modelId:"m",requestId:"cross-settings-regen",
+        selection:{expectedActiveVersionId:repaired.id,assetIds:["regen-prop"],failureScopeKeys:[],reason:"使用当前剧本局部重生"}};
+      const submittedRegen = (await cross.http.post(regenPath).set("authorization",bearer).send(regen).expect(201)).body;
+      const completedRegen = await finishTask(submittedRegen.id,"/settings-regeneration-tasks");
+      assert.equal(completedRegen.state,"succeeded",JSON.stringify(completedRegen));
+      assert.equal((await cross.http.get(`${regenPath}/submissions/${regen.requestId}`).set("authorization",bearer).expect(200)).body.id,submittedRegen.id);
+      assert.equal((await cross.http.post(regenPath).set("authorization",bearer).send(regen).expect(201)).body.id,submittedRegen.id);
+      assert.equal(modelCalls,beforeSettings+1);
+      const loaded = (await cross.http.get(`${settings}/regenerations/${submittedRegen.id}`).set("authorization",bearer).expect(200)).body;
+      assert.equal(loaded.version.id,completedRegen.result.candidateVersionId);
+      assert.equal(loaded.version.status,"candidate");
+      assert.equal(loaded.scriptVersion.id,published.id);
+      assert.deepEqual(loaded.version.assets.slice(0,2),repaired.assets);
+      assert.deepEqual(loaded.version.reconciliation.pendingAssets,[]);
+      assert.ok(loaded.sourceFragments.some((f:{text:string}) => f.text === "新伞"));
+      assert.deepEqual((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version,old);
+      const confirmedSettings = (await cross.http.post(`${settings}/review`).set("authorization",bearer).send({
+        kind:"confirm",requestId:"cross-settings-confirm",expectedActiveVersionId:loaded.version.id,reason:"核对本轮全部设定",
+      }).expect(201)).body;
+      assert.equal((await cross.http.get(`${settings}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,confirmedSettings.id);
+      assert.deepEqual((await cross.http.get(`${settings}/versions/${old.id}`).set("authorization",bearer).expect(200)).body.version,old);
+      assert.deepEqual((await cross.http.get(`${scriptPath}/versions/${published.id}/impacts`).set("authorization",bearer).expect(200)).body.impacts,effects);
+      const registered = await admin.query("select script_version_id,target_item_id,script_element_id from script_downstream_dependencies where target_version_id=$1 order by target_item_id",[confirmedSettings.id]);
+      assert.deepEqual(registered.rows,["location","regen-prop"].map(target_item_id => ({script_version_id:published.id,target_item_id,script_element_id:"action"})));
     } finally { compliance.mock.restore();await cross.close(); }
     const second = await start();
     try {
