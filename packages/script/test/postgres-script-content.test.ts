@@ -1,3 +1,7 @@
+import { PostgresStoryboardCandidateRepository } from "../src/postgres-storyboard-candidates.ts";
+import { ConfirmedStoryboardHandoff } from "../src/storyboard-handoff.ts";
+import type { StoryboardCandidate } from "../src/storyboard-runner.ts";
+import storyboardFixture from "../../../docs/contracts/fixtures/ai/valid-storyboard.json" with { type: "json" };
 import { SettingsReconciliationService } from "../src/settings-reconciliation.ts";
 import { PostgresSettingsRegenerationRepository } from "../src/postgres-settings-regeneration.ts";
 import { SettingsRegenerationRunner } from "../src/settings-regeneration.ts";
@@ -26,7 +30,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -404,11 +408,45 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const beforeImpact = (await settingsReviewRepo.findActive(actor,projectId,chapterId))!;
     const confirmedSetting = await settingsReview.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "impact-confirm-setting",expectedActiveVersionId: beforeImpact.id,reason: "checked" });
     const lockedSetting = await settingsReview.execute(actor,projectId,chapterId,{ kind: "lock",requestId: "impact-lock-setting",expectedActiveVersionId: confirmedSetting.id,assetId: settingAsset.id,reason: "preserve" });
+    const storyboardHandoff = new ConfirmedStoryboardHandoff(settingsHandoff, settingsReviewRepo);
+    const storyboardInput = await storyboardHandoff.read(actor,projectId,chapterId);
+    const storyboardRepo = new PostgresStoryboardCandidateRepository(app,storyboardHandoff);
+    const shotScene = storyboardInput.context.scenes.find(scene => scene.scriptElementIds.includes("action"))!;
+    const storyboard: StoryboardCandidate = {
+      jobId: "storyboard-job", projectId, chapterId, sourceVersionId: sourceId, createdBy: actor.userId,
+      upstreamConfirmedVersionIds: storyboardInput.upstreamConfirmedVersionIds, failures: [], generationStatus: "succeeded",
+      shots: [{ ...storyboardFixture.items[0]!.value, shotSize: "wide", cameraAngle: "eye_level",
+        splitReason: ["information_change"], sceneId: shotScene.id, episodeId: shotScene.episodeId,
+        assetIds: [settingAsset.id], scriptElementIds: ["action"], provenance: settingAsset.provenance }],
+    };
+    assert.deepEqual(await Promise.all([storyboardRepo.saveGeneration(actor,storyboard),storyboardRepo.saveGeneration(actor,storyboard)]),[storyboard,storyboard]);
+    const reopenedStoryboard = new PostgresStoryboardCandidateRepository(app,storyboardHandoff);
+    assert.deepEqual(await reopenedStoryboard.findGeneration(actor,storyboard),storyboard);
+    assert.equal(await reopenedStoryboard.findGeneration({ ...actor,userId: "outsider" },storyboard),null);
+    assert.equal(await reopenedStoryboard.findGeneration({ ...actor,workspaceId: "other" },storyboard),null);
+    assert.deepEqual((await admin.query("select target_item_id,script_element_id from script_downstream_dependencies where workspace_id=$1 and target_stage='storyboard' and target_version_id=$2",[actor.workspaceId,storyboard.jobId])).rows,
+      [{ target_item_id: storyboard.shots[0]!.id, script_element_id: "action" }]);
+    const rollbackCandidate = { ...storyboard,jobId: "rollback-storyboard",
+      shots: storyboard.shots.map(shot => ({ ...shot,scriptElementIds: ["invented"] })) };
+    const storyboardWriter = await app.connect();
+    try {
+      await storyboardWriter.query("begin");
+      await storyboardWriter.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
+      await assert.rejects(() => storyboardWriter.query(
+        "insert into storyboard_candidate_versions values($1,$2,$3,$4,$5,$6::jsonb)",
+        [actor.workspaceId,projectId,chapterId,rollbackCandidate.jobId,actor.userId,JSON.stringify(rollbackCandidate)]),{ code: "42501" });
+    } finally { await storyboardWriter.query("rollback");storyboardWriter.release(); }
+    assert.equal(await reopenedStoryboard.findGeneration(actor,rollbackCandidate),null);
     const upstreamSuggestion = await revision.execute(actor,projectId,chapterId,{ kind: "suggest",requestId: "settings-impact-suggest",reason: "节奏",expectedActiveVersionId: revisedFormal.id,elementId: "action",text: "细雨洒落庭院" });
     const upstreamCandidate = await revision.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "settings-impact-accept",reason: "checked",expectedActiveVersionId: upstreamSuggestion.id,suggestionId: upstreamSuggestion.suggestions!.find(s => s.status === "pending")!.id,decision: "accepted" });
     assert.equal((await rebuilt.listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id)).length,0);
     const upstreamReport = await publication.assess(actor,projectId,chapterId,{ jobId: `settings-impact-report-${suffix}`,binding: qualityBinding(upstreamCandidate,qualityContext),model: { async assess() { return { versionId: upstreamCandidate.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
     const upstreamConfirmed = await publication.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "settings-impact-confirm",reason: "checked",expectedActiveVersionId: upstreamCandidate.id,reportId: upstreamReport.id });
+    const staleStoryboard = { ...storyboard,jobId: "stale-storyboard" };
+    const staleStoryboardRepo = new PostgresStoryboardCandidateRepository(app,{ read: async () => storyboardInput });
+    await assert.rejects(() => staleStoryboardRepo.saveGeneration(actor,staleStoryboard),{ code: "UPSTREAM_CHANGED" });
+    assert.equal(await staleStoryboardRepo.findGeneration(actor,staleStoryboard),null);
+    assert.deepEqual(await reopenedStoryboard.findGeneration(actor,storyboard),storyboard);
     const settingsImpacts = await new PostgresScriptContentRepository(app).listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id);
     assert.deepEqual(settingsImpacts,[{ confirmed_version_id: upstreamConfirmed.id,source_version_id: revisedFormal.id,source_element_id: "action",target_stage: "settings",target_version_id: lockedSetting.id,target_item_id: settingAsset.id,status: "unreviewed" }]);
     assert.deepEqual(await settingsReviewRepo.findActive(actor,projectId,chapterId),lockedSetting);
