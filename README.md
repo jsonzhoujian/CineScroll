@@ -2,7 +2,7 @@
 
 将用户已有的小说或故事，转化为可编辑、可追溯、可继续制作 AI 动态漫的剧本、设定与分镜。
 
-当前主线为 T07 设定与分镜。T07-01 文字设定候选已完成，T07-02 设定审核、局部重生及跨上游重新确认已通过验收。T07-03 分镜候选已就绪，见[任务总表](./.scratch/novel-adaptation-mvp/issues/README.md)与[验收记录](./docs/plans/2026-11-05-t07-cross-upstream-acceptance.md)。
+当前主线为 T07 设定与分镜。T07-01 文字设定候选已完成，T07-02 设定审核、局部重生及跨上游重新确认已通过验收。T07-03 分镜候选正在实现，已完成逐镜字段与引用校验，见[任务总表](./.scratch/novel-adaptation-mvp/issues/README.md)与[验收记录](./docs/plans/2026-11-05-t07-cross-upstream-acceptance.md)。
 
 T04 项目与章节导入、T05 故事知识、T06 拆集与剧本闭环已按任务记录完成。T09 基础设施独立追踪，完整 MVP 与真实模型语义发布门禁仍待验收。
 

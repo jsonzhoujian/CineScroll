@@ -7,12 +7,16 @@ export function validateSettingAsset(value: unknown,context: SettingEvidenceCont
     || !identifier(value.id) || !["character","location","prop","visualStyle"].includes(String(value.assetType)) || typeof value.assetType !== "string"
     || !text(value.name) || !record(value.visibleDefinition) || !Object.keys(value.visibleDefinition).length || !json(value.visibleDefinition)
     || typeof value.state !== "string" || !strings(value.stateChanges) || !strings(value.restrictions)
-    || !Array.isArray(value.provenance) || !value.provenance.length || value.provenance.some(p => {
-      if (!record(p)) return true;
-      if (p.type === "source_fragment") return !keys(p,["type","sourceVersionId","fragmentId","transformation"]) || p.sourceVersionId !== context.sourceVersionId || typeof p.fragmentId !== "string" || !context.fragmentIds.includes(p.fragmentId) || typeof p.transformation !== "string" || !["retained","compressed","merged","visualized","actionized","narrated","sonified"].includes(p.transformation);
-      return p.type !== "approved_addition" || !keys(p,["type","additionId"]) || typeof p.additionId !== "string" || !context.approvedAdditionIds.includes(p.additionId);
-    })) return null;
+    || !validateSourceEvidence(value.provenance,context)) return null;
   return structuredClone(value) as SettingAsset;
+}
+/** Validate canonical provenance against server-authoritative source and addition identifiers. */
+export function validateSourceEvidence(value: unknown, context: SettingEvidenceContext): value is ScriptProvenance[] {
+  return Array.isArray(value) && value.length > 0 && ![...value].some(p => {
+    if (!record(p)) return true;
+    if (p.type === "source_fragment") return !keys(p,["type","sourceVersionId","fragmentId","transformation"]) || p.sourceVersionId !== context.sourceVersionId || typeof p.fragmentId !== "string" || !context.fragmentIds.includes(p.fragmentId) || typeof p.transformation !== "string" || !["retained","compressed","merged","visualized","actionized","narrated","sonified"].includes(p.transformation);
+    return p.type !== "approved_addition" || !keys(p,["type","additionId"]) || typeof p.additionId !== "string" || !context.approvedAdditionIds.includes(p.additionId);
+  });
 }
 function record(v: unknown): v is Record<string,unknown> { return !!v && typeof v === "object" && !Array.isArray(v); }
 function keys(v: Record<string,unknown>,allowed: string[]) { return Object.keys(v).length === allowed.length && Object.keys(v).every(k => allowed.includes(k)); }

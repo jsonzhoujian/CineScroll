@@ -2,7 +2,7 @@
 
 Parent: T07
 
-status: ready
+status: in_progress
 
 **Prerequisite:** T07-02 completed
 
@@ -24,3 +24,10 @@ status: ready
 本票为纵向交付：按已确认公共API、Worker、仓储与浏览器测试边界验证并独立审查。用户要求每轮提供Git提交文案、不自动提交。不部署、不自动调用真实付费模型、不启用真实计费。依赖中完成的前置不应被反向重新设为阻塞。
 
 [设定验收与交接记录](../../../../docs/plans/2026-11-05-t07-cross-upstream-acceptance.md)
+
+## 实施进度
+
+1. 已完成逐镜字段与引用校验，使用 canonical 样例验证合法镜头和越界引用。
+2. 接入正式上游读取与响应校验，绑定任务和版本身份，隔离无效镜头及失败范围。
+3. 接通 Worker、事务保存及原请求恢复，原子登记依赖。
+4. 接通 Session API 与浏览器显式载入，验证逐镜剧本和原文追溯。

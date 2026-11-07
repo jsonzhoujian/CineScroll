@@ -41,11 +41,11 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 | --- | --- | --- | --- |
 | T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | done | T06 completed |
 | T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | done | T07-01 completed |
-| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | ready | T07-02 completed |
+| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | in_progress | T07-02 completed |
 | T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |
 | T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
 
-交付顺序见[T07 交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01、T07-02 已完成，T07-03 已就绪，父项 T07 保持进行中。
+交付顺序见[T07 交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01、T07-02 已完成，T07-03 正在实现，父项 T07 保持进行中。
 
 T07-02跨上游处理的[规则及四项拆分](../../../docs/plans/2026-11-04-t07-upstream-settings-decisions.md)均已确认：受限锁沿用、相同片段依据迁移、分批核对及旧建议留在旧版本。
 
