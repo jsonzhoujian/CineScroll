@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fixture from "../../../docs/contracts/fixtures/ai/valid-storyboard.json" with { type: "json" };
-import { validateStoryboardShot } from "../src/storyboard-content.ts";
+import { validateStoryboardResponse, validateStoryboardShot } from "../src/storyboard-content.ts";
 
 const shot = fixture.items[0]!.value;
 const context = {
@@ -33,4 +33,29 @@ test("rejects invalid fields and references outside the shot's confirmed inputs"
     { provenance: [{ ...shot.provenance[0], fragmentId: "missing" }] },
     { provenance: [{ type: "approved_addition", additionId: "missing" }] },
   ]) assert.equal(validateStoryboardShot({ ...shot, ...patch }, context), null, JSON.stringify(patch));
+});
+
+test("binds the response to the job and ordered formal versions before accepting shots", () => {
+  assert.deepEqual(validateStoryboardResponse(fixture, fixture, context).shots, [shot]);
+  for (const patch of [
+    { jobId: "other" }, { chapterId: "other" }, { projectId: "other" }, { sourceVersionId: "old" },
+    { upstreamConfirmedVersionIds: [...fixture.upstreamConfirmedVersionIds].reverse() },
+    { status: "failed" }, { items: [fixture.items[0], fixture.items[0]] },
+  ]) assert.throws(() => validateStoryboardResponse({ ...fixture, ...patch }, fixture, context), { code: "INVALID_RESPONSE" });
+});
+
+test("preserves valid shots and isolates invalid, duplicate, and provider-failed scopes", () => {
+  const result = validateStoryboardResponse({ ...fixture, status: "partially_succeeded", items: [
+    fixture.items[0],
+    { scopeKey: "shot:2", status: "succeeded", value: { ...shot, episodeId: "other" } },
+    { scopeKey: "shot:3", status: "succeeded", value: shot },
+    { scopeKey: "shot:4", status: "failed", error: { code: "internal", message: "provider prose", retryable: false } },
+  ] }, fixture, context);
+  assert.deepEqual(result, {
+    generationStatus: "partially_succeeded", shots: [shot], failures: [
+      { scopeKey: "shot:2", code: "INVALID_SHOT", retryable: true },
+      { scopeKey: "shot:3", code: "INVALID_SHOT", retryable: true },
+      { scopeKey: "shot:4", code: "PROVIDER_ITEM_FAILED", retryable: false },
+    ],
+  });
 });
