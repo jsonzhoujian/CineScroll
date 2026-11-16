@@ -30,7 +30,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../../story-knowledge/migrations/0003_generation_policy.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql", "../migrations/0038_storyboard_tasks.sql", "../migrations/0039_storyboard_review_submissions.sql", "../migrations/0040_storyboard_review_operations.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../../story-knowledge/migrations/0003_generation_policy.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql", "../migrations/0038_storyboard_tasks.sql", "../migrations/0039_storyboard_review_submissions.sql", "../migrations/0040_storyboard_review_operations.sql", "../migrations/0041_storyboard_confirmation.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -512,6 +512,67 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
         (workspace_id,project_id,chapter_id,review_id,command) values ($1,$2,$3,$4,$5::jsonb)`,
       [actor.workspaceId,projectId,chapterId,shared.id,rawEdit]),{ code: "P7002" });
     } finally { await rawReviewWriter.query("rollback");rawReviewWriter.release(); }
+    const confirmStoryboard = { kind: "confirm",requestId: "confirm",reason: "逐集核对",expectedRevision: 0,expectedPublicationId: null } as const;
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,{
+      ...confirmStoryboard,expectedRevision: rejectedStoryboard.revision,
+    }),{ code: "REVIEW_INCOMPLETE" });
+    const completeStoryboard: StoryboardCandidate = { ...storyboard,jobId: "storyboard-complete",failures: [],generationStatus: "succeeded",
+      shots: storyboardInput.context.scenes.map((scene,i) => ({ ...storyboard.shots[0]!,id: `complete-${i}`,sceneId: scene.id,
+        episodeId: scene.episodeId,scriptElementIds: [scene.scriptElementIds[0]!],durationSeconds: 1 })),
+    };
+    const completeId = completeStoryboard.jobId;
+    await taskRepository.insert({ ...storyboardTask,id: completeId });
+    await taskRepository.transition(actor.workspaceId,completeId,0,"running",null);
+    await storyboardRepo.saveGeneration(actor,completeStoryboard);
+    await taskRepository.transition(actor.workspaceId,completeId,1,"succeeded",null,{ candidateVersionId: completeId,extractionStatus: "succeeded" });
+    const completeReview = (await storyboardRepo.submitReview(actor,projectId,chapterId,completeId)).id;
+    assert.equal(await storyboardRepo.findReview(reviewer,projectId,chapterId,null),null);
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(editor,projectId,chapterId,completeReview,confirmStoryboard),{ code: "FORBIDDEN" });
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,confirmStoryboard),{ code: "DURATION_OUT_OF_RANGE" });
+    const totalFloor = 54;
+    const fitDuration = totalFloor-completeStoryboard.shots.length+1;
+    const confirmShot = completeStoryboard.shots[0]!;
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{ ...proposal,kind: "edit",shotId: confirmShot.id,
+      value: { visual: confirmShot.visual,durationSeconds: fitDuration } });
+    const pendingConfirm = { ...proposal,requestId: "before-confirm",expectedRevision: 1,shotId: confirmShot.id };
+    await storyboardRepo.saveReviewOperation(editor,projectId,chapterId,completeReview,pendingConfirm);
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...confirmStoryboard,expectedRevision: 2,
+    }),{ code: "REVIEW_INCOMPLETE" });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...decision,requestId: "before-confirm-reject",decision: "rejected",suggestionRevision: 2,expectedRevision: 2,
+    });
+    const confirmAtFloor = { ...confirmStoryboard,expectedRevision: 3 };
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,confirmAtFloor);
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,confirmAtFloor);
+    const formalStoryboard = (await storyboardRepo.findReview(reviewer,projectId,chapterId,null))!;
+    assert.equal(formalStoryboard.revision,4);
+    assert.equal(formalStoryboard.candidate.shots.reduce((sum,shot) => sum+shot.durationSeconds,0),totalFloor);
+    const lockShot = { kind: "lock",requestId: "story-lock",expectedRevision: 4,reason: "锁定镜头",shotId: confirmShot.id } as const;
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,lockShot);
+    const newChange = { ...proposal,kind: "edit",requestId: "story-after-lock",expectedRevision: 5,shotId: confirmShot.id,
+      value: { visual: "待确认",durationSeconds: fitDuration+12 } } as const;
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,newChange),{ code: "STATE_CONFLICT" });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...lockShot,kind: "unlock",requestId: "story-unlock",expectedRevision: 5,
+    });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{ ...newChange,expectedRevision: 6 });
+    assert.equal((await storyboardRepo.findReview(reviewer,projectId,chapterId,completeReview))?.confirmed,false);
+    assert.deepEqual(await storyboardRepo.findReview(reviewer,projectId,chapterId,null),formalStoryboard);
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...confirmStoryboard,requestId: "stale-formal",expectedRevision: 7,
+    }),{ code: "STATE_CONFLICT" });
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...lockShot,requestId: "lock-draft",expectedRevision: 7,
+    }),{ code: "STATE_CONFLICT" });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...confirmStoryboard,requestId: "confirm-upper-edge",expectedRevision: 7,expectedPublicationId: formalStoryboard.publicationId,
+    });
+    assert.equal((await storyboardRepo.findReview(reviewer,projectId,chapterId,null))?.candidate.shots[0]?.visual,"待确认");
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...lockShot,requestId: "lock-before-upstream-change",expectedRevision: 8,
+    });
+    assert.deepEqual((await storyboardRepo.findReview(reviewer,projectId,chapterId,null))?.lockedShotIds,[confirmShot.id]);
     const rollbackCandidate = { ...storyboard,jobId: "rollback-storyboard",
       shots: storyboard.shots.map(shot => ({ ...shot,scriptElementIds: ["invented"] })) };
     await taskRepository.insert({ ...storyboardTask,id: rollbackCandidate.jobId });
@@ -530,6 +591,16 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal((await rebuilt.listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id)).length,0);
     const upstreamReport = await publication.assess(actor,projectId,chapterId,{ jobId: `settings-impact-report-${suffix}`,binding: qualityBinding(upstreamCandidate,qualityContext),model: { async assess() { return { versionId: upstreamCandidate.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
     const upstreamConfirmed = await publication.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "settings-impact-confirm",reason: "checked",expectedActiveVersionId: upstreamCandidate.id,reportId: upstreamReport.id });
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...newChange,requestId: "old-upstream-edit",expectedRevision: 9,
+    }),{ code: "UPSTREAM_CHANGED" });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
+      ...lockShot,kind: "unlock",requestId: "unlock-after-upstream-change",expectedRevision: 9,
+    });
+    const historicalFormal = (await storyboardRepo.findReview(reviewer,projectId,chapterId,null))!;
+    assert.deepEqual(historicalFormal.lockedShotIds,[]);
+    assert.equal(historicalFormal.revision,8);
+    assert.equal(historicalFormal.candidate.shots[0]?.visual,"待确认");
     const staleStoryboard = { ...storyboard,jobId: "stale-storyboard" };
     const staleStoryboardRepo = new PostgresStoryboardCandidateRepository(app,{ read: async () => storyboardInput });
     await assert.rejects(() => staleStoryboardRepo.saveGeneration(actor,staleStoryboard),{ code: "UPSTREAM_CHANGED" });

@@ -6,17 +6,19 @@ import type { StoryboardCandidate, StoryboardCandidateRepository } from "./story
 
 export type StoryboardReviewCommand = { requestId: string; expectedRevision: number; reason: string } & (
   { kind: "suggest" | "edit"; shotId: string; value: { visual: string; durationSeconds: number } }
+  | { kind: "lock" | "unlock"; shotId: string }
+  | { kind: "confirm"; expectedPublicationId: string | null }
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
 type ReviewOperation = { revision: number; shotId: string; actorId: string; command: StoryboardReviewCommand;
   change: { visual: string; durationSeconds: number } | null };
 
 export class StoryboardStorageError extends Error {
-  constructor(code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STATE_CONFLICT" | "TASK_NOT_FOUND" | "STORAGE_UNAVAILABLE") {
+  constructor(code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STATE_CONFLICT" | "TASK_NOT_FOUND" | "REVIEW_INCOMPLETE" | "DURATION_OUT_OF_RANGE" | "STORAGE_UNAVAILABLE") {
     super(code);
     this.code = code;
   }
-  readonly code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STATE_CONFLICT" | "TASK_NOT_FOUND" | "STORAGE_UNAVAILABLE";
+  readonly code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STATE_CONFLICT" | "TASK_NOT_FOUND" | "REVIEW_INCOMPLETE" | "DURATION_OUT_OF_RANGE" | "STORAGE_UNAVAILABLE";
 }
 
 export class PostgresStoryboardCandidateRepository implements StoryboardCandidateRepository {
@@ -63,28 +65,57 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     });
   }
 
-  findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string) {
+  findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string | null) {
     return this.transaction(actor, async client => {
-      const key = [actor.workspaceId,projectId,chapterId,reviewId];
+      const scope = [actor.workspaceId,projectId,chapterId];
+      const formal = (await client.query(`select publication_id::text as "publicationId",review_id as "reviewId",revision
+        from storyboard_review_operations where (workspace_id,project_id,chapter_id)=($1,$2,$3)
+          and publication_id is not null order by publication_id desc limit 1`,scope)).rows[0] as
+        { publicationId: string; reviewId: string; revision: number } | undefined;
+      const selected = reviewId ?? formal?.reviewId;
+      if (!selected) return null;
+      const key = [...scope,selected];
       const row = (await client.query(`select v.version_json from storyboard_review_submissions r
         join storyboard_candidate_versions v using(workspace_id,project_id,chapter_id,job_id)
         where (r.workspace_id,r.project_id,r.chapter_id,r.id)=($1,$2,$3,$4)`,key)).rows[0];
       if (!row) return null;
       const candidate = structuredClone(row.version_json) as StoryboardCandidate;
-      const operations = (await client.query(`select revision, shot_id as "shotId", actor_id as "actorId", command, change
+      const log = (await client.query(`select revision, shot_id as "shotId", actor_id as "actorId", command, change
         from storyboard_review_operations where (workspace_id,project_id,chapter_id,review_id)=($1,$2,$3,$4)
         order by revision`,key)).rows as ReviewOperation[];
+      const operations = reviewId === null ? log.filter(operation => operation.revision <= formal!.revision) : log;
       const changes = new Map<string,ReviewOperation["change"]>();
       const decisions = new Map<number,"accepted" | "rejected">();
+      const locks = new Set<string>();
+      let lastChange = 0;
+      for (const operation of log) {
+        if (operation.command.kind === "lock") locks.add(operation.shotId);
+        if (operation.command.kind === "unlock") locks.delete(operation.shotId);
+      }
       for (const operation of operations) {
+        if (operation.change) lastChange = operation.revision;
         if (operation.change) changes.set(operation.shotId,operation.change);
         if (operation.command.kind === "decide") decisions.set(operation.command.suggestionRevision,operation.command.decision);
       }
       const suggestions = operations.flatMap(({ command,revision,shotId,actorId }) => command.kind === "suggest" ? [{
         revision,shotId,actorId,value: command.value,reason: command.reason,status: decisions.get(revision) ?? "pending" as const,
       }] : []);
-      return { candidate: { ...candidate,shots: candidate.shots.map(shot => ({ ...shot,...changes.get(shot.id) })) },
-        revision: operations.at(-1)?.revision ?? 0,suggestions };
+      const shots = candidate.shots.map(shot => ({ ...shot,...changes.get(shot.id) }));
+      const plan = (await client.query(`select version_json from episode_plan_versions
+        where (workspace_id,project_id,chapter_id,id)=($1,$2,$3,$4)`,[...scope,candidate.upstreamConfirmedVersionIds[2]])).rows[0]?.version_json as
+        { targetDurationSeconds: number; episodes: Array<{ id: string; title: string }> } | undefined;
+      const totals = new Map<string,number>();
+      for (const shot of shots) totals.set(shot.episodeId,(totals.get(shot.episodeId) ?? 0) + shot.durationSeconds);
+      const episodeDurations = plan?.episodes.map(episode => {
+        const seconds = totals.get(episode.id) ?? 0;
+        return { ...episode,seconds: Number.isFinite(seconds) ? seconds : null,targetSeconds: plan.targetDurationSeconds };
+      }) ?? [];
+      return { candidate: { ...candidate,shots },episodeDurations,
+        revision: operations.at(-1)?.revision ?? 0,suggestions,lockedShotIds: [...locks],
+        reviewId: selected,publicationId: formal?.publicationId ?? null,
+        isFormalReview: formal?.reviewId === selected,
+        confirmed: formal?.reviewId === selected && lastChange <= formal.revision,
+      };
     });
   }
 
@@ -133,7 +164,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       if (error instanceof StoryboardStorageError) throw error;
       const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
       if (code === "P7001") throw new StoryboardUpstreamError();
-      throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : code === "P7002" ? "INVALID_CANDIDATE" : code === "P7003" ? "POLICY_RESTRICTED" : code === "P7004" ? "STATE_CONFLICT" : code === "P7005" ? "TASK_NOT_FOUND" : "STORAGE_UNAVAILABLE");
+      throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : code === "P7002" ? "INVALID_CANDIDATE" : code === "P7003" ? "POLICY_RESTRICTED" : code === "P7004" ? "STATE_CONFLICT" : code === "P7005" ? "TASK_NOT_FOUND" : code === "P7006" ? "REVIEW_INCOMPLETE" : code === "P7007" ? "DURATION_OUT_OF_RANGE" : "STORAGE_UNAVAILABLE");
     } finally {
       client?.release();
     }

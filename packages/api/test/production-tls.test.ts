@@ -40,6 +40,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   const entered = new Promise<void>(resolve => { modelEntered = resolve; });
   const gate = new Promise<void>(resolve => { modelRelease = resolve; });
   let modelCalls = 0;
+  let completeStoryboardResponse = false;
   let reimportedScriptSource: string | undefined;
   const modelFetch: typeof fetch = async (url, init) => {
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fixture-not-real-key");
@@ -58,8 +59,15 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const shotItem = { scopeKey: input.scopeKeys ? "shot:2" : "shot:1", status: "succeeded", value: shot };
       if (input.scopeKeys) assert.deepEqual(input.scopeKeys,["shot:2"]);
       const failures = ["shot:2","shot:3"].map(scopeKey => ({ scopeKey, status: "failed", error: { code: "FAILED", message: "", retryable: true } }));
-      const result = { ...identity,status: input.scopeKeys ? "succeeded" : "partially_succeeded",
-        items: input.scopeKeys ? [shotItem] : [shotItem,...failures] };
+      const scenes = input.input.script.version.scenes as Array<{ id: string;episodeId: string }>;
+      const complete = completeStoryboardResponse ? scenes.map((entry,index) => {
+        const evidence = input.input.script.version.elements.find((item: { sceneId: string }) => item.sceneId === entry.id);
+        const durationSeconds = 60 / scenes.filter(item => item.episodeId === entry.episodeId).length;
+        return { ...shotItem,scopeKey: `shot:${index+1}`,value: { ...shot,id: `complete-${index+1}`,sceneId: entry.id,
+          episodeId: entry.episodeId,scriptElementIds: [evidence.id],provenance: evidence.provenance,durationSeconds } };
+      }) : null;
+      const result = { ...identity,status: input.scopeKeys || complete ? "succeeded" : "partially_succeeded",
+        items: complete ?? (input.scopeKeys ? [shotItem] : [shotItem,...failures]) };
       return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(result) } }] });
     }
     if (input.stage === "settings") {
@@ -143,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -539,7 +547,25 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.deepEqual(edited.version.shots[0].provenance,shared.version.shots[0].provenance);
       await storyboardApp.http.post(operation).set("authorization",bearer).send({ ...command,requestId: "tls-stale-edit" }).expect(409);
 
+      await storyboardApp.http.get(`${root}/reviews/confirmed`).set("authorization",bearer).expect(404);
+      await storyboardApp.http.post(operation).set("authorization",bearer)
+        .send({ kind: "confirm",requestId: "incomplete-storyboard",expectedRevision: 1,expectedPublicationId: null,reason: "尚缺镜头" })
+        .expect(409,{ code: "REVIEW_INCOMPLETE",message: "REVIEW_INCOMPLETE" });
       assert.equal(modelCalls,before+2);
+      completeStoryboardResponse = true;
+      const full = (await storyboardApp.http.post(root).set("authorization",bearer)
+        .send({ ...selection,requestId: "tls-storyboard-complete" }).expect(201)).body;
+      assert.equal((await waitForResult(full.id)).result.extractionStatus,"succeeded");
+      const fullReview = (await storyboardApp.http.post(`${root}/${full.id}/review`).set("authorization",bearer).expect(201)).body.id;
+      const publishOperation = `${root}/reviews/${fullReview}/operations`;
+      await storyboardApp.http.post(publishOperation).set("authorization",bearer)
+        .send({ kind: "confirm",requestId: "formal-storyboard",expectedRevision: 0,expectedPublicationId: null,reason: "核对通过" }).expect(201);
+      const published = (await storyboardApp.http.get(`${root}/reviews/confirmed`).set("authorization",bearer).expect(200)).body;
+      assert.equal(published.reviewId,fullReview);
+      assert.equal(published.formalRead,true);
+      assert.equal(published.permissions.canEdit,false);
+      assert.equal(published.episodeDurations[0].seconds,60);
+      assert.equal(modelCalls,before+3);
     } finally { await storyboardApp.close(); }
     await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
     const impactApp = await start(ca,false,false,true,true);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
+import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
 import { taskPresentation } from "../lib/task-status";
 
@@ -30,6 +30,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
   const [submitted,setSubmitted] = useState<Record<string,string>>({});
   const [task,setTask] = useState<StoryboardTask | null>(null);
   const [view,setView] = useState<StoryboardView | null>(null);
+  const [confirmationReason,setConfirmationReason] = useState("");
   const [shotId,setShotId] = useState("");
   const [scopes,setScopes] = useState<string[]>([]);
   const [busy,setBusy] = useState(false);
@@ -77,6 +78,8 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     catch (error) {
       const login = error instanceof ApiClientError && error.status === 401;
       setNotice(login ? "登录已失效，请重新登录。" : pending.current ? "提交结果待核对，请沿用原提交。"
+        : error instanceof ApiClientError && error.code === "DURATION_OUT_OF_RANGE" ? "每集时长须在目标时长的 ±10% 以内。"
+        : error instanceof ApiClientError && error.code === "REVIEW_INCOMPLETE" ? "请补齐缺失镜头并处理失败项和待决建议。"
         : view?.reviewId && error instanceof ApiClientError && error.status === 409 ? "审核版本或上游已变化，请刷新当前审核候选。"
         : "操作失败，请刷新后再试。");
     } finally {
@@ -148,14 +151,25 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     setNotice("已提交审核，项目成员可查看此候选。");
   }
 
-  async function loadReview(id: string, preserveShot = false) {
-    const next = await api.getStoryboardReview(projectId,chapterId,id);
-    if (next.reviewId !== id || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
+  async function loadReview(id: string | null, preserveShot = false) {
+    const next = id === null ? await api.getConfirmedStoryboard(projectId,chapterId) : await api.getStoryboardReview(projectId,chapterId,id);
+    if ((id === null ? !next.formalRead : next.reviewId !== id) || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
     setTask(null);
     setScopes([]);
     if (!preserveShot) setShotId("");
     setView(next);
     setNotice("");
+  }
+
+  async function saveReview(command: StoryboardReviewCommand) {
+    await act(async () => {
+      const next = await api.operateStoryboardReview(projectId,chapterId,view!.reviewId!,command);
+      if (next.reviewId !== view?.reviewId || next.version.projectId !== projectId || next.version.chapterId !== chapterId
+        || next.version.jobId !== undefined || next.revision === undefined || next.revision <= command.expectedRevision) throw new Error("WRONG_REVIEW");
+      setView(next);
+      setConfirmationReason("");
+      setNotice(command.kind === "confirm" ? "分镜已正式确认。" : "分镜审核已保存。");
+    });
   }
 
   const selected = view?.version.shots.find(shot => shot.id === shotId);
@@ -191,6 +205,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     </li>)}</ul>}
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多分镜任务</button>}
     <button type="button" disabled={busy} onClick={() => void act(() => readReviews())}>读取项目审核候选</button>
+    <button type="button" disabled={busy} onClick={() => void act(() => loadReview(null))}>读取正式分镜</button>
     {reviews.length > 0 && <ul aria-label="项目分镜审核候选">{reviews.map(review => <li key={review.id}>
       <button type="button" disabled={busy} aria-pressed={view?.reviewId === review.id} onClick={() => void act(() => loadReview(review.id))}>
         审核候选 · {new Date(review.submittedAt).toLocaleString("zh-CN")} · {review.id.slice(0,8)}
@@ -203,8 +218,20 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     }}>返回分镜任务列表</button>}
     {task?.state === "succeeded" && task.result && <button type="button" disabled={busy || !!pending.current} onClick={() => void act(load)}>载入分镜候选</button>}
     {view && <div className="storyboard-candidate">
-      <h3>{view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
-      {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.reviewId!,true))}>刷新当前审核候选</button>}
+      <h3>{view.formalRead ? "正式分镜" : view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
+      {view.confirmed && !view.formalRead && <p>当前镜头内容已正式确认</p>}
+      {!!view.episodeDurations?.length && <ul aria-label="逐集时长">
+        {view.episodeDurations.map(episode => <li key={episode.id}>{episode.title} · {episode.seconds === null ? "超出显示范围" : `${Number(episode.seconds.toPrecision(12))} 秒`}
+          { ` · 目标 ${episode.targetSeconds} 秒` }</li>)}
+      </ul>}
+      {view.permissions?.canConfirm && <div className="desktop-task-action">
+        <label>分镜确认理由<input maxLength={2000} value={confirmationReason} onChange={event => setConfirmationReason(event.target.value)} /></label>
+        <button type="button" disabled={busy || !confirmationReason.trim()} onClick={() => void saveReview({
+          kind: "confirm",requestId: crypto.randomUUID(),expectedRevision: view.revision!,
+          expectedPublicationId: view.publicationId ?? null,reason: confirmationReason.trim(),
+        })}>确认正式分镜</button>
+      </div>}
+      {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.formalRead ? null : view.reviewId!,true))}>刷新当前审核候选</button>}
       {view.version.jobId && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
         disabled={busy || !!pending.current} onClick={() => void act(() => submitReview(view.version.jobId!))}>提交分镜审核</button>)}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
@@ -226,15 +253,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
             {selected.provenance.filter(item => item.type === "approved_addition").map((item,i) => <li key={i}>获批改编新增 {item.additionId}</li>)}
           </ul>
           {view.reviewId && view.revision !== undefined && <StoryboardShotReview key={JSON.stringify([view.reviewId,view.revision,selected.id])}
-            view={view} shot={selected} busy={busy} onSave={async command => {
-              await act(async () => {
-                const next = await api.operateStoryboardReview(projectId,chapterId,view.reviewId!,command);
-                if (next.reviewId !== view.reviewId || next.version.projectId !== projectId || next.version.chapterId !== chapterId
-                  || next.version.jobId !== undefined || next.revision === undefined || next.revision <= command.expectedRevision) throw new Error("WRONG_REVIEW");
-                setView(next);
-                setNotice("分镜审核已保存。");
-              });
-            }} />}
+            view={view} shot={selected} busy={busy} onSave={saveReview} />}
         </section>}
       </div>
       {view.version.failures.length > 0 && <fieldset>

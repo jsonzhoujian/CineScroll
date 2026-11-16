@@ -27,11 +27,12 @@ export async function assertStoryboardDatabase(pool: Pool, workspaceIds: readonl
       and exists(select 1 from pg_class where oid=to_regclass('public.storyboard_review_operations')
         and relrowsecurity and relforcerowsecurity and not pg_has_role(session_user,relowner,'MEMBER')
         and has_table_privilege(current_user,oid,'SELECT') and has_column_privilege(current_user,oid,'command','INSERT')
-        and not has_column_privilege(current_user,oid,'revision','INSERT') and not has_table_privilege(current_user,oid,'UPDATE,DELETE'))
+        and not has_column_privilege(current_user,oid,'revision','INSERT') and not has_column_privilege(current_user,oid,'publication_id','INSERT') and not has_table_privilege(current_user,oid,'UPDATE,DELETE'))
       and (select count(*)=2 from pg_trigger where tgrelid=to_regclass('public.storyboard_review_operations')
         and tgqual is null and tgenabled in ('O','A') and (tgname,tgfoid,tgtype) in (
           ('storyboard_review_operation_guard',to_regprocedure('public.guard_storyboard_review_operation()'),7),
           ('storyboard_review_operation_immutable',to_regprocedure('public.reject_immutable_change()'),27)))
+      and exists(select 1 from pg_index where indexrelid=to_regclass('public.storyboard_formal_chapter_idx') and indisvalid)
       as ready`);
     if (!result.rows[0]?.ready) throw new Error();
   } catch { throw new Error("STORYBOARD_DATABASE_NOT_READY"); }

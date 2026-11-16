@@ -1117,7 +1117,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   let reviewedShot = { ...shot,id: "two",visual: "积水倒影" };
   function reviewView() {
     return { current: true,reviewId,revision: reviewRevision,suggestions,
-      permissions: { canSuggest: true,canEdit: true,canDecide: true },
+      permissions: { canSuggest: true,canEdit: true,canDecide: true,canConfirm: true },
       scriptElements: [{ id: "element",sceneId: "scene",text: "庭院落雨" }],sourceFragments: [{ id: "f",text: "原文雨落" }],
       version: { ...input,projectId: "p",chapterId: "c",shots: [shot,reviewedShot],failures: failures.slice(1) },
     };
@@ -1136,6 +1136,10 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     if (suffix === `/reviews/${reviewId}/operations` && request.method() === "POST") {
       const command = request.postDataJSON();
       expect(command.expectedRevision).toBe(reviewRevision);
+      if (command.kind === "confirm") {
+        expect(command.expectedPublicationId).toBeNull();
+        return route.fulfill({ headers,status: 409,json: { code: "REVIEW_INCOMPLETE" } });
+      }
       reviewRevision++;
       if (command.kind === "suggest") {
         expect(command.shotId).toBe("two");
@@ -1244,6 +1248,9 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await audit.getByRole("button",{ name: "接受建议 1" }).click();
   await expect(audit.getByText(/已接受/)).toBeVisible();
   await expect(panel.getByRole("button",{ name: "雨水映出屋檐",exact: true })).toBeVisible();
+  await panel.getByLabel("分镜确认理由").fill("尝试确认");
+  await panel.getByRole("button",{ name: "确认正式分镜" }).click();
+  await expect(panel.getByRole("status")).toContainText("请补齐缺失镜头并处理失败项和待决建议");
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
 });

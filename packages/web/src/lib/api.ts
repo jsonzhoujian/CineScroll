@@ -7,13 +7,20 @@ export type StoryboardSubmission = { configurationVersionId: string; modelId: st
 export type StoryboardTask = StoryKnowledgeTask & { input: { stage: "storyboard"; resultType: "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 export type StoryboardReviewCommand = { requestId: string; expectedRevision: number; reason: string } & (
   { kind: "suggest" | "edit"; shotId: string; value: { visual: string; durationSeconds: number } }
+  | { kind: "lock" | "unlock"; shotId: string }
+  | { kind: "confirm"; expectedPublicationId: string | null }
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
 export type StoryboardView = {
   current: boolean;
   reviewId?: string;
   revision?: number;
-  permissions?: { canSuggest: boolean; canEdit: boolean; canDecide: boolean };
+  confirmed?: boolean;
+  formalRead?: boolean;
+  publicationId?: string | null;
+  lockedShotIds?: string[];
+  episodeDurations?: Array<{ id: string;title: string;seconds: number | null;targetSeconds: number }>;
+  permissions?: { canSuggest: boolean; canEdit: boolean; canDecide: boolean; canConfirm?: boolean; canLock?: boolean; canUnlock?: boolean };
   suggestions?: Array<{ revision: number;shotId: string;actorId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted" | "rejected" }>;
   scriptElements: Array<{ id: string; text: string; sceneId: string; provenance: ScriptContentView["version"]["elements"][number]["provenance"] }>;
   sourceFragments: Array<{ id: string; text: string }>;
@@ -174,6 +181,9 @@ export class ApiClient {
   }
   getStoryboardReview(p: string,c: string,id: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
+  getConfirmedStoryboard(p: string,c: string) {
+    return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/confirmed`,{ method: "GET" },"session");
   }
   operateStoryboardReview(p: string,c: string,id: string,command: StoryboardReviewCommand) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}/operations`,

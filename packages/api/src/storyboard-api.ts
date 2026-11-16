@@ -40,7 +40,7 @@ async function respond<T>(action: () => Promise<T>) {
   catch (error) {
     const code = error instanceof StoryboardUpstreamError ? "UPSTREAM_CHANGED" : error instanceof ModelTaskError || error instanceof ModelSettingsError || error instanceof StoryboardStorageError ? error.code : "STORAGE_UNAVAILABLE";
     const status = code === "TASK_NOT_FOUND" ? 404 : ["TASK_QUEUE_FULL","TASK_EXECUTION_FULL"].includes(code) ? 429
-      : ["INVALID_CONTEXT","INVALID_CONFIGURATION","INVALID_CANDIDATE"].includes(code) ? 400 : ["STATE_CONFLICT","UPSTREAM_CHANGED","VERSION_CONFLICT"].includes(code) ? 409
+      : ["INVALID_CONTEXT","INVALID_CONFIGURATION","INVALID_CANDIDATE"].includes(code) ? 400 : ["STATE_CONFLICT","UPSTREAM_CHANGED","VERSION_CONFLICT","REVIEW_INCOMPLETE","DURATION_OUT_OF_RANGE"].includes(code) ? 409
       : ["FORBIDDEN","POLICY_RESTRICTED","WORKSPACE_TASK_DISABLED","TASK_PROVIDER_UNSUPPORTED"].includes(code) ? 403 : 503;
     throw new HttpException({ code, message: code },status);
   }
@@ -98,6 +98,11 @@ class StoryboardController {
     });
   }
 
+  confirmed(req: { actor: Actor },p: string,c: string) {
+    const projectId = id(p), chapterId = id(c);
+    return respond(() => this.reviewView(req.actor,projectId,chapterId,null));
+  }
+
   review(req: { actor: Actor },p: string,c: string,review: string) {
     const projectId = id(p), chapterId = id(c), selected = reviewId(review);
     return respond(() => this.reviewView(req.actor,projectId,chapterId,selected));
@@ -112,17 +117,20 @@ class StoryboardController {
     });
   }
 
-  private async reviewView(actor: Actor,projectId: string,chapterId: string,selected: string) {
+  private async reviewView(actor: Actor,projectId: string,chapterId: string,selected: string | null) {
     const [review,access] = await Promise.all([
       this.services.candidates.findReview(actor,projectId,chapterId,selected),
       this.services.projects.findProjectAccess(actor,projectId),
     ]);
     if (!review || !access) throw new ModelTaskError("TASK_NOT_FOUND");
-    const { candidate,revision,suggestions } = review;
+    const { candidate,revision,suggestions,lockedShotIds,publicationId,confirmed,isFormalReview,episodeDurations } = review;
     const { version, ...view } = await this.view(actor,projectId,chapterId,candidate);
-    const canReview = view.current && (access.role === "owner" || access.role === "reviewer");
-    return { ...view, reviewId: selected, revision, suggestions,
-      permissions: { canSuggest: view.current,canEdit: canReview,canDecide: canReview },
+    const reviewer = selected !== null && (access.role === "owner" || access.role === "reviewer");
+    const canReview = reviewer && view.current;
+    return { ...view, reviewId: review.reviewId, revision, suggestions,lockedShotIds,publicationId,confirmed,
+      formalRead: selected === null,episodeDurations,
+      permissions: { canSuggest: selected !== null && view.current,canEdit: canReview,canDecide: canReview,
+        canConfirm: canReview && !confirmed,canLock: canReview && confirmed,canUnlock: reviewer && isFormalReview },
       version: { projectId, chapterId, sourceVersionId: version.sourceVersionId, upstreamConfirmedVersionIds: version.upstreamConfirmedVersionIds,
         shots: version.shots, failures: version.failures } };
   }
@@ -185,7 +193,7 @@ UseGuards(SessionGuard)(StoryboardController);
 Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
-  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["review",Get("reviews/:id"),Param("id")],
+  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
   ["operate",Post("reviews/:id/operations"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {
