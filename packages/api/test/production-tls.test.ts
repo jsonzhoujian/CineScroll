@@ -1,4 +1,5 @@
 import { SETTINGS_REGENERATION_WORKER,SETTINGS_WORKER } from "../src/settings-worker-module.ts";
+import storyboardFixture from "../../../docs/contracts/fixtures/ai/valid-storyboard.json" with { type: "json" };
 import type { ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -46,6 +47,21 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     assert.equal(url, "https://api.deepseek.com/chat/completions");
     modelCalls++; modelEntered(); await gate;
     const input = JSON.parse(JSON.parse(String(init?.body)).messages[1].content);
+    if (input.stage === "storyboard") {
+      const names = ["contractVersion","jobId","stage","projectId","chapterId","sourceVersionId","upstreamConfirmedVersionIds"];
+      const identity = Object.fromEntries(names.map(name => [name,input[name]]));
+      const scene = input.input.script.version.scenes[0];
+      const element = input.input.script.version.elements.find((entry: { id: string }) => entry.id === "action");
+      const shot = { ...storyboardFixture.items[0]!.value, id: input.scopeKeys ? "retry-shot" : "original-shot",
+        sceneId: scene.id, episodeId: scene.episodeId, scriptElementIds: [element.id],
+        assetIds: [input.input.settings.assets[0].id], provenance: element.provenance };
+      const shotItem = { scopeKey: input.scopeKeys ? "shot:2" : "shot:1", status: "succeeded", value: shot };
+      if (input.scopeKeys) assert.deepEqual(input.scopeKeys,["shot:2"]);
+      const failures = ["shot:2","shot:3"].map(scopeKey => ({ scopeKey, status: "failed", error: { code: "FAILED", message: "", retryable: true } }));
+      const result = { ...identity,status: input.scopeKeys ? "succeeded" : "partially_succeeded",
+        items: input.scopeKeys ? [shotItem] : [shotItem,...failures] };
+      return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(result) } }] });
+    }
     if (input.stage === "settings") {
       const targets = input.regeneration?.targets ?? [
         { scopeKey:"location",asset:{id:"location",assetType:"location"} },
@@ -95,8 +111,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         evidence: [{ sourceVersionId: input.sourceVersionId, fragmentId: input.input.sourceFragments[0].id }] } }] };
     return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
   };
-  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false) => {
+  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false) => {
     const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa },
+      ...(storyboardEnabled ? { storyboardTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(settingsEnabled ? { settingsTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(tasksEnabled ? { storyTasks: { enabled: true, workspaceIds: [workspaceId], intervalMs: 100 } } : {}),
       ...(scriptsEnabled ? { scriptTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
@@ -107,6 +124,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       try { await app.listen(0, "127.0.0.1"); }
       catch (error) { await app.close(); throw error; }
       return { http: request(app.getHttpServer()), worker: tasksEnabled ? app.get(StoryKnowledgeTaskWorker) : null,
+        storyboardTasks: storyboardEnabled ? app.get("STORYBOARD_TASK_SERVICE") as ModelTaskService : null,
         regenerationTasks: settingsEnabled ? app.get("SETTINGS_REGENERATION_TASK_SERVICE") as ModelTaskService : null,
         regenerationWorker: settingsEnabled ? app.get(SETTINGS_REGENERATION_WORKER) as StoryKnowledgeTaskWorker : null,
         settingsTasks: settingsEnabled ? app.get("SETTINGS_TASK_SERVICE") as ModelTaskService : null,
@@ -126,7 +144,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -461,6 +479,32 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(regenerated.result?.candidateVersionId,regenerationVersionId!);assert.equal(modelCalls,8);
       assert.equal((await settingsRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${settingsTaskId!}`).set("authorization",bearer).expect(200)).body.version.id,settingsCandidateId!);
     } finally { await settingsRestart.close(); }
+    await admin.query("alter table storyboard_candidate_versions disable trigger storyboard_candidate_task");
+    try { await assert.rejects(() => start(ca,false,false,false,false,true), { message: "STORYBOARD_DATABASE_NOT_READY" }); }
+    finally { await admin.query("alter table storyboard_candidate_versions enable trigger storyboard_candidate_task"); }
+    const storyboardApp = await start(ca,false,false,false,false,true);
+    try {
+      const actor = { workspaceId,userId }, tasks = storyboardApp.storyboardTasks!;
+      const selection = { projectId,chapterId,configurationVersionId: version!,modelId: "m" };
+      const waitForResult = async (id: string) => {
+        for (let i=0;i<100;i++) {
+          const task = await tasks.get(actor,id);
+          if (["succeeded","failed","paused"].includes(task.state)) return task;
+          await new Promise(resolve => setTimeout(resolve,20));
+        }
+        throw new Error("storyboard task did not finish");
+      };
+      const before = modelCalls;
+      const original = await tasks.submitStoryboard(actor,{ ...selection,requestId: "tls-storyboard" });
+      assert.deepEqual((await waitForResult(original.id)).result,{ candidateVersionId: original.id,extractionStatus: "partially_succeeded" });
+      const retry = await tasks.submitStoryboardRetry(actor,{ ...selection,requestId: "tls-storyboard-retry",
+        expectedActiveVersionId: original.id,scopeKeys: ["shot:2"] });
+      assert.deepEqual((await waitForResult(retry.id)).result,{ candidateVersionId: retry.id,extractionStatus: "partially_succeeded" });
+      const persisted = (await admin.query("select version_json from storyboard_candidate_versions where workspace_id=$1 and job_id=$2",[workspaceId,retry.id])).rows[0].version_json;
+      assert.deepEqual(persisted.shots.map((shot: { id: string }) => shot.id),["original-shot","retry-shot"]);
+      assert.deepEqual(persisted.failures.map((failure: { scopeKey: string }) => failure.scopeKey),["shot:3"]);
+      assert.equal(modelCalls,before+2);
+    } finally { await storyboardApp.close(); }
     const impactApp = await start(ca,false,false,true,true);
     try {
       const settingsBase = `/projects/${projectId}/chapters/${chapterId}/settings`,scriptBase = `/projects/${projectId}/chapters/${chapterId}/script-content`;

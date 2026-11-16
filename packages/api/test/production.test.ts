@@ -155,3 +155,18 @@ test("设定任务独立默认关闭，开启前拒绝不可信装配配置", as
     } finally { await app.close();await production.close(); }
   }
 });
+
+test("分镜 Worker 独立准入，数据库未就绪时拒绝启动", async () => {
+  const storyboardTasks = { enabled: true as const, workspaceIds: ["w"] };
+  assert.throws(() => createProductionApi({ ...base, storyboardTasks }), { message: "INVALID_STORYBOARD_TASK_CONFIG" });
+  const modelSettings = { enabled: true as const, encryptionKeyBase64: Buffer.alloc(32,7).toString("base64"),
+    databaseUrl: "postgresql://model_app@localhost/fixture", databaseTlsCa: base.databaseTlsCa, routes: { deepseek: "mainland" as const } };
+  const production = createProductionApi({ ...base, modelSettings, storyboardTasks }, { modelFetch: async () => assert.fail("startup invoked the model") });
+  const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
+  const app = ref.createNestApplication();
+  try {
+    assert.ok(app.get("STORYBOARD_TASK_SERVICE"));
+    assert.throws(() => app.get(SETTINGS_WORKER));
+    await assert.rejects(() => app.get("STORYBOARD_WORKER_LIFECYCLE").onModuleInit(), { message: "STORYBOARD_DATABASE_NOT_READY" });
+  } finally { await app.close(); await production.close(); }
+});

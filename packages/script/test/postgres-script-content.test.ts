@@ -30,7 +30,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../../story-knowledge/migrations/0003_generation_policy.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql", "../migrations/0038_storyboard_tasks.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -414,11 +414,26 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const shotScene = storyboardInput.context.scenes.find(scene => scene.scriptElementIds.includes("action"))!;
     const storyboard: StoryboardCandidate = {
       jobId: "storyboard-job", projectId, chapterId, sourceVersionId: sourceId, createdBy: actor.userId,
-      upstreamConfirmedVersionIds: storyboardInput.upstreamConfirmedVersionIds, failures: [], generationStatus: "succeeded",
+      upstreamConfirmedVersionIds: storyboardInput.upstreamConfirmedVersionIds, generationStatus: "partially_succeeded",
+      failures: ["shot:2", "shot:3"].map(scopeKey => ({ scopeKey, code: "INVALID_SHOT", retryable: true })),
       shots: [{ ...storyboardFixture.items[0]!.value, shotSize: "wide", cameraAngle: "eye_level",
         splitReason: ["information_change"], sceneId: shotScene.id, episodeId: shotScene.episodeId,
         assetIds: [settingAsset.id], scriptElementIds: ["action"], provenance: settingAsset.provenance }],
     };
+    await admin.query("insert into project_generation_policy(workspace_id,project_id,state) values($1,$2,'allowed')", [actor.workspaceId,projectId]);
+    await admin.query("insert into source_generation_policy(workspace_id,project_id,chapter_id,source_version_id,state) values($1,$2,$3,$4,'allowed')", [actor.workspaceId,projectId,chapterId,sourceId]);
+    const storyboardTask: ModelTask = { ...queued, id: storyboard.jobId, input: {
+      stage: "storyboard", resultType: "storyboardContent", sourceVersionId: sourceId,
+      upstreamConfirmedVersionIds: [...storyboard.upstreamConfirmedVersionIds], generationParameters: queued.input.generationParameters,
+    } };
+    await assert.rejects(() => storyboardRepo.saveGeneration(actor,storyboard), { code: "FORBIDDEN" });
+    await taskRepository.insert(storyboardTask);
+    assert.deepEqual((await taskRepository.scanStoryboard(actor.workspaceId,"run",{ limit: 20,cursor: null })).tasks.map(task => task.id), [storyboard.jobId]);
+    await assert.rejects(() => storyboardRepo.saveGeneration(actor,storyboard), { code: "FORBIDDEN" });
+    await taskRepository.transition(actor.workspaceId,storyboard.jobId,0,"running",null);
+    await admin.query("update source_generation_policy set state='blocked' where source_version_id=$1", [sourceId]);
+    await assert.rejects(() => storyboardRepo.saveGeneration(actor,storyboard), { code: "POLICY_RESTRICTED" });
+    await admin.query("update source_generation_policy set state='allowed' where source_version_id=$1", [sourceId]);
     assert.deepEqual(await Promise.all([storyboardRepo.saveGeneration(actor,storyboard),storyboardRepo.saveGeneration(actor,storyboard)]),[storyboard,storyboard]);
     const reopenedStoryboard = new PostgresStoryboardCandidateRepository(app,storyboardHandoff);
     assert.deepEqual(await reopenedStoryboard.findGeneration(actor,storyboard),storyboard);
@@ -426,12 +441,25 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal(await reopenedStoryboard.findGeneration({ ...actor,workspaceId: "other" },storyboard),null);
     assert.deepEqual((await admin.query("select target_item_id,script_element_id from script_downstream_dependencies where workspace_id=$1 and target_stage='storyboard' and target_version_id=$2",[actor.workspaceId,storyboard.jobId])).rows,
       [{ target_item_id: storyboard.shots[0]!.id, script_element_id: "action" }]);
+    const retry = { expectedActiveVersionId: storyboard.jobId, retryOfJobId: storyboard.jobId, scopeKeys: ["shot:2"] };
+    const retryCandidate: StoryboardCandidate = { ...storyboard, jobId: "storyboard-retry", retry,
+      shots: [...storyboard.shots, { ...storyboard.shots[0]!, id: "retry-shot" }],
+      failures: [storyboard.failures[1]!],
+    };
+    await taskRepository.insert({ ...storyboardTask, id: retryCandidate.jobId, input: { ...storyboardTask.input, retry } });
+    await taskRepository.transition(actor.workspaceId,retryCandidate.jobId,0,"running",null);
+    await assert.rejects(() => storyboardRepo.saveGeneration(actor,{ ...retryCandidate, retry: { ...retry, scopeKeys: ["shot:3"] } }), { code: "FORBIDDEN" });
+    await assert.rejects(() => storyboardRepo.saveGeneration(actor,{ ...retryCandidate, shots: retryCandidate.shots.slice(1) }), { code: "FORBIDDEN" });
+    assert.deepEqual(await storyboardRepo.saveGeneration(actor,retryCandidate),retryCandidate);
+    assert.deepEqual(await reopenedStoryboard.findGeneration(actor,storyboard),storyboard);
     const rollbackCandidate = { ...storyboard,jobId: "rollback-storyboard",
       shots: storyboard.shots.map(shot => ({ ...shot,scriptElementIds: ["invented"] })) };
+    await taskRepository.insert({ ...storyboardTask,id: rollbackCandidate.jobId });
+    await taskRepository.transition(actor.workspaceId,rollbackCandidate.jobId,0,"running",null);
     const storyboardWriter = await app.connect();
     try {
       await storyboardWriter.query("begin");
-      await storyboardWriter.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
+      await storyboardWriter.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true),set_config('app.model_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
       await assert.rejects(() => storyboardWriter.query(
         "insert into storyboard_candidate_versions values($1,$2,$3,$4,$5,$6::jsonb)",
         [actor.workspaceId,projectId,chapterId,rollbackCandidate.jobId,actor.userId,JSON.stringify(rollbackCandidate)]),{ code: "42501" });

@@ -5,11 +5,11 @@ import { StoryboardUpstreamError, type ConfirmedStoryboardHandoff } from "./stor
 import type { StoryboardCandidate, StoryboardCandidateRepository } from "./storyboard-runner.ts";
 
 export class StoryboardStorageError extends Error {
-  constructor(code: "FORBIDDEN" | "INVALID_CANDIDATE" | "STORAGE_UNAVAILABLE") {
+  constructor(code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STORAGE_UNAVAILABLE") {
     super(code);
     this.code = code;
   }
-  readonly code: "FORBIDDEN" | "INVALID_CANDIDATE" | "STORAGE_UNAVAILABLE";
+  readonly code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STORAGE_UNAVAILABLE";
 }
 
 export class PostgresStoryboardCandidateRepository implements StoryboardCandidateRepository {
@@ -63,7 +63,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       client = await this.pool.connect();
       await client.query("begin");
       await client.query("set local statement_timeout='5s'");
-      await client.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)", [actor.userId, actor.workspaceId]);
+      await client.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true),set_config('app.model_workspace_id',$2,true)", [actor.userId, actor.workspaceId]);
       const result = await action(client);
       await client.query("commit");
       return result;
@@ -72,7 +72,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       if (error instanceof StoryboardStorageError) throw error;
       const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
       if (code === "P7001") throw new StoryboardUpstreamError();
-      throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : "STORAGE_UNAVAILABLE");
+      throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : code === "P7002" ? "INVALID_CANDIDATE" : code === "P7003" ? "POLICY_RESTRICTED" : "STORAGE_UNAVAILABLE");
     } finally {
       client?.release();
     }

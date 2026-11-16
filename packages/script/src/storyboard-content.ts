@@ -82,7 +82,7 @@ function exactRecord(value: unknown, keys: readonly string[]): value is Record<s
 const identityKeys = ["jobId", "projectId", "chapterId", "sourceVersionId"] as const;
 
 /** Reject an unbound envelope before consuming any shot. Quarantine invalid shots by scope. */
-export function validateStoryboardResponse(response: unknown, expected: StoryboardResponseIdentity, context: StoryboardShotContext) {
+export function validateStoryboardResponse(response: unknown, expected: StoryboardResponseIdentity, context: StoryboardShotContext, scopeKeys?: readonly string[], retainedShots: readonly StoryboardShot[] = []) {
   if (!exactRecord(response, [...identityKeys, "contractVersion", "stage", "upstreamConfirmedVersionIds", "status", "items"])
     || response.contractVersion !== "0.1.0" || response.stage !== "storyboard"
     || identityKeys.some(key => response[key] !== expected[key]) || context.sourceVersionId !== expected.sourceVersionId
@@ -94,7 +94,7 @@ export function validateStoryboardResponse(response: unknown, expected: Storyboa
   const shots: StoryboardShot[] = [];
   const failures: Array<{ scopeKey: string; code: "PROVIDER_ITEM_FAILED" | "INVALID_SHOT"; retryable: boolean }> = [];
   const scopes = new Set<string>();
-  const shotIds = new Set<string>();
+  const shotIds = new Set(retainedShots.map(shot => shot.id));
   let providerFailures = 0;
   for (const item of response.items) {
     const success = exactRecord(item, ["scopeKey", "status", "value"]) && item.status === "succeeded";
@@ -118,6 +118,7 @@ export function validateStoryboardResponse(response: unknown, expected: Storyboa
     shotIds.add(shot.id);
     shots.push(shot);
   }
+  if (scopeKeys && (scopes.size !== scopeKeys.length || scopeKeys.some(key => !scopes.has(key)))) throw new StoryboardContentError();
   const status = providerFailures === 0 ? "succeeded" : providerFailures === response.items.length ? "failed" : "partially_succeeded";
   if (response.status !== status) throw new StoryboardContentError();
   const generationStatus = failures.length === 0 ? "succeeded" : shots.length ? "partially_succeeded" : "failed";

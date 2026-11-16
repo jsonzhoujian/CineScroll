@@ -30,6 +30,7 @@ export class ModelTaskError extends Error {
 export interface ModelTaskRepository {
   /** Internal workspace-scoped discovery only; scanning is not a claim or authorization. */
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
+  scanStoryboard?(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   scanSettingsRegeneration?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
   listSettingsRegeneration?(workspaceId: string,p: string,c: string,page: TaskPageRequest): Promise<TaskPage>;
   scanSettings?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
@@ -162,7 +163,8 @@ export class ModelTaskService {
     const input = regeneration ? await this.#options.contextReader.readRegeneration?.(actor,projectId,chapterId,regeneration) : retry ? await this.#options.contextReader.readRetry?.(actor, projectId, chapterId, retry) : await this.#options.contextReader.read(actor, projectId, chapterId);
     if (!input) throw new ModelTaskError("TASK_NOT_FOUND");
     if (input.stage === "storyboard") {
-      if (input.resultType !== "storyboardContent" || input.upstreamConfirmedVersionIds.length !== 4 || input.retry || input.regeneration || input.qualityTarget) throw new ModelTaskError("INVALID_CONTEXT");
+      if (input.resultType !== "storyboardContent" || input.upstreamConfirmedVersionIds.length !== 4 || input.regeneration || input.qualityTarget
+        || input.retry && (!retry || input.retry.failureOrigins || input.retry.expectedActiveVersionId !== input.retry.retryOfJobId)) throw new ModelTaskError("INVALID_CONTEXT");
     }
     if (input.resultType !== undefined && input.resultType !== "storyboardContent" && (!["episodePlan","scriptContent","scriptQuality","settingsContent","settingsRegeneration"].includes(input.resultType) || input.stage !== (["settingsContent","settingsRegeneration"].includes(input.resultType) ? "settings" : "script") || input.upstreamConfirmedVersionIds.length !== (["settingsContent","settingsRegeneration"].includes(input.resultType) ? 3 : input.resultType === "episodePlan" ? 1 : 2) || input.retry && input.resultType !== "scriptContent")
       || !["story_knowledge", "script", "settings", "storyboard"].includes(input.stage) || !input.sourceVersionId
@@ -178,7 +180,7 @@ export class ModelTaskService {
         if (!regeneration || !input.regeneration || JSON.stringify(normalizeSettingsRegenerationSelection(input.regeneration)) !== JSON.stringify(normalizeSettingsRegenerationSelection(regeneration))) throw new Error();
       } catch { throw new ModelTaskError("INVALID_CONTEXT"); }
     } else if (input.regeneration) throw new ModelTaskError("INVALID_CONTEXT");
-    if (retry && (input.stage !== "story_knowledge" && input.resultType !== "scriptContent" || !input.retry || input.retry.expectedActiveVersionId !== retry.expectedActiveVersionId
+    if (retry && (input.stage !== "story_knowledge" && input.resultType !== "scriptContent" && input.resultType !== "storyboardContent" || !input.retry || input.retry.expectedActiveVersionId !== retry.expectedActiveVersionId
       || !validIdentifier(input.retry.retryOfJobId) || !validRetrySelection(input.retry) || !sameScopes(input.retry.scopeKeys, retry.scopeKeys))) throw new ModelTaskError("INVALID_CONTEXT");
     if (input.resultType === "scriptContent" && input.retry && (!Array.isArray(input.retry.failureOrigins) || input.retry.failureOrigins.length !== input.retry.scopeKeys.length
       || input.retry.failureOrigins.some(f => !f || !validIdentifier(f.scopeKey) || !validIdentifier(f.jobId))
@@ -329,7 +331,8 @@ export class ModelTaskService {
   }
   async submitRetry(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string } & StoryRetrySelection) {
     if (!validIdentifier(input.requestId) || !validRetrySelection(input)) throw new ModelTaskError("INVALID_CONTEXT");
-    await this.#context(actor, input.projectId, input.chapterId);
+    const initial = await this.#context(actor, input.projectId, input.chapterId);
+    if (initial.resultType === "storyboardContent") throw new ModelTaskError("INVALID_CONTEXT");
     const id = `retry_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
     const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId && task.input.retry?.expectedActiveVersionId === input.expectedActiveVersionId
       && sameScopes(task.input.retry.scopeKeys, input.scopeKeys) && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
@@ -351,15 +354,21 @@ export class ModelTaskService {
     }
   }
   async submitScriptContentRetry(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string } & StoryRetrySelection) {
+    return this.#submitContentRetry(actor,input,"scriptContent");
+  }
+  async submitStoryboardRetry(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string } & StoryRetrySelection) {
+    return this.#submitContentRetry(actor,input,"storyboardContent");
+  }
+  async #submitContentRetry(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string } & StoryRetrySelection, resultType: "scriptContent" | "storyboardContent") {
     if (!validIdentifier(input.requestId) || !validRetrySelection(input)) throw new ModelTaskError("INVALID_CONTEXT");
     if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
-    const id = `script_retry_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
-    const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId && task.input.resultType === "scriptContent" && task.input.retry?.expectedActiveVersionId === input.expectedActiveVersionId
+    const id = `${resultType === "storyboardContent" ? "storyboard" : "script"}_retry_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
+    const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId && task.input.resultType === resultType && (resultType !== "storyboardContent" || task.createdBy === actor.userId) && task.input.retry?.expectedActiveVersionId === input.expectedActiveVersionId
       && sameScopes(task.input.retry.scopeKeys, input.scopeKeys) && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
     const existing = await this.#options.repository.find(actor.workspaceId, id);
     if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
     const context = await this.#context(actor, input.projectId, input.chapterId, input);
-    if (context.resultType !== "scriptContent" || !context.retry) throw new ModelTaskError("INVALID_CONTEXT");
+    if (context.resultType !== resultType || !context.retry) throw new ModelTaskError("INVALID_CONTEXT");
     await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
     this.#assertAdmission(actor, context);
     const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
@@ -446,6 +455,7 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"story_knowledge");
   }
+  async scanStoryboard(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"storyboardContent"); }
   async scanSettingsRegeneration(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"settingsRegeneration"); }
   async listSettingsRegeneration(w: string,p: string,c: string,page: TaskPageRequest) { return this.#list(w,p,c,page,"settingsRegeneration"); }
   async scanSettings(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"settingsContent"); }
@@ -457,10 +467,10 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"episodePlan");
   }
-  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration"): Promise<TaskPage> {
+  async #scan(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent"): Promise<TaskPage> {
     validateTaskScan(mode, page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId
-      && (kind !== "story_knowledge" ? task.input.stage === (["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
+      && (kind !== "story_knowledge" ? task.input.stage === (kind === "storyboardContent" ? "storyboard" : ["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
       && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0)
       && (mode === "run" ? task.state === "queued" : task.state === "running" && (task.leaseExpiresAt === null || Date.parse(task.leaseExpiresAt) <= this.#clock())
         || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN"))
