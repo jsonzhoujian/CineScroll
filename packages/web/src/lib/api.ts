@@ -7,10 +7,11 @@ export type StoryboardSubmission = { configurationVersionId: string; modelId: st
 export type StoryboardTask = StoryKnowledgeTask & { input: { stage: "storyboard"; resultType: "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 export type StoryboardView = {
   current: boolean;
+  reviewId?: string;
   scriptElements: Array<{ id: string; text: string; sceneId: string; provenance: ScriptContentView["version"]["elements"][number]["provenance"] }>;
   sourceFragments: Array<{ id: string; text: string }>;
   version: {
-    jobId: string; projectId: string; chapterId: string; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
+    jobId?: string; projectId: string; chapterId: string; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
     failures: Array<{ scopeKey: string; code: string; retryable: boolean }>;
     shots: Array<{ id: string; episodeId: string; sceneId: string; ordinal: number; visual: string; action: string; speech: string;
       durationSeconds: number; shotSize: string; cameraAngle: string; cameraMovement: string; sound: string; emotion: string;
@@ -157,6 +158,16 @@ function storyboardPath(p: string,c: string) {
   return `/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/storyboard-tasks`;
 }
 export class ApiClient {
+  submitStoryboardReview(p: string,c: string,jobId: string) {
+    return this.request<{ id: string }>(`${storyboardPath(p,c)}/${encodeURIComponent(jobId)}/review`,{ method: "POST" },"session");
+  }
+  listStoryboardReviews(p: string,c: string,cursor: string | null) {
+    return this.request<{ reviews: Array<{ id: string; submittedAt: string }>;nextCursor: string | null }>(
+      `${storyboardPath(p,c)}/reviews${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,{ method: "GET" },"session");
+  }
+  getStoryboardReview(p: string,c: string,id: string) {
+    return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
   storyboardReadiness(p: string,c: string) { return this.request<{ ready: boolean; userId: string }>(`${storyboardPath(p,c)}/readiness`,{ method: "GET" },"session"); }
   listStoryboardTasks(p: string,c: string,cursor: string | null = null) {
     return this.request<{ tasks: StoryboardTask[]; nextCursor: string | null }>(`${storyboardPath(p,c)}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,{ method: "GET" },"session");

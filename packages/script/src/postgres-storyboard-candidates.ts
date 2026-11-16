@@ -34,6 +34,38 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     return row ? structuredClone(row.version_json) as StoryboardCandidate : null;
   }
 
+  submitReview(actor: Actor, projectId: string, chapterId: string, jobId: string) {
+    return this.transaction(actor, async client => {
+      const key = [actor.workspaceId,projectId,chapterId,jobId];
+      const inserted = (await client.query(`insert into storyboard_review_submissions(workspace_id,project_id,chapter_id,job_id)
+        values($1,$2,$3,$4) on conflict(workspace_id,project_id,chapter_id,job_id) do nothing returning id`,key)).rows[0];
+      const row = inserted ?? (await client.query(`select id from storyboard_review_submissions
+        where (workspace_id,project_id,chapter_id,job_id)=($1,$2,$3,$4) and submitted_by=$5`,[...key,actor.userId])).rows[0];
+      if (!row) throw new StoryboardStorageError("FORBIDDEN");
+      return { id: row.id as string };
+    });
+  }
+
+  listReviews(actor: Actor, projectId: string, chapterId: string, cursor: string | null) {
+    return this.transaction(actor, async client => {
+      const rows = (await client.query(`select id,submitted_at::text from storyboard_review_submissions
+        where (workspace_id,project_id,chapter_id)=($1,$2,$3) and ($4::uuid is null or id>$4) order by id limit 21`,
+      [actor.workspaceId,projectId,chapterId,cursor])).rows;
+      const reviews = rows.slice(0,20).map(row => ({ id: row.id as string, submittedAt: row.submitted_at as string }));
+      return { reviews, nextCursor: rows.length > 20 ? reviews.at(-1)!.id : null };
+    });
+  }
+
+  findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string) {
+    return this.transaction(actor, async client => {
+      const row = (await client.query(`select v.version_json from storyboard_review_submissions r
+        join storyboard_candidate_versions v using(workspace_id,project_id,chapter_id,job_id)
+        where (r.workspace_id,r.project_id,r.chapter_id,r.id)=($1,$2,$3,$4)`,
+      [actor.workspaceId,projectId,chapterId,reviewId])).rows[0];
+      return row ? structuredClone(row.version_json) as StoryboardCandidate : null;
+    });
+  }
+
   async saveGeneration(actor: Actor, input: StoryboardCandidate) {
     const candidate = structuredClone(input);
     if (candidate.createdBy !== actor.userId) throw new StoryboardStorageError("FORBIDDEN");

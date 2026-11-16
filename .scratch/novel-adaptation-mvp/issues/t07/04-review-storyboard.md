@@ -2,7 +2,7 @@
 
 Parent: T07
 
-status: ready
+status: in_progress
 
 **Prerequisite:** T07-03 completed
 
@@ -22,3 +22,8 @@ status: ready
 权威输入：docs/PRODUCT_SPEC.md（权限、7.4、7.5、8与MVP验收）、CONTEXT.md、docs/contracts/DOMAIN_MODEL.md、settings/storyboard canonical Schema；复用T06交付的正式读取、不可变版本、角色规则、后台任务、许可与未知执行恢复。参见docs/plans/2026-11-03-t06-final-acceptance.md。不得把历史读取当生成授权，不得重复建设已经具备的基础设施。
 
 本票为纵向交付：按已确认公共API、Worker、仓储与浏览器测试边界验证并独立审查。用户要求每轮提供Git提交文案、不自动提交。不部署、不自动调用真实付费模型、不启用真实计费。依赖中完成的前置不应被反向重新设为阻塞。
+
+## 实施进度
+
+- 已接通创建者明确提交审核。提交基于已完成的私有候选，重复提交返回同一审核编号。项目成员从独立列表查阅已提交候选及证据。任务记录和其他生成或重试候选仍由原创建者读取。提交过期候选后仍可历史查阅，正式确认时需复验上游。
+- 下一切片接镜头建议、裁决与版本写入，再将逐集时长校验接入正式确认事务。

@@ -1110,10 +1110,26 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     scriptElementIds: ["element"],assetIds: [],characters: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f" }] };
   let reads = 0, posts = 0, retryAttempts = 0;
   let originalRetry: unknown;
+  const reviewId = "dff888fb-5ec9-41bd-a297-bc2aa682512e";
+  let shared = false;
   await page.route(`${root}**`,route => {
     const request = route.request(), suffix = request.url().slice(root.length);
     if (request.method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
     expect(request.headers().authorization).toBe("Bearer session");
+    if (suffix === "/reviews") return route.fulfill({ headers,json: {
+      reviews: shared ? [{ id: reviewId,submittedAt: "2026-11-16T00:00:00Z" }] : [],nextCursor: null,
+    } });
+    if (suffix === `/reviews/${reviewId}`) {
+      expect(shared).toBe(true);
+      return route.fulfill({ headers,json: { current: true,reviewId,
+        scriptElements: [{ id: "element",sceneId: "scene",text: "庭院落雨" }],sourceFragments: [{ id: "f",text: "原文雨落" }],
+        version: { ...input,projectId: "p",chapterId: "c",shots: [shot,{ ...shot,id: "two",visual: "积水倒影" }],failures: failures.slice(1) },
+      } });
+    }
+    if (request.method() === "POST" && suffix === "/retry/review") {
+      shared = true;
+      return route.fulfill({ headers,json: { id: reviewId } });
+    }
     if (request.method() === "POST") {
       const retry = suffix === "/retries", body = request.postDataJSON();
       if (retry) {
@@ -1185,6 +1201,15 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByRole("button",{ name: "雨打空庭",exact: true })).toBeVisible();
   await expect(panel.getByRole("checkbox",{ name: /shot:2/ })).toHaveCount(0);
   await expect(panel.getByRole("checkbox",{ name: /shot:3/ })).toBeVisible();
+  await panel.getByRole("button",{ name: "读取项目审核候选" }).click();
+  await expect(panel.getByRole("list",{ name: "项目分镜审核候选" })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "提交分镜审核" }).click();
+  await expect(panel.getByText("已提交审核",{ exact: true })).toBeVisible();
+  await panel.getByRole("button",{ name: "读取项目审核候选" }).click();
+  await panel.getByRole("list",{ name: "项目分镜审核候选" }).getByRole("button").click();
+  await expect(panel.getByRole("heading",{ name: "项目审核候选" })).toBeVisible();
+  await expect(panel.getByRole("button",{ name: "积水倒影",exact: true })).toBeVisible();
+  await expect(panel.getByRole("button",{ name: "重试所选失败项" })).toHaveCount(0);
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
 });

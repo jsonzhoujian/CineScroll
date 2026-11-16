@@ -24,6 +24,9 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
   const [model,setModel] = useState("");
   const [tasks,setTasks] = useState<StoryboardTask[]>([]);
   const [cursor,setCursor] = useState<string | null>(null);
+  const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
+  const [reviewCursor,setReviewCursor] = useState<string | null>(null);
+  const [submitted,setSubmitted] = useState<Record<string,string>>({});
   const [task,setTask] = useState<StoryboardTask | null>(null);
   const [view,setView] = useState<StoryboardView | null>(null);
   const [shotId,setShotId] = useState("");
@@ -130,13 +133,35 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     setNotice("");
   }
 
+  async function readReviews(more = false) {
+    const page = await api.listStoryboardReviews(projectId,chapterId,more ? reviewCursor : null);
+    setReviews(old => more ? [...old,...page.reviews] : page.reviews);
+    setReviewCursor(page.nextCursor);
+  }
+
+  async function submitReview(jobId: string) {
+    const review = await api.submitStoryboardReview(projectId,chapterId,jobId);
+    setSubmitted(old => ({ ...old,[jobId]: review.id }));
+    setNotice("已提交审核，项目成员可查看此候选。");
+  }
+
+  async function loadReview(id: string) {
+    const next = await api.getStoryboardReview(projectId,chapterId,id);
+    if (next.reviewId !== id || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
+    setTask(null);
+    setScopes([]);
+    setShotId("");
+    setView(next);
+    setNotice("");
+  }
+
   const selected = view?.version.shots.find(shot => shot.id === shotId);
   const elements = view?.scriptElements.filter(element => element.sceneId === selected?.sceneId && selected.scriptElementIds.includes(element.id)) ?? [];
   const evidence = selected?.provenance.filter(item => item.type === "source_fragment" && item.sourceVersionId === view?.version.sourceVersionId) ?? [];
   const fragments = view?.sourceFragments.filter(fragment => evidence.some(item => item.fragmentId === fragment.id)) ?? [];
   const status = task && taskPresentation(task);
   const canStartAnother = task && (task.state === "succeeded" || task.state === "failed" || task.state === "paused" && task.reason !== "EXECUTION_UNCERTAIN");
-  const retryEnabled = ready && !!view?.current && task?.id === view.version.jobId && !!model && !pending.current;
+  const retryEnabled = ready && !!view?.current && !!view.version.jobId && task?.id === view.version.jobId && !!model && !pending.current;
 
   return <section className="mode-workspace storyboard task-panel" aria-label="分镜候选生成与追溯">
     <h2>分镜工作台</h2>
@@ -162,13 +187,22 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
       </button>
     </li>)}</ul>}
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多分镜任务</button>}
+    <button type="button" disabled={busy} onClick={() => void act(() => readReviews())}>读取项目审核候选</button>
+    {reviews.length > 0 && <ul aria-label="项目分镜审核候选">{reviews.map(review => <li key={review.id}>
+      <button type="button" disabled={busy} aria-pressed={view?.reviewId === review.id} onClick={() => void act(() => loadReview(review.id))}>
+        审核候选 · {new Date(review.submittedAt).toLocaleString("zh-CN")} · {review.id.slice(0,8)}
+      </button>
+    </li>)}</ul>}
+    {reviewCursor && <button type="button" disabled={busy} onClick={() => void act(() => readReviews(true))}>更多审核候选</button>}
     {status && <p>{status.label}{task?.state === "queued" ? " · 等待后台执行" : ` · ${status.note}`}</p>}
-    {canStartAnother && <button type="button" disabled={busy || !!pending.current} onClick={() => {
+    {(canStartAnother || view?.reviewId) && <button type="button" disabled={busy || !!pending.current} onClick={() => {
       setTask(null); setView(null); setScopes([]); setShotId(""); setNotice("");
     }}>返回分镜任务列表</button>}
     {task?.state === "succeeded" && task.result && <button type="button" disabled={busy || !!pending.current} onClick={() => void act(load)}>载入分镜候选</button>}
     {view && <div className="storyboard-candidate">
-      <h3>分镜候选</h3>
+      <h3>{view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
+      {view.version.jobId && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
+        disabled={busy || !!pending.current} onClick={() => void act(() => submitReview(view.version.jobId!))}>提交分镜审核</button>)}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
       <div className="mode-sheet">
         <section aria-label="镜头列表">
@@ -192,12 +226,12 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
       {view.version.failures.length > 0 && <fieldset>
         <legend>失败范围</legend>
         {view.version.failures.map(failure => <label key={failure.scopeKey}>
-          <input className="desktop-task-action" type="checkbox" checked={scopes.includes(failure.scopeKey)} disabled={busy || !retryEnabled || !failure.retryable || (scopes.length >= 100 && !scopes.includes(failure.scopeKey))}
-            onChange={event => setScopes(old => event.target.checked ? [...old,failure.scopeKey] : old.filter(key => key !== failure.scopeKey))} />
+          {view.version.jobId && <input className="desktop-task-action" type="checkbox" checked={scopes.includes(failure.scopeKey)} disabled={busy || !retryEnabled || !failure.retryable || (scopes.length >= 100 && !scopes.includes(failure.scopeKey))}
+            onChange={event => setScopes(old => event.target.checked ? [...old,failure.scopeKey] : old.filter(key => key !== failure.scopeKey))} />}
           {failure.scopeKey} · {failure.code}{!failure.retryable && " · 不可重试"}
         </label>)}
-        <button className="desktop-task-action" type="button" disabled={busy || !retryEnabled || !scopes.length}
-          onClick={() => void act(() => submit({ expectedActiveVersionId: view.version.jobId,scopeKeys: scopes }))}>重试所选失败项</button>
+        {view.version.jobId && <button className="desktop-task-action" type="button" disabled={busy || !retryEnabled || !scopes.length}
+          onClick={() => void act(() => submit({ expectedActiveVersionId: view.version.jobId!,scopeKeys: scopes }))}>重试所选失败项</button>}
       </fieldset>}
     </div>}
   </section>;

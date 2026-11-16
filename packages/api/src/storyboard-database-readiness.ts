@@ -17,6 +17,13 @@ export async function assertStoryboardDatabase(pool: Pool, workspaceIds: readonl
           ('storyboard_candidate_immutable',to_regprocedure('public.reject_immutable_change()'),27)))
       and (select count(*)=2 from pg_index where indisvalid and indexrelid in (
         to_regclass('public.model_tasks_storyboard_queued_idx'),to_regclass('public.model_tasks_storyboard_recovery_idx')))
+      and exists(select 1 from pg_class where oid=to_regclass('public.storyboard_review_submissions')
+        and relrowsecurity and relforcerowsecurity and not pg_has_role(session_user,relowner,'MEMBER')
+        and has_table_privilege(current_user,oid,'SELECT') and has_column_privilege(current_user,oid,'job_id','INSERT')
+        and not has_column_privilege(current_user,oid,'submitted_by','INSERT') and not has_table_privilege(current_user,oid,'UPDATE,DELETE'))
+      and exists(select 1 from pg_trigger where tgrelid=to_regclass('public.storyboard_review_submissions')
+        and tgname='storyboard_review_submission_guard' and tgfoid=to_regprocedure('public.guard_storyboard_review_submission()')
+        and tgtype=7 and tgqual is null and tgenabled in ('O','A'))
       as ready`);
     if (!result.rows[0]?.ready) throw new Error();
   } catch { throw new Error("STORYBOARD_DATABASE_NOT_READY"); }
