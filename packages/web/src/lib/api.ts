@@ -2,6 +2,23 @@ import type { DocumentRequest, ProjectDraft } from "./workflow";
 
 type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: number };
 
+export type StoryboardRetry = { expectedActiveVersionId: string; scopeKeys: string[] };
+export type StoryboardSubmission = { configurationVersionId: string; modelId: string; requestId: string };
+export type StoryboardTask = StoryKnowledgeTask & { input: { stage: "storyboard"; resultType: "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
+export type StoryboardView = {
+  current: boolean;
+  scriptElements: Array<{ id: string; text: string; sceneId: string; provenance: ScriptContentView["version"]["elements"][number]["provenance"] }>;
+  sourceFragments: Array<{ id: string; text: string }>;
+  version: {
+    jobId: string; projectId: string; chapterId: string; sourceVersionId: string; upstreamConfirmedVersionIds: string[];
+    failures: Array<{ scopeKey: string; code: string; retryable: boolean }>;
+    shots: Array<{ id: string; episodeId: string; sceneId: string; ordinal: number; visual: string; action: string; speech: string;
+      durationSeconds: number; shotSize: string; cameraAngle: string; cameraMovement: string; sound: string; emotion: string;
+      characters: string[]; assetIds: string[]; scriptElementIds: string[];
+      provenance: Array<{ type: string; sourceVersionId?: string; fragmentId?: string; additionId?: string }> }>;
+  };
+};
+
 export type SettingsTask = StoryKnowledgeTask & { input: { stage: "settings";resultType: "settingsContent";sourceVersionId: string;upstreamConfirmedVersionIds: string[] } };
 export type SettingsRegenerationSelection = { expectedActiveVersionId: string;assetIds: string[];failureScopeKeys: string[];reason: string };
 export type SettingsRegenerationSubmission = { requestId: string;configurationVersionId: string;modelId: string;selection: SettingsRegenerationSelection };
@@ -136,7 +153,19 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
+function storyboardPath(p: string,c: string) {
+  return `/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/storyboard-tasks`;
+}
 export class ApiClient {
+  storyboardReadiness(p: string,c: string) { return this.request<{ ready: boolean }>(`${storyboardPath(p,c)}/readiness`,{ method: "GET" },"session"); }
+  listStoryboardTasks(p: string,c: string,cursor: string | null = null) {
+    return this.request<{ tasks: StoryboardTask[]; nextCursor: string | null }>(`${storyboardPath(p,c)}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,{ method: "GET" },"session");
+  }
+  getStoryboardTask(p: string,c: string,id: string) { return this.request<StoryboardTask>(`${storyboardPath(p,c)}/${encodeURIComponent(id)}`,{ method: "GET" },"session"); }
+  getStoryboardCandidate(p: string,c: string,id: string) { return this.request<StoryboardView>(`${storyboardPath(p,c)}/${encodeURIComponent(id)}/candidate`,{ method: "GET" },"session"); }
+  submitStoryboard(p: string,c: string,input: StoryboardSubmission & Partial<StoryboardRetry>) {
+    return this.request<StoryboardTask>(`${storyboardPath(p,c)}${input.scopeKeys ? "/retries" : ""}`,{ method: "POST",body: JSON.stringify(input) },"session");
+  }
   previewSettingsReconciliation(p: string,c: string) { return this.request<SettingsReconciliationPreview>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/reconciliation`,{ method: "GET",cache: "no-store" },"session"); }
   reconcileSettings(p: string,c: string,input: SettingsReconciliationCommand) { return this.request<SettingsView["version"]>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings/reconciliation`,{ method: "POST",body: JSON.stringify(input) },"session"); }
   submitSettingsRegeneration(p: string,c: string,input: SettingsRegenerationSubmission) { return this.request<SettingsRegenerationTask>(`/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/settings-regeneration-tasks`,{ method: "POST",body: JSON.stringify(input) },"session"); }

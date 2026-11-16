@@ -25,3 +25,5 @@ Paste requests carry text directly. TXT and DOCX requests carry strict canonical
 For browser WeChat login, `wechatRedirectUri` must be the public HTTPS web callback at `/auth/wechat/callback` and must exactly match the URI registered with WeChat Open Platform. The callback page exchanges `code` and `state` through this API, then returns the in-memory bearer session to its same-origin opener. Deployments that place the web app and API on different origins must explicitly allow the web origin with CORS; a same-origin reverse proxy is preferred.
 
 分镜 Worker 通过 `createProductionApi` 的 `storyboardTasks` 独立启用，提供 `workspaceIds` 白名单和可选的 `intervalMs`。启用需要同库 TLS 的 BYOK 配置、DeepSeek 大陆路由、工作室任务配额和已应用的分镜迁移 0037、0038。服务端使用 `STORYBOARD_TASK_SERVICE` 提交原任务及指定失败范围的重试。
+
+启用分镜 Worker 时，Session API 在 `/projects/:projectId/chapters/:chapterId/storyboard-tasks` 下提供提交、任务列表、状态和候选读取。`POST /retries` 接受基准候选和选中的失败范围。候选读取按已保存的剧本与原文版本返回镜头证据。

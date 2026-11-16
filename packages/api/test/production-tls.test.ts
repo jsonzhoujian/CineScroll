@@ -124,7 +124,6 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       try { await app.listen(0, "127.0.0.1"); }
       catch (error) { await app.close(); throw error; }
       return { http: request(app.getHttpServer()), worker: tasksEnabled ? app.get(StoryKnowledgeTaskWorker) : null,
-        storyboardTasks: storyboardEnabled ? app.get("STORYBOARD_TASK_SERVICE") as ModelTaskService : null,
         regenerationTasks: settingsEnabled ? app.get("SETTINGS_REGENERATION_TASK_SERVICE") as ModelTaskService : null,
         regenerationWorker: settingsEnabled ? app.get(SETTINGS_REGENERATION_WORKER) as StoryKnowledgeTaskWorker : null,
         settingsTasks: settingsEnabled ? app.get("SETTINGS_TASK_SERVICE") as ModelTaskService : null,
@@ -484,27 +483,45 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     finally { await admin.query("alter table storyboard_candidate_versions enable trigger storyboard_candidate_task"); }
     const storyboardApp = await start(ca,false,false,false,false,true);
     try {
-      const actor = { workspaceId,userId }, tasks = storyboardApp.storyboardTasks!;
-      const selection = { projectId,chapterId,configurationVersionId: version!,modelId: "m" };
+      const root = `/projects/${projectId}/chapters/${chapterId}/storyboard-tasks`;
+      const selection = { configurationVersionId: version!,modelId: "m" };
+      await admin.query("update model_rate_limits set window_started_at=now(),request_count=10 where workspace_id=$1 and action='generate'",[workspaceId]);
+      await storyboardApp.http.post(root).set("authorization",bearer)
+        .send({ ...selection,requestId: "rate-limited" }).expect(429);
+      await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
+      await storyboardApp.http.post(root).send({ ...selection,requestId: "tls-storyboard" }).expect(401);
+      await storyboardApp.http.get(`${root}/readiness`).set("authorization",bearer).expect(200,{ ready: true });
+      await storyboardApp.http.post(`${root}/retries`).set("authorization",bearer)
+        .send({ ...selection,requestId: "invalid",expectedActiveVersionId: "x",scopeKeys: ["duplicate","duplicate"] }).expect(400);
       const waitForResult = async (id: string) => {
         for (let i=0;i<100;i++) {
-          const task = await tasks.get(actor,id);
-          if (["succeeded","failed","paused"].includes(task.state)) return task;
+          const result = await storyboardApp.http.get(`${root}/${id}`).set("authorization",bearer).expect(200);
+          if (["succeeded","failed","paused"].includes(result.body.state)) return result.body;
           await new Promise(resolve => setTimeout(resolve,20));
         }
         throw new Error("storyboard task did not finish");
       };
       const before = modelCalls;
-      const original = await tasks.submitStoryboard(actor,{ ...selection,requestId: "tls-storyboard" });
+      const original = (await storyboardApp.http.post(root).set("authorization",bearer)
+        .send({ ...selection,requestId: "tls-storyboard" }).expect(201)).body;
       assert.deepEqual((await waitForResult(original.id)).result,{ candidateVersionId: original.id,extractionStatus: "partially_succeeded" });
-      const retry = await tasks.submitStoryboardRetry(actor,{ ...selection,requestId: "tls-storyboard-retry",
-        expectedActiveVersionId: original.id,scopeKeys: ["shot:2"] });
+      const loadedOriginal = (await storyboardApp.http.get(`${root}/${original.id}/candidate`).set("authorization",bearer)
+        .expect("Cache-Control","no-store").expect(200)).body;
+      assert.ok(loadedOriginal.scriptElements.some((element: { id: string }) => element.id === "action"));
+      assert.ok(loadedOriginal.sourceFragments.some((fragment: { text: string }) => fragment.text === "雨落"));
+      const retry = (await storyboardApp.http.post(`${root}/retries`).set("authorization",bearer)
+        .send({ ...selection,requestId: "tls-storyboard-retry",expectedActiveVersionId: original.id,scopeKeys: ["shot:2"] }).expect(201)).body;
       assert.deepEqual((await waitForResult(retry.id)).result,{ candidateVersionId: retry.id,extractionStatus: "partially_succeeded" });
-      const persisted = (await admin.query("select version_json from storyboard_candidate_versions where workspace_id=$1 and job_id=$2",[workspaceId,retry.id])).rows[0].version_json;
-      assert.deepEqual(persisted.shots.map((shot: { id: string }) => shot.id),["original-shot","retry-shot"]);
-      assert.deepEqual(persisted.failures.map((failure: { scopeKey: string }) => failure.scopeKey),["shot:3"]);
+      const history = (await storyboardApp.http.get(root).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(new Set(history.tasks.map((task: { id: string }) => task.id)),new Set([original.id,retry.id]));
+      const merged = (await storyboardApp.http.get(`${root}/${retry.id}/candidate`).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(merged.version.shots.map((shot: { id: string }) => shot.id),["original-shot","retry-shot"]);
+      assert.deepEqual(merged.version.shots[0],loadedOriginal.version.shots[0]);
+      assert.deepEqual(merged.version.failures,[loadedOriginal.version.failures[1]]);
+      await storyboardApp.http.get(`${root}/${retry.id}/candidate`).expect(401);
       assert.equal(modelCalls,before+2);
     } finally { await storyboardApp.close(); }
+    await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
     const impactApp = await start(ca,false,false,true,true);
     try {
       const settingsBase = `/projects/${projectId}/chapters/${chapterId}/settings`,scriptBase = `/projects/${projectId}/chapters/${chapterId}/script-content`;

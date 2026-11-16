@@ -30,6 +30,7 @@ export class ModelTaskError extends Error {
 export interface ModelTaskRepository {
   /** Internal workspace-scoped discovery only; scanning is not a claim or authorization. */
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
+  listStoryboard?(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   scanStoryboard?(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   scanSettingsRegeneration?(workspaceId: string,mode: TaskScanMode,page: TaskPageRequest): Promise<TaskPage>;
   listSettingsRegeneration?(workspaceId: string,p: string,c: string,page: TaskPageRequest): Promise<TaskPage>;
@@ -116,6 +117,12 @@ export class ModelTaskService {
       if (!await this.#options.contextReader.canRead(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
     } else await this.#context(actor,projectId,chapterId);
     return this.#options.repository.listEpisodePlans(actor.workspaceId,projectId,chapterId,page);
+  }
+  async listStoryboard(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest) {
+    validateTaskPage(page);
+    if (!await this.#options.contextReader.canRead?.(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+    if (!this.#options.repository.listStoryboard) throw new ModelTaskError("STORAGE_UNAVAILABLE");
+    return this.#options.repository.listStoryboard(actor,projectId,chapterId,page);
   }
   async listSettingsRegeneration(actor: Actor,p: string,c: string,page: TaskPageRequest = { limit: 20,cursor: null }) {
     validateTaskPage(page);
@@ -455,6 +462,9 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage> {
     return this.#scan(workspaceId,mode,page,"story_knowledge");
   }
+  async listStoryboard(actor: Actor,p: string,c: string,page: TaskPageRequest) {
+    return this.#list(actor.workspaceId,p,c,page,"storyboardContent",actor.userId);
+  }
   async scanStoryboard(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"storyboardContent"); }
   async scanSettingsRegeneration(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"settingsRegeneration"); }
   async listSettingsRegeneration(w: string,p: string,c: string,page: TaskPageRequest) { return this.#list(w,p,c,page,"settingsRegeneration"); }
@@ -484,10 +494,11 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
-  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration"): Promise<TaskPage> {
+  async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent", createdBy?: string): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
-      && task.chapterId === chapterId && (kind !== "story_knowledge" ? task.input.stage === (["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
+      && task.chapterId === chapterId && (createdBy === undefined || task.createdBy === createdBy)
+      && (kind !== "story_knowledge" ? task.input.stage === (kind === "storyboardContent" ? "storyboard" : ["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script") && task.input.resultType === kind : task.input.stage === "story_knowledge")
       && (page.cursor === null || compareTaskIds(task.id, page.cursor) > 0))
       .sort((a, b) => compareTaskIds(a.id, b.id)).slice(0, page.limit + 1);
     const tasks = rows.slice(0, page.limit);

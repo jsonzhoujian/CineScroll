@@ -8,6 +8,7 @@ import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type W
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
 import type { ReviewFilter } from "../lib/story-knowledge-review";
 import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
+import { StoryboardWorkbench } from "./storyboard-workbench";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { TaskStatusPanel, type TaskReviewTarget } from "./task-status-panel";
 
@@ -235,7 +236,10 @@ export function ImportWorkbench() {
           ? <StoryKnowledgeWorkbench key={`task-review:${taskReviewTarget.expectedVersionId}`} api={api} project={taskReviewTarget.project} chapter={taskReviewTarget.chapter}
               expectedVersionId={taskReviewTarget.expectedVersionId} canManageStage={taskReviewTarget.project.role !== "editor"} cursor={reviewCursor}
               onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
-          : mode !== "trace" && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
+          : mode !== "trace" && !(mode === "storyboard" && project && chapter) && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
+        {project && chapter && <div hidden={mode !== "storyboard"}>
+          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} />
+        </div>}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
 

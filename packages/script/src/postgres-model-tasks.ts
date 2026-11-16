@@ -1,3 +1,4 @@
+import type { Actor } from "./index.ts";
 import type { ModelSettingsPool, ModelSettingsClient } from "./postgres-model-settings.ts";
 import { ModelTaskError, validateTaskScan, validateTaskPage, validateTaskStatus, validateTaskResult, type TaskScanMode, type TaskPageRequest, type TaskResult, type ModelTask, type ModelTaskRepository, type TaskState, type TaskReason } from "./model-tasks.ts";
 
@@ -6,6 +7,9 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   constructor(pool: ModelSettingsPool) { this.#pool = pool; }
   scanStoryKnowledge(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest) {
     return this.#scan(workspaceId,mode,page,"story_knowledge");
+  }
+  listStoryboard(actor: Actor,p: string,c: string,page: TaskPageRequest) {
+    return this.#list(actor.workspaceId,p,c,page,"storyboardContent",actor.userId);
   }
   scanStoryboard(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"storyboardContent"); }
   scanSettingsRegeneration(w: string,m: TaskScanMode,p: TaskPageRequest) { return this.#scan(w,m,p,"settingsRegeneration"); }
@@ -38,14 +42,14 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
-  #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration") {
+  #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent", createdBy?: string) {
     validateTaskPage(page);
     return this.#transaction(workspaceId, async client => {
-      const taskKind = kind !== "story_knowledge" ? `payload->'input'->>'stage'='${["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script"}' and payload->'input'->>'resultType'='${kind}'` : "payload->'input'->>'stage'='story_knowledge'";
+      const taskKind = kind !== "story_knowledge" ? `payload->'input'->>'stage'='${kind === "storyboardContent" ? "storyboard" : ["settingsContent","settingsRegeneration"].includes(kind) ? "settings" : "script"}' and payload->'input'->>'resultType'='${kind}'` : "payload->'input'->>'stage'='story_knowledge'";
       const rows = (await client.query(`select payload,state,revision,reason,result_json,lease_expires_at from model_tasks
         where workspace_id=$1 and payload->>'projectId'=$2 and payload->>'chapterId'=$3
-          and ${taskKind} and ($4::text is null or id collate "C">$4::text collate "C")
-        order by id collate "C" limit $5`, [workspaceId,projectId,chapterId,page.cursor,page.limit+1])).rows;
+          and ${taskKind} and ($6::text is null or payload->>'createdBy'=$6) and ($4::text is null or id collate "C">$4::text collate "C")
+        order by id collate "C" limit $5`, [workspaceId,projectId,chapterId,page.cursor,page.limit+1,createdBy ?? null])).rows;
       const tasks = rows.slice(0, page.limit).map(decode);
       return { tasks, nextCursor: rows.length > page.limit ? tasks.at(-1)!.id : null };
     });

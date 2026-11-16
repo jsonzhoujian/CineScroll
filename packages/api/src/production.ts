@@ -1,3 +1,4 @@
+import { StoryboardApiModule } from "./storyboard-api.ts";
 import { ConfirmedStoryboardHandoff } from "@novel-adaptation/script/storyboard-handoff";
 import { PostgresStoryboardCandidateRepository } from "@novel-adaptation/script/postgres-storyboard-candidates";
 import { StoryboardTaskExecutor, storyboardTaskContext } from "./storyboard-task-executor.ts";
@@ -429,6 +430,10 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         const worker = new StoryKnowledgeTaskWorker({ dispatcher: new StoryboardTaskDispatcher(repository, executor),
           enabled: true, workspaceIds: taskConfig.workspaceIds, ...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
         storyboardWorker = worker;
+        apiModule.imports!.push(StoryboardApiModule.register({
+          sessionVerifier: sessions,tasks,context: storyboardContext,candidates,scripts: contentRepository,projects,
+          rateLimiter: new PostgresModelRateLimiter(restrictedPool),
+        }));
         apiModule.providers!.push(
           { provide: "STORYBOARD_TASK_SERVICE", useValue: tasks },
           { provide: "STORYBOARD_WORKER_LIFECYCLE", useValue: {

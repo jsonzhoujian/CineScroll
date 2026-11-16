@@ -170,3 +170,27 @@
   }
 
 }
+
+.storyboard-candidate .mode-sheet {
+  align-items: start;
+}
+
+.storyboard-candidate li,
+.storyboard-candidate fieldset label {
+  overflow-wrap: anywhere;
+}
+
+.storyboard-candidate fieldset label {
+  display: block;
+  margin-block: .5rem;
+}
+
+.storyboard-candidate dl div {
+  display: flex;
+  gap: .75rem;
+  margin-block: .4rem;
+}
+
+.storyboard-candidate dd {
+  margin: 0;
+}
