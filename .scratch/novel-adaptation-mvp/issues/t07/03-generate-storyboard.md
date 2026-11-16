@@ -2,7 +2,7 @@
 
 Parent: T07
 
-status: in_progress
+status: done
 
 **Prerequisite:** T07-02 completed
 
@@ -12,9 +12,9 @@ status: in_progress
 
 ## Acceptance criteria
 
-- [ ] 冻结并复验正式剧本/设定/原文身份；不得回退候选或旧上游。
-- [ ] 按storyboard.schema.json校验全部镜头字段，scene/episode/asset/scriptElement/provenance引用有效且归属正确。
-- [ ] 后台任务、部分失败与精确范围恢复、持久化和依赖登记；只保存真实引用，不自动重做已有下游。
+- [x] 冻结并复验正式剧本/设定/原文身份；不得回退候选或旧上游。
+- [x] 按storyboard.schema.json校验全部镜头字段，scene/episode/asset/scriptElement/provenance引用有效且归属正确。
+- [x] 后台任务、部分失败与精确范围恢复、持久化和依赖登记；只保存真实引用，不自动重做已有下游。
 - [x] 分镜模式明确加载与逐镜剧本/原文追溯，API/Worker/仓储/浏览器闭环通过。
 
 ## Context and boundaries
@@ -41,3 +41,5 @@ PostgreSQL 候选仓储已完成并通过隔离实库测试。候选及依赖原
 第 3 步已完成。生产分镜 Worker 独立显式启用，按工作室扫描待运行和待恢复任务。迁移 0038 在写入事务内锁定并核对任务认领、创建者、正式上游快照和当前生成许可。局部重试以原创建者的不可变候选为基准，冻结所选可重试失败范围。模型必须逐项返回所选 `scopeKey`，新候选保留成功镜头和未选失败项。隔离 PostgreSQL 和 TLS 生产装配已用模拟模型验证。第 4 步仍待接入。
 
 第 4 步已完成。分镜工作台通过 Session API 提交、刷新和查阅原创建者的任务。候选由用户显式载入，镜头证据来自候选固定的剧本及原文版本。切换工作模式保留所选镜头。模拟模型、隔离 TLS PostgreSQL 和 Chromium 已覆盖部分失败、选择重试及载入合并候选。
+
+2026-11-16 验收完成。双轴复核发现的原请求恢复和移动端写入缺口已修复。浏览器按当前用户、项目和章节保存在本标签页的待核对请求。回执丢失后重新登录仍可用相同请求编号和范围重放。移动端可读失败范围和镜头证据。类型检查、隔离 TLS PostgreSQL、Node 462 条及 Chromium 聚焦 4 条通过。T07-04 已解锁。

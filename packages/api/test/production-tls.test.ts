@@ -490,7 +490,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         .send({ ...selection,requestId: "rate-limited" }).expect(429);
       await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
       await storyboardApp.http.post(root).send({ ...selection,requestId: "tls-storyboard" }).expect(401);
-      await storyboardApp.http.get(`${root}/readiness`).set("authorization",bearer).expect(200,{ ready: true });
+      await storyboardApp.http.get(`${root}/readiness`).set("authorization",bearer).expect(200,{ ready: true,userId });
       await storyboardApp.http.post(`${root}/retries`).set("authorization",bearer)
         .send({ ...selection,requestId: "invalid",expectedActiveVersionId: "x",scopeKeys: ["duplicate","duplicate"] }).expect(400);
       const waitForResult = async (id: string) => {

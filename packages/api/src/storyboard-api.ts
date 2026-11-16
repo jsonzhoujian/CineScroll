@@ -78,7 +78,7 @@ class StoryboardController {
     return respond(async () => {
       const { context } = this.services, actor = req.actor;
       if (!await context.canRead?.(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
-      return { ready: !!await this.current(actor,projectId,chapterId) };
+      return { ready: !!await this.current(actor,projectId,chapterId), userId: actor.userId };
     });
   }
 

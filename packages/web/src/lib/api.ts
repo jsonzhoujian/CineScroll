@@ -157,7 +157,7 @@ function storyboardPath(p: string,c: string) {
   return `/projects/${encodeURIComponent(p)}/chapters/${encodeURIComponent(c)}/storyboard-tasks`;
 }
 export class ApiClient {
-  storyboardReadiness(p: string,c: string) { return this.request<{ ready: boolean }>(`${storyboardPath(p,c)}/readiness`,{ method: "GET" },"session"); }
+  storyboardReadiness(p: string,c: string) { return this.request<{ ready: boolean; userId: string }>(`${storyboardPath(p,c)}/readiness`,{ method: "GET" },"session"); }
   listStoryboardTasks(p: string,c: string,cursor: string | null = null) {
     return this.request<{ tasks: StoryboardTask[]; nextCursor: string | null }>(`${storyboardPath(p,c)}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,{ method: "GET" },"session");
   }

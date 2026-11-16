@@ -4,6 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { taskPresentation } from "../lib/task-status";
 
+type Pending = StoryboardSubmission & Partial<StoryboardRetry>;
+
+function readPending(key: string): Pending | null {
+  const saved = sessionStorage.getItem(key);
+  if (saved === null) return null;
+  const value = JSON.parse(saved) as Pending;
+  const validId = (id: unknown) => typeof id === "string" && !!id.trim() && id.length <= 256 && !/[\r\n]/.test(id);
+  if (!value || ![value.configurationVersionId,value.modelId,value.requestId].every(validId)
+    || ((value.scopeKeys !== undefined || value.expectedActiveVersionId !== undefined)
+      && (!validId(value.expectedActiveVersionId) || !Array.isArray(value.scopeKeys) || !value.scopeKeys.length
+        || value.scopeKeys.length > 100 || new Set(value.scopeKeys).size !== value.scopeKeys.length || !value.scopeKeys.every(validId)))) throw new Error("INVALID_SAVED_SUBMISSION");
+  return value;
+}
+
 export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api: ApiClient; projectId: string; chapterId: string; active: boolean }) {
   const [ready,setReady] = useState(false);
   const [models,setModels] = useState<ModelConfiguration | null>(null);
@@ -17,13 +31,30 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
   const [busy,setBusy] = useState(false);
   const [notice,setNotice] = useState("");
   const inFlight = useRef(false);
-  const pending = useRef<StoryboardSubmission & Partial<StoryboardRetry> | null>(null);
+  const pending = useRef<Pending | null>(null);
+  const storageKey = useRef<string | null>(null);
+
+  function applyReadiness(result: Awaited<ReturnType<ApiClient["storyboardReadiness"]>>) {
+    const key = `storyboard-submission:${JSON.stringify([result.userId,projectId,chapterId])}`;
+    if (storageKey.current !== key) {
+      try {
+        pending.current = readPending(key);
+        storageKey.current = key;
+        if (pending.current) setNotice("上次提交结果待核对，请沿用原提交。");
+      } catch {
+        setReady(false);
+        setNotice("无法读取上次提交记录，暂不能提交分镜任务。");
+        return;
+      }
+    }
+    setReady(result.ready);
+  }
 
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
     void api.storyboardReadiness(projectId,chapterId).then(result => {
-      if (!cancelled) setReady(result.ready);
+      if (!cancelled) applyReadiness(result);
     }).catch(() => {});
     return () => { cancelled = true; };
   },[api,projectId,chapterId,active]);
@@ -49,18 +80,26 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
   }
 
   async function submit(retry?: StoryboardRetry) {
+    const key = storageKey.current;
+    if (!key) return;
     const replay = !!pending.current;
     if (!pending.current) {
       if (!ready || !models || !model) return;
-      pending.current = { configurationVersionId: models.id,modelId: model,requestId: crypto.randomUUID(),...retry };
+      const next = { configurationVersionId: models.id,modelId: model,requestId: crypto.randomUUID(),...retry };
+      sessionStorage.setItem(key,JSON.stringify(next));
+      pending.current = next;
     }
     try {
       const next = checkTask(await api.submitStoryboard(projectId,chapterId,pending.current));
+      sessionStorage.removeItem(key);
       pending.current = null;
       setTask(next);
       setNotice("分镜任务已提交。完成后可载入候选。");
     } catch (error) {
-      if (!replay && error instanceof ApiClientError && [400,403,404,409,429].includes(error.status)) pending.current = null;
+      if (error instanceof ApiClientError && ([400,409].includes(error.status) || !replay && [403,404,429].includes(error.status))) {
+        sessionStorage.removeItem(key);
+        pending.current = null;
+      }
       if (error instanceof ApiClientError && error.code === "UPSTREAM_CHANGED") { setReady(false); setNotice("正式上游或失败范围已变化，请刷新核对。"); return; }
       throw error;
     }
@@ -73,9 +112,9 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     setCursor(page.nextCursor);
     if (!more) {
       if (task) setTask(checkTask(await api.getStoryboardTask(projectId,chapterId,task.id),task.id));
-      setReady((await api.storyboardReadiness(projectId,chapterId)).ready);
+      setNotice("");
+      applyReadiness(await api.storyboardReadiness(projectId,chapterId));
     }
-    setNotice("");
   }
 
   async function load() {
@@ -153,11 +192,11 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
       {view.version.failures.length > 0 && <fieldset>
         <legend>失败范围</legend>
         {view.version.failures.map(failure => <label key={failure.scopeKey}>
-          <input type="checkbox" checked={scopes.includes(failure.scopeKey)} disabled={busy || !retryEnabled || !failure.retryable || (scopes.length >= 100 && !scopes.includes(failure.scopeKey))}
+          <input className="desktop-task-action" type="checkbox" checked={scopes.includes(failure.scopeKey)} disabled={busy || !retryEnabled || !failure.retryable || (scopes.length >= 100 && !scopes.includes(failure.scopeKey))}
             onChange={event => setScopes(old => event.target.checked ? [...old,failure.scopeKey] : old.filter(key => key !== failure.scopeKey))} />
           {failure.scopeKey} · {failure.code}{!failure.retryable && " · 不可重试"}
         </label>)}
-        <button type="button" disabled={busy || !retryEnabled || !scopes.length}
+        <button className="desktop-task-action" type="button" disabled={busy || !retryEnabled || !scopes.length}
           onClick={() => void act(() => submit({ expectedActiveVersionId: view.version.jobId,scopeKeys: scopes }))}>重试所选失败项</button>
       </fieldset>}
     </div>}

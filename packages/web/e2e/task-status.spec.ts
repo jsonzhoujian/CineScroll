@@ -1108,21 +1108,27 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   const failures = [{ scopeKey: "shot:2",code: "INVALID_SHOT",retryable: true },{ scopeKey: "shot:3",code: "PROVIDER_ITEM_FAILED",retryable: false }];
   const shot = { id: "one",visual: "雨打空庭",ordinal: 1,sceneId: "scene",durationSeconds: 4,shotSize: "wide",cameraAngle: "eye_level",
     scriptElementIds: ["element"],assetIds: [],characters: [],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f" }] };
-  let reads = 0, posts = 0;
+  let reads = 0, posts = 0, retryAttempts = 0;
+  let originalRetry: unknown;
   await page.route(`${root}**`,route => {
     const request = route.request(), suffix = request.url().slice(root.length);
     if (request.method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
     expect(request.headers().authorization).toBe("Bearer session");
     if (request.method() === "POST") {
-      posts++;
       const retry = suffix === "/retries", body = request.postDataJSON();
-      if (retry) { expect(body.scopeKeys).toEqual(["shot:2"]); expect(body.expectedActiveVersionId).toBe("initial"); }
+      if (retry) {
+        expect(body.scopeKeys).toEqual(["shot:2"]); expect(body.expectedActiveVersionId).toBe("initial");
+        if (++retryAttempts === 1) originalRetry = body;
+        else expect(body).toEqual(originalRetry);
+      }
       const id = retry ? "retry" : "initial";
       const task = { id,projectId: "p",chapterId: "c",input,state: "succeeded",reason: null,result: { candidateVersionId: id,extractionStatus: "partially_succeeded" } };
+      if (!tasks.has(id)) posts++;
       tasks.set(id,task);
+      if (retryAttempts === 1 && retry) return route.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });
       return route.fulfill({ headers,json: { ...task,state: "queued",result: null } });
     }
-    if (suffix === "/readiness") return route.fulfill({ headers,json: { ready: true } });
+    if (suffix === "/readiness") return route.fulfill({ headers,json: { ready: true,userId: "u" } });
     if (!suffix) return route.fulfill({ headers,json: { tasks: [...tasks.values()],nextCursor: null } });
     const id = suffix.split("/")[1]!;
     if (suffix.endsWith("/candidate")) {
@@ -1156,7 +1162,21 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByRole("button",{ name: "雨打空庭",exact: true })).toHaveAttribute("aria-pressed","true");
   await expect(panel.getByRole("checkbox",{ name: /shot:3/ })).toBeDisabled();
   await panel.getByRole("checkbox",{ name: /shot:2/ }).check();
+  const desktop = page.viewportSize()!;
+  await page.setViewportSize({ width: 390,height: 844 });
+  await expect(panel.getByRole("button",{ name: "重试所选失败项" })).toBeHidden();
+  await page.setViewportSize(desktop);
   await panel.getByRole("button",{ name: "重试所选失败项" }).click();
+  await expect(panel.getByRole("button",{ name: "核对分镜原提交" })).toBeEnabled();
+  await page.reload();
+  await login(page);
+  const resumedStory = page.getByRole("region",{ name: "故事知识任务" });
+  await resumedStory.getByLabel("任务编号").fill("task");
+  await resumedStory.getByRole("button",{ name: "读取任务",exact: true }).click();
+  await page.getByRole("button",{ name: "进入审核",exact: true }).click();
+  await page.getByRole("button",{ name: "分镜",exact: true }).click();
+  await expect(panel.getByRole("button",{ name: "生成分镜候选" })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "核对分镜原提交" }).click();
   await panel.getByRole("button",{ name: "刷新分镜任务" }).click();
   await expect(panel.getByRole("button",{ name: "载入分镜候选" })).toBeEnabled();
   expect(reads).toBe(1);
@@ -1166,4 +1186,5 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByRole("checkbox",{ name: /shot:2/ })).toHaveCount(0);
   await expect(panel.getByRole("checkbox",{ name: /shot:3/ })).toBeVisible();
   expect(posts).toBe(2);
+  expect(retryAttempts).toBe(2);
 });
