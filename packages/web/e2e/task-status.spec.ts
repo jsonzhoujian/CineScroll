@@ -1112,6 +1112,16 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   let originalRetry: unknown;
   const reviewId = "dff888fb-5ec9-41bd-a297-bc2aa682512e";
   let shared = false;
+  let reviewRevision = 0;
+  let suggestions: Array<{ revision: number;shotId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted" }> = [];
+  let reviewedShot = { ...shot,id: "two",visual: "积水倒影" };
+  function reviewView() {
+    return { current: true,reviewId,revision: reviewRevision,suggestions,
+      permissions: { canSuggest: true,canEdit: true,canDecide: true },
+      scriptElements: [{ id: "element",sceneId: "scene",text: "庭院落雨" }],sourceFragments: [{ id: "f",text: "原文雨落" }],
+      version: { ...input,projectId: "p",chapterId: "c",shots: [shot,reviewedShot],failures: failures.slice(1) },
+    };
+  }
   await page.route(`${root}**`,route => {
     const request = route.request(), suffix = request.url().slice(root.length);
     if (request.method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
@@ -1121,10 +1131,22 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     } });
     if (suffix === `/reviews/${reviewId}`) {
       expect(shared).toBe(true);
-      return route.fulfill({ headers,json: { current: true,reviewId,
-        scriptElements: [{ id: "element",sceneId: "scene",text: "庭院落雨" }],sourceFragments: [{ id: "f",text: "原文雨落" }],
-        version: { ...input,projectId: "p",chapterId: "c",shots: [shot,{ ...shot,id: "two",visual: "积水倒影" }],failures: failures.slice(1) },
-      } });
+      return route.fulfill({ headers,json: reviewView() });
+    }
+    if (suffix === `/reviews/${reviewId}/operations` && request.method() === "POST") {
+      const command = request.postDataJSON();
+      expect(command.expectedRevision).toBe(reviewRevision);
+      reviewRevision++;
+      if (command.kind === "suggest") {
+        expect(command.shotId).toBe("two");
+        expect(command.value).toEqual({ visual: "雨水映出屋檐",durationSeconds: 6 });
+        suggestions = [{ revision: reviewRevision,shotId: command.shotId,value: command.value,reason: command.reason,status: "pending" }];
+      } else {
+        expect(command).toMatchObject({ kind: "decide",decision: "accepted",suggestionRevision: 1 });
+        reviewedShot = { ...reviewedShot,...suggestions[0]!.value };
+        suggestions[0]!.status = "accepted";
+      }
+      return route.fulfill({ headers,json: reviewView() });
     }
     if (request.method() === "POST" && suffix === "/retry/review") {
       shared = true;
@@ -1210,6 +1232,18 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByRole("heading",{ name: "项目审核候选" })).toBeVisible();
   await expect(panel.getByRole("button",{ name: "积水倒影",exact: true })).toBeVisible();
   await expect(panel.getByRole("button",{ name: "重试所选失败项" })).toHaveCount(0);
+  await panel.getByRole("button",{ name: "积水倒影",exact: true }).click();
+  const audit = panel.getByRole("region",{ name: "镜头审核" });
+  await audit.getByLabel("镜头画面").fill("雨水映出屋檐");
+  await audit.getByLabel("镜头时长（秒）").fill("6");
+  await audit.getByLabel("审核理由").fill("可见动作更明确");
+  await audit.getByRole("button",{ name: "提交镜头建议" }).click();
+  await expect(audit.getByText(/待裁决/)).toBeVisible();
+  await expect(panel.getByRole("button",{ name: "积水倒影",exact: true })).toBeVisible();
+  await audit.getByLabel("审核理由").fill("已核对正式剧本");
+  await audit.getByRole("button",{ name: "接受建议 1" }).click();
+  await expect(audit.getByText(/已接受/)).toBeVisible();
+  await expect(panel.getByRole("button",{ name: "雨水映出屋檐",exact: true })).toBeVisible();
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
 });

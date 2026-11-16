@@ -30,7 +30,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
   const suffix = randomUUID(), actor = { userId: `owner-${suffix}`, workspaceId: `w-${suffix}` }, projectId = `p-${suffix}`, chapterId = `c-${suffix}`, sourceId = `s-${suffix}`, bibleId = `b-${suffix}`;
   try {
-    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../../story-knowledge/migrations/0003_generation_policy.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql", "../migrations/0038_storyboard_tasks.sql", "../migrations/0039_storyboard_review_submissions.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
+    for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../../story-knowledge/migrations/0003_generation_policy.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql", "../migrations/0038_storyboard_tasks.sql", "../migrations/0039_storyboard_review_submissions.sql", "../migrations/0040_storyboard_review_operations.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
     await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
@@ -462,10 +462,56 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const [shared,replay] = await Promise.all([storyboardRepo.submitReview(actor,projectId,chapterId,storyboard.jobId),
       storyboardRepo.submitReview(actor,projectId,chapterId,storyboard.jobId)]);
     assert.deepEqual(replay,shared);
-    assert.deepEqual(await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id),storyboard);
+    assert.deepEqual((await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id))?.candidate,storyboard);
     assert.equal(await storyboardRepo.findGeneration(reviewer,storyboard),null);
     assert.equal(await storyboardRepo.findReview({ ...reviewer,userId: "outsider" },projectId,chapterId,shared.id),null);
     assert.equal(await storyboardRepo.findReview({ ...reviewer,workspaceId: "other" },projectId,chapterId,shared.id),null);
+    const editor = { ...actor,userId: "editor" };
+    const proposal = { kind: "suggest",requestId: "story-suggest",expectedRevision: 0,reason: "调整视觉",
+      shotId: storyboard.shots[0]!.id,value: { visual: "雨落庭院",durationSeconds: 6 } } as const;
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,{ ...proposal,kind: "edit" }),{ code: "FORBIDDEN" });
+    const proposals = await Promise.allSettled([storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,proposal),
+      storyboardRepo.saveReviewOperation(actor,projectId,chapterId,shared.id,{ ...proposal,requestId: "competing",kind: "edit",value: { visual: "夜雨落下",durationSeconds: 8 } })]);
+    assert.equal(proposals.filter(result => result.status === "fulfilled").length,1);
+    let reviewed = (await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id))!;
+    if (!reviewed.suggestions.length) {
+      await storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,{ ...proposal,expectedRevision: 1 });
+      reviewed = (await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id))!;
+    }
+    const decision = { kind: "decide",requestId: "story-accept",expectedRevision: reviewed.revision,reason: "核对原文",
+      suggestionRevision: reviewed.suggestions[0]!.revision,decision: "accepted" } as const;
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,decision),{ code: "FORBIDDEN" });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,decision);
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,decision);
+    const acceptedStoryboard = (await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id))!;
+    assert.equal(acceptedStoryboard.revision,reviewed.revision+1);
+    assert.equal(acceptedStoryboard.candidate.shots[0]?.visual,"雨落庭院");
+    assert.equal(acceptedStoryboard.suggestions[0]?.status,"accepted");
+    assert.deepEqual(await storyboardRepo.findGeneration(actor,storyboard),storyboard);
+    const nextSuggestion = acceptedStoryboard.revision+1;
+    await storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,{
+      ...proposal,requestId: "story-suggest-again",expectedRevision: acceptedStoryboard.revision,
+    });
+    await storyboardRepo.saveReviewOperation(actor,projectId,chapterId,shared.id,{
+      ...proposal,kind: "edit",requestId: "story-manual-edit",expectedRevision: nextSuggestion,
+      value: { visual: "院墙上的雨痕",durationSeconds: 9 },
+    });
+    const obsoleteDecision = { ...decision,requestId: "story-obsolete",suggestionRevision: nextSuggestion,expectedRevision: nextSuggestion+1 };
+    await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,obsoleteDecision),{ code: "STATE_CONFLICT" });
+    await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,{ ...obsoleteDecision,decision: "rejected" });
+    const rejectedStoryboard = (await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id))!;
+    assert.equal(rejectedStoryboard.candidate.shots[0]?.visual,"院墙上的雨痕");
+    assert.equal(rejectedStoryboard.suggestions.at(-1)?.status,"rejected");
+    const rawReviewWriter = await app.connect();
+    try {
+      await rawReviewWriter.query("begin");
+      await rawReviewWriter.query("select set_config('app.current_user_id',$1,true),set_config('app.current_workspace_id',$2,true)",[actor.userId,actor.workspaceId]);
+      const rawEdit = JSON.stringify({ ...proposal,kind: "edit",requestId: "underflow",expectedRevision: rejectedStoryboard.revision })
+        .replace('"durationSeconds":6','"durationSeconds":1e-1000');
+      await assert.rejects(() => rawReviewWriter.query(`insert into storyboard_review_operations
+        (workspace_id,project_id,chapter_id,review_id,command) values ($1,$2,$3,$4,$5::jsonb)`,
+      [actor.workspaceId,projectId,chapterId,shared.id,rawEdit]),{ code: "P7002" });
+    } finally { await rawReviewWriter.query("rollback");rawReviewWriter.release(); }
     const rollbackCandidate = { ...storyboard,jobId: "rollback-storyboard",
       shots: storyboard.shots.map(shot => ({ ...shot,scriptElementIds: ["invented"] })) };
     await taskRepository.insert({ ...storyboardTask,id: rollbackCandidate.jobId });

@@ -4,12 +4,19 @@ import { validateStoryboardShot, type StoryboardResponseIdentity } from "./story
 import { StoryboardUpstreamError, type ConfirmedStoryboardHandoff } from "./storyboard-handoff.ts";
 import type { StoryboardCandidate, StoryboardCandidateRepository } from "./storyboard-runner.ts";
 
+export type StoryboardReviewCommand = { requestId: string; expectedRevision: number; reason: string } & (
+  { kind: "suggest" | "edit"; shotId: string; value: { visual: string; durationSeconds: number } }
+  | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
+);
+type ReviewOperation = { revision: number; shotId: string; actorId: string; command: StoryboardReviewCommand;
+  change: { visual: string; durationSeconds: number } | null };
+
 export class StoryboardStorageError extends Error {
-  constructor(code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STORAGE_UNAVAILABLE") {
+  constructor(code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STATE_CONFLICT" | "TASK_NOT_FOUND" | "STORAGE_UNAVAILABLE") {
     super(code);
     this.code = code;
   }
-  readonly code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STORAGE_UNAVAILABLE";
+  readonly code: "FORBIDDEN" | "INVALID_CANDIDATE" | "POLICY_RESTRICTED" | "STATE_CONFLICT" | "TASK_NOT_FOUND" | "STORAGE_UNAVAILABLE";
 }
 
 export class PostgresStoryboardCandidateRepository implements StoryboardCandidateRepository {
@@ -58,11 +65,33 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
 
   findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string) {
     return this.transaction(actor, async client => {
+      const key = [actor.workspaceId,projectId,chapterId,reviewId];
       const row = (await client.query(`select v.version_json from storyboard_review_submissions r
         join storyboard_candidate_versions v using(workspace_id,project_id,chapter_id,job_id)
-        where (r.workspace_id,r.project_id,r.chapter_id,r.id)=($1,$2,$3,$4)`,
-      [actor.workspaceId,projectId,chapterId,reviewId])).rows[0];
-      return row ? structuredClone(row.version_json) as StoryboardCandidate : null;
+        where (r.workspace_id,r.project_id,r.chapter_id,r.id)=($1,$2,$3,$4)`,key)).rows[0];
+      if (!row) return null;
+      const candidate = structuredClone(row.version_json) as StoryboardCandidate;
+      const operations = (await client.query(`select revision, shot_id as "shotId", actor_id as "actorId", command, change
+        from storyboard_review_operations where (workspace_id,project_id,chapter_id,review_id)=($1,$2,$3,$4)
+        order by revision`,key)).rows as ReviewOperation[];
+      const changes = new Map<string,ReviewOperation["change"]>();
+      const decisions = new Map<number,"accepted" | "rejected">();
+      for (const operation of operations) {
+        if (operation.change) changes.set(operation.shotId,operation.change);
+        if (operation.command.kind === "decide") decisions.set(operation.command.suggestionRevision,operation.command.decision);
+      }
+      const suggestions = operations.flatMap(({ command,revision,shotId,actorId }) => command.kind === "suggest" ? [{
+        revision,shotId,actorId,value: command.value,reason: command.reason,status: decisions.get(revision) ?? "pending" as const,
+      }] : []);
+      return { candidate: { ...candidate,shots: candidate.shots.map(shot => ({ ...shot,...changes.get(shot.id) })) },
+        revision: operations.at(-1)?.revision ?? 0,suggestions };
+    });
+  }
+
+  saveReviewOperation(actor: Actor, projectId: string, chapterId: string, reviewId: string, command: StoryboardReviewCommand) {
+    return this.transaction(actor, async client => {
+      await client.query(`insert into storyboard_review_operations(workspace_id,project_id,chapter_id,review_id,command)
+        values($1,$2,$3,$4,$5::jsonb)`,[actor.workspaceId,projectId,chapterId,reviewId,JSON.stringify(command)]);
     });
   }
 
@@ -104,7 +133,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       if (error instanceof StoryboardStorageError) throw error;
       const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
       if (code === "P7001") throw new StoryboardUpstreamError();
-      throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : code === "P7002" ? "INVALID_CANDIDATE" : code === "P7003" ? "POLICY_RESTRICTED" : "STORAGE_UNAVAILABLE");
+      throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : code === "P7002" ? "INVALID_CANDIDATE" : code === "P7003" ? "POLICY_RESTRICTED" : code === "P7004" ? "STATE_CONFLICT" : code === "P7005" ? "TASK_NOT_FOUND" : "STORAGE_UNAVAILABLE");
     } finally {
       client?.release();
     }

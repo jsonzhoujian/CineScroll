@@ -5,9 +5,16 @@ type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: numbe
 export type StoryboardRetry = { expectedActiveVersionId: string; scopeKeys: string[] };
 export type StoryboardSubmission = { configurationVersionId: string; modelId: string; requestId: string };
 export type StoryboardTask = StoryKnowledgeTask & { input: { stage: "storyboard"; resultType: "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
+export type StoryboardReviewCommand = { requestId: string; expectedRevision: number; reason: string } & (
+  { kind: "suggest" | "edit"; shotId: string; value: { visual: string; durationSeconds: number } }
+  | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
+);
 export type StoryboardView = {
   current: boolean;
   reviewId?: string;
+  revision?: number;
+  permissions?: { canSuggest: boolean; canEdit: boolean; canDecide: boolean };
+  suggestions?: Array<{ revision: number;shotId: string;actorId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted" | "rejected" }>;
   scriptElements: Array<{ id: string; text: string; sceneId: string; provenance: ScriptContentView["version"]["elements"][number]["provenance"] }>;
   sourceFragments: Array<{ id: string; text: string }>;
   version: {
@@ -167,6 +174,10 @@ export class ApiClient {
   }
   getStoryboardReview(p: string,c: string,id: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
+  operateStoryboardReview(p: string,c: string,id: string,command: StoryboardReviewCommand) {
+    return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}/operations`,
+      { method: "POST",body: JSON.stringify(command) },"session");
   }
   storyboardReadiness(p: string,c: string) { return this.request<{ ready: boolean; userId: string }>(`${storyboardPath(p,c)}/readiness`,{ method: "GET" },"session"); }
   listStoryboardTasks(p: string,c: string,cursor: string | null = null) {

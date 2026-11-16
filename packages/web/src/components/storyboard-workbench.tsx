@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
+import { StoryboardShotReview } from "./storyboard-shot-review";
 import { taskPresentation } from "../lib/task-status";
 
 type Pending = StoryboardSubmission & Partial<StoryboardRetry>;
@@ -75,7 +76,9 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     try { await operation(); }
     catch (error) {
       const login = error instanceof ApiClientError && error.status === 401;
-      setNotice(login ? "登录已失效，请重新登录。" : pending.current ? "提交结果待核对，请沿用原提交。" : "操作失败，请刷新后再试。");
+      setNotice(login ? "登录已失效，请重新登录。" : pending.current ? "提交结果待核对，请沿用原提交。"
+        : view?.reviewId && error instanceof ApiClientError && error.status === 409 ? "审核版本或上游已变化，请刷新当前审核候选。"
+        : "操作失败，请刷新后再试。");
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -145,12 +148,12 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     setNotice("已提交审核，项目成员可查看此候选。");
   }
 
-  async function loadReview(id: string) {
+  async function loadReview(id: string, preserveShot = false) {
     const next = await api.getStoryboardReview(projectId,chapterId,id);
     if (next.reviewId !== id || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
     setTask(null);
     setScopes([]);
-    setShotId("");
+    if (!preserveShot) setShotId("");
     setView(next);
     setNotice("");
   }
@@ -201,6 +204,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     {task?.state === "succeeded" && task.result && <button type="button" disabled={busy || !!pending.current} onClick={() => void act(load)}>载入分镜候选</button>}
     {view && <div className="storyboard-candidate">
       <h3>{view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
+      {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.reviewId!,true))}>刷新当前审核候选</button>}
       {view.version.jobId && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
         disabled={busy || !!pending.current} onClick={() => void act(() => submitReview(view.version.jobId!))}>提交分镜审核</button>)}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
@@ -221,6 +225,16 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
           <ul aria-label="镜头原文依据">{fragments.map(fragment => <li key={fragment.id}>{fragment.text}</li>)}
             {selected.provenance.filter(item => item.type === "approved_addition").map((item,i) => <li key={i}>获批改编新增 {item.additionId}</li>)}
           </ul>
+          {view.reviewId && view.revision !== undefined && <StoryboardShotReview key={JSON.stringify([view.reviewId,view.revision,selected.id])}
+            view={view} shot={selected} busy={busy} onSave={async command => {
+              await act(async () => {
+                const next = await api.operateStoryboardReview(projectId,chapterId,view.reviewId!,command);
+                if (next.reviewId !== view.reviewId || next.version.projectId !== projectId || next.version.chapterId !== chapterId
+                  || next.version.jobId !== undefined || next.revision === undefined || next.revision <= command.expectedRevision) throw new Error("WRONG_REVIEW");
+                setView(next);
+                setNotice("分镜审核已保存。");
+              });
+            }} />}
         </section>}
       </div>
       {view.version.failures.length > 0 && <fieldset>

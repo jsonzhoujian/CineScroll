@@ -4,7 +4,8 @@ import type { ProjectImportRepository } from "@novel-adaptation/project-import";
 import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
 import { ModelTaskError, type ModelTaskContextReader, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import type { ScriptContentRepository } from "@novel-adaptation/script/script-content";
-import { StoryboardStorageError, type PostgresStoryboardCandidateRepository } from "@novel-adaptation/script/postgres-storyboard-candidates";
+import { StoryboardUpstreamError } from "@novel-adaptation/script/storyboard-handoff";
+import { StoryboardStorageError, type StoryboardReviewCommand, type PostgresStoryboardCandidateRepository } from "@novel-adaptation/script/postgres-storyboard-candidates";
 import type { StoryboardCandidate } from "@novel-adaptation/script/storyboard-runner";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 import type { ModelRateLimiter } from "./model-rate-limit.ts";
@@ -16,9 +17,9 @@ type Services = {
   tasks: ModelTaskService;
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
-  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "findReview">;
+  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
-  projects: Pick<ProjectImportRepository, "findChapter">;
+  projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
 };
 function id(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n]/.test(value)) throw new BadRequestException();
@@ -37,9 +38,9 @@ function submission(body: unknown, retry: boolean) {
 async function respond<T>(action: () => Promise<T>) {
   try { return await action(); }
   catch (error) {
-    const code = error instanceof ModelTaskError || error instanceof ModelSettingsError || error instanceof StoryboardStorageError ? error.code : "STORAGE_UNAVAILABLE";
+    const code = error instanceof StoryboardUpstreamError ? "UPSTREAM_CHANGED" : error instanceof ModelTaskError || error instanceof ModelSettingsError || error instanceof StoryboardStorageError ? error.code : "STORAGE_UNAVAILABLE";
     const status = code === "TASK_NOT_FOUND" ? 404 : ["TASK_QUEUE_FULL","TASK_EXECUTION_FULL"].includes(code) ? 429
-      : ["INVALID_CONTEXT","INVALID_CONFIGURATION"].includes(code) ? 400 : ["STATE_CONFLICT","UPSTREAM_CHANGED","VERSION_CONFLICT"].includes(code) ? 409
+      : ["INVALID_CONTEXT","INVALID_CONFIGURATION","INVALID_CANDIDATE"].includes(code) ? 400 : ["STATE_CONFLICT","UPSTREAM_CHANGED","VERSION_CONFLICT"].includes(code) ? 409
       : ["FORBIDDEN","POLICY_RESTRICTED","WORKSPACE_TASK_DISABLED","TASK_PROVIDER_UNSUPPORTED"].includes(code) ? 403 : 503;
     throw new HttpException({ code, message: code },status);
   }
@@ -98,16 +99,32 @@ class StoryboardController {
   }
 
   review(req: { actor: Actor },p: string,c: string,review: string) {
-    const projectId = id(p), chapterId = id(c), selected = reviewId(review), actor = req.actor;
+    const projectId = id(p), chapterId = id(c), selected = reviewId(review);
+    return respond(() => this.reviewView(req.actor,projectId,chapterId,selected));
+  }
+
+  operate(req: { actor: Actor },p: string,c: string,review: string,body: unknown) {
+    const projectId = id(p), chapterId = id(c), selected = reviewId(review);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new BadRequestException();
     return respond(async () => {
-      const candidate = await this.services.candidates.findReview(actor,projectId,chapterId,selected);
-      if (!candidate) throw new ModelTaskError("TASK_NOT_FOUND");
-      const { version, ...view } = await this.view(actor,projectId,chapterId,candidate);
-      return { ...view, reviewId: selected, version: {
-        projectId, chapterId, sourceVersionId: version.sourceVersionId, upstreamConfirmedVersionIds: version.upstreamConfirmedVersionIds,
-        shots: version.shots, failures: version.failures,
-      } };
+      await this.services.candidates.saveReviewOperation(req.actor,projectId,chapterId,selected,body as StoryboardReviewCommand);
+      return this.reviewView(req.actor,projectId,chapterId,selected);
     });
+  }
+
+  private async reviewView(actor: Actor,projectId: string,chapterId: string,selected: string) {
+    const [review,access] = await Promise.all([
+      this.services.candidates.findReview(actor,projectId,chapterId,selected),
+      this.services.projects.findProjectAccess(actor,projectId),
+    ]);
+    if (!review || !access) throw new ModelTaskError("TASK_NOT_FOUND");
+    const { candidate,revision,suggestions } = review;
+    const { version, ...view } = await this.view(actor,projectId,chapterId,candidate);
+    const canReview = view.current && (access.role === "owner" || access.role === "reviewer");
+    return { ...view, reviewId: selected, revision, suggestions,
+      permissions: { canSuggest: view.current,canEdit: canReview,canDecide: canReview },
+      version: { projectId, chapterId, sourceVersionId: version.sourceVersionId, upstreamConfirmedVersionIds: version.upstreamConfirmedVersionIds,
+        shots: version.shots, failures: version.failures } };
   }
 
   submitReview(req: { actor: Actor },p: string,c: string,job: string) {
@@ -169,6 +186,7 @@ Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
   ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["review",Get("reviews/:id"),Param("id")],
+  ["operate",Post("reviews/:id/operations"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {
   const d = Object.getOwnPropertyDescriptor(StoryboardController.prototype,method)!;
@@ -178,6 +196,7 @@ for (const [method,route,parameter] of [
   Param("projectId")(StoryboardController.prototype,method,1);
   Param("chapterId")(StoryboardController.prototype,method,2);
   parameter?.(StoryboardController.prototype,method,3);
+  if (method === "operate") Body()(StoryboardController.prototype,method,4);
 }
 export class StoryboardApiModule {
   static register(services: Services): DynamicModule {

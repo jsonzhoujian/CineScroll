@@ -29,3 +29,5 @@ For browser WeChat login, `wechatRedirectUri` must be the public HTTPS web callb
 启用分镜 Worker 时，Session API 在 `/projects/:projectId/chapters/:chapterId/storyboard-tasks` 下提供提交、任务列表、状态和候选读取。`POST /retries` 接受基准候选和选中的失败范围。候选读取按已保存的剧本与原文版本返回镜头证据。
 
 部署分镜审核入口需应用迁移 0039。创建者通过 `POST /:id/review` 提交已完成的候选。同章节成员通过 `GET /reviews` 和 `GET /reviews/:id` 读取共享候选，审核编号独立于任务编号。
+
+分镜镜头审核需应用迁移 0040。项目成员可从 `GET /reviews/:id` 读取当前审核修订和建议状态。通过 `POST /reviews/:id/operations` 提交画面或时长修改、建议及裁决，附原请求编号和预期修订号。
