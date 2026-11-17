@@ -582,7 +582,16 @@ for (const mode of ["success","editor","failed","stale","unknown-submit","unknow
     if (mode === "unknown-submit" && qualityPosts === 1) return r.fulfill({ headers,status: 503,json: { code: "STORAGE_UNAVAILABLE" } });return r.fulfill({ headers,json: task });
   });
   await page.route(`${base}/quality/quality-task`,r => { if (mode === "stale") version = { ...version,id: "newer-script" };return r.fulfill({ headers,json: { task: { ...task,state: "succeeded" },report } }); });
-  await page.route(`${base}/versions/*/impacts`,r => r.fulfill({ headers,json: { versionId: version.id,impacts: [{ confirmed_version_id: version.id,source_element_id: "action",target_stage: "storyboard",target_item_id: "shot-1",status: "unreviewed" }] } }));
+  const affectedReview = "dff888fb-5ec9-41bd-a297-bc2aa682512e";
+  await page.route(`${origin}/projects/p/chapters/c/storyboard-tasks/reviews/${affectedReview}`,route => route.fulfill({ headers,json: {
+    reviewId: affectedReview,current: false,revision: 0,scriptElements: [{ id: "action",sceneId: "scene",text: "旧剧本动作" }],
+    sourceFragments: [{ id: "f",text: "旧原文证据" }],
+    version: { projectId: "p",chapterId: "c",sourceVersionId: "s",upstreamConfirmedVersionIds: ["old-script","settings","plan","candidate"],failures: [],
+      shots: ["other-shot","shot-1"].map(id => ({ id,visual: id === "shot-1" ? "受影响的庭院镜头" : "无关镜头",sceneId: "scene",ordinal: 1,
+        characters: [],assetIds: [],scriptElementIds: ["action"],provenance: [{ type: "source_fragment",sourceVersionId: "s",fragmentId: "f" }] })),
+    },
+  } }));
+  await page.route(`${base}/versions/*/impacts`,r => r.fulfill({ headers,json: { versionId: version.id,impacts: [{ confirmed_version_id: version.id,source_element_id: "action",target_stage: "storyboard",target_version_id: affectedReview,target_item_id: "shot-1",status: "unreviewed" }] } }));
   await page.route(`${base}/publication`,r => {
     if (r.request().method() === "OPTIONS") return r.fulfill({ headers,status: 204 });
     publishPosts++;const input = r.request().postDataJSON();expect(input.reason).toBe("已核对质量与原文");
@@ -613,6 +622,15 @@ for (const mode of ["success","editor","failed","stale","unknown-submit","unknow
   await panel.getByRole("button",{ name: "雨打庭院",exact: true }).click();await quality.getByLabel("正式操作理由").fill("已核对质量与原文");await quality.getByRole("button",{ name: "锁定当前元素" }).click();
   await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "读取修订影响范围" }).click();await expect(panel.getByLabel("修订受影响项").getByText(/shot-1/)).toBeVisible();await reloadReview();await expect(panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true })).toBeVisible();await panel.getByRole("button",{ name: "雨打庭院 · 已锁定",exact: true }).click();await expect(panel.getByLabel("剧本原文依据").getByText("雨落",{ exact: true })).toBeVisible();
   if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 });await expect(quality.getByRole("button",{ name: "锁定当前元素" })).toBeHidden(); }
+  if (mode === "success") {
+    await panel.getByRole("button",{ name: "读取修订影响范围" }).click();
+    await panel.getByRole("button",{ name: "查看镜头 shot-1" }).click();
+    const board = page.getByRole("region",{ name: "分镜候选生成与追溯" });
+    await expect(board.getByRole("button",{ name: "受影响的庭院镜头",exact: true })).toHaveAttribute("aria-pressed","true");
+    await expect(board.getByRole("heading",{ name: "受影响的庭院镜头",exact: true })).toBeFocused();
+    await expect(board.getByLabel("镜头原文依据")).toContainText("旧原文证据");
+    await expect(board.getByRole("button",{ name: "确认正式分镜" })).toHaveCount(0);
+  }
   expect(qualityPosts).toBe(mode === "unknown-submit" ? 2 : 1);expect(publishPosts).toBe(mode === "unknown-confirm" ? 3 : 2);
 });
 

@@ -8,6 +8,7 @@ import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type W
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
 import type { ReviewFilter } from "../lib/story-knowledge-review";
 import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
+import { OpenStoryboardImpact, type StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
 import { StoryboardWorkbench } from "./storyboard-workbench";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { TaskStatusPanel, type TaskReviewTarget } from "./task-status-panel";
@@ -80,6 +81,7 @@ export function ImportWorkbench() {
   const syncStoryKnowledgeConfirmation = useCallback((chapterId: string, confirmed: boolean) => {
     setConfirmedStoryKnowledgeChapterId((current) => confirmed ? chapterId : current === chapterId ? null : current);
   }, []);
+  const [impactTarget,setImpactTarget] = useState<StoryboardImpactTarget | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTab>("progress");
   const expectedWechatState = useRef<string | null>(null);
   const wechatPopup = useRef<Window | null>(null);
@@ -185,7 +187,11 @@ export function ImportWorkbench() {
     setDiff(null);
   });
 
-  return <main className={`app-shell mode-${mode} step-${step}`}>
+  return <OpenStoryboardImpact.Provider value={target => {
+    if (target.projectId !== project?.id || target.chapterId !== chapter?.id) return;
+    setImpactTarget(target);
+    setMode("storyboard");
+  }}><main className={`app-shell mode-${mode} step-${step}`}>
     <header className="topbar">
       <a className="brand" href="#"><span className="seal">映</span><span><b>映卷</b><small>小说动态漫改编工作台</small></span></a>
       <nav className="modes" aria-label="工作模式">
@@ -250,7 +256,7 @@ export function ImportWorkbench() {
               onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
           : mode !== "trace" && !(mode === "storyboard" && project && chapter) && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
         {project && chapter && <div hidden={mode !== "storyboard"}>
-          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} />
+          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} impactTarget={impactTarget} onImpactHandled={setImpactTarget} />
         </div>}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
@@ -262,7 +268,7 @@ export function ImportWorkbench() {
         <div className="stage-stack"><span className={step === "version" ? "ready" : "locked"}>01 · 故事知识</span><span className="locked">02 · 剧本</span><span className="locked">03 · 设定</span><span className="locked">04 · 分镜</span></div>
       </aside>
     </div>
-  </main>;
+  </main></OpenStoryboardImpact.Provider>;
 }
 
 function Panel({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children: React.ReactNode }) {

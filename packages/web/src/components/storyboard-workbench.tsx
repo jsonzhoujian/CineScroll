@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardPublication, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
 import { readStoryboardShot, writeStoryboardCursor } from "../lib/storyboard-cursor";
+import type { StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
 import { taskPresentation } from "../lib/task-status";
 
 type Pending = StoryboardSubmission & Partial<StoryboardRetry>;
@@ -20,7 +21,7 @@ function readPending(key: string): Pending | null {
   return value;
 }
 
-export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api: ApiClient; projectId: string; chapterId: string; active: boolean }) {
+export function StoryboardWorkbench({ api, projectId, chapterId, active, impactTarget, onImpactHandled }: { api: ApiClient; projectId: string; chapterId: string; active: boolean; impactTarget: StoryboardImpactTarget | null; onImpactHandled(target: null): void }) {
   const [ready,setReady] = useState(false);
   const [models,setModels] = useState<ModelConfiguration | null>(null);
   const [model,setModel] = useState("");
@@ -35,6 +36,8 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
   const [task,setTask] = useState<StoryboardTask | null>(null);
   const [view,setView] = useState<StoryboardView | null>(null);
   const [confirmationReason,setConfirmationReason] = useState("");
+  const shotHeading = useRef<HTMLHeadingElement>(null);
+  const impactView = useRef<StoryboardView | null>(null);
   const [shotId,setShotId] = useState("");
   const [scopes,setScopes] = useState<string[]>([]);
   const [busy,setBusy] = useState(false);
@@ -70,9 +73,21 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
 
   useEffect(() => {
     if (!active || !view) return;
+    if (impactView.current === view) {
+      impactView.current = null;
+      shotHeading.current?.focus();
+      return;
+    }
     const query = new URL(window.location.href).searchParams;
     setShotId(selected => readStoryboardShot(view,query,selected) ?? selected);
   },[active,view]);
+
+  useEffect(() => {
+    if (!active || busy || inFlight.current || !impactTarget
+      || impactTarget.projectId !== projectId || impactTarget.chapterId !== chapterId) return;
+    onImpactHandled(null);
+    void act(() => loadReview(impactTarget.reviewId,false,null,impactTarget.shotId));
+  },[active,busy,impactTarget,projectId,chapterId,onImpactHandled]);
 
   function selectShot(id: string, fragmentId?: string) {
     setShotId(id);
@@ -169,13 +184,18 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     setNotice("已提交审核，项目成员可查看此候选。");
   }
 
-  async function loadReview(id: string | null, preserveShot = false, publicationId: string | null = null) {
+  async function loadReview(id: string | null, preserveShot = false, publicationId: string | null = null, impactShotId?: string) {
     const next = publicationId !== null ? await api.getStoryboardPublication(projectId,chapterId,publicationId) : id === null ? await api.getConfirmedStoryboard(projectId,chapterId) : await api.getStoryboardReview(projectId,chapterId,id);
     if ((publicationId !== null && next.publicationId !== publicationId) || (id === null ? !next.formalRead : next.reviewId !== id) || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
+    if (impactShotId !== undefined && !next.version.shots.some(shot => shot.id === impactShotId)) {
+      setNotice("该审核候选找不到受影响的镜头。");
+      return;
+    }
     setPinnedPublication(publicationId);
     setTask(null);
     setScopes([]);
-    if (!preserveShot) setShotId("");
+    if (!preserveShot) setShotId(impactShotId ?? "");
+    impactView.current = impactShotId === undefined ? null : next;
     setView(next);
     setNotice("");
   }
@@ -241,7 +261,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     </li>)}</ul>}
     {publicationCursor && <button type="button" disabled={busy} onClick={() => void act(() => readPublications(true))}>更多分镜发布</button>}
     {reviews.length > 0 && <ul aria-label="项目分镜审核候选">{reviews.map(review => <li key={review.id}>
-      <button type="button" disabled={busy} aria-pressed={view?.reviewId === review.id} onClick={() => void act(() => loadReview(review.id))}>
+      <button type="button" disabled={busy} aria-pressed={!!view && !view.formalRead && view.reviewId === review.id} onClick={() => void act(() => loadReview(review.id))}>
         审核候选 · {new Date(review.submittedAt).toLocaleString("zh-CN")} · {review.id.slice(0,8)}
       </button>
     </li>)}</ul>}
@@ -277,7 +297,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
           </li>)}</ol>
         </section>
         {selected && <section aria-label="镜头详情">
-          <h4>{selected.visual}</h4>
+          <h4 ref={shotHeading} tabIndex={-1}>{selected.visual}</h4>
           <p>镜头 {selected.ordinal} · {selected.durationSeconds} 秒 · {selected.shotSize} · {selected.cameraAngle}</p>
           <dl>{[["动作",selected.action],["台词",selected.speech],["运镜",selected.cameraMovement],["声音",selected.sound],["情绪",selected.emotion],["角色",selected.characters.join("、")],["资产",selected.assetIds.join("、")]].filter(([,value]) => value).map(([label,value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
           <h5>剧本元素</h5>
