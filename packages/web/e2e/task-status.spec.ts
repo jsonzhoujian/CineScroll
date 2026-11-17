@@ -1160,6 +1160,10 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     if (suffix === "/publications") return route.fulfill({ headers,json: {
       publications: [{ id: "42",revision: 1,confirmedAt: "2026-11-17T00:00:00Z" }],nextCursor: null,
     } });
+    if (suffix === "/publications/42/reconciliation" && request.method() === "POST") {
+      expect(request.postDataJSON()).toEqual({ sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] });
+      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42" } });
+    }
     if (suffix === "/publications/42/reconciliation") return route.fulfill({ headers,json: {
       publicationId: "42",upstreamChanged: true,currentUpstream: { sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] },
       shots: [{ id: "one",visual: "雨打空庭",locked: true,referencesMatch: false }],
@@ -1313,6 +1317,9 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   const preview = panel.getByRole("region",{ name: "分镜跨上游核对预览" });
   await expect(preview).toContainText("替换前须解锁");
   await expect(preview).toContainText("引用须重新核对");
+  await preview.getByRole("button",{ name: "创建分镜核对候选" }).click();
+  await expect(preview).toContainText("核对候选 reconcile-42 · 待逐镜核对");
+  await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 42" })).toBeVisible();
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
 });

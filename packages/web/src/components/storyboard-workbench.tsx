@@ -29,6 +29,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [cursor,setCursor] = useState<string | null>(null);
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
+  const [reconciliationId,setReconciliationId] = useState<string | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
   const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
   const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
@@ -193,6 +194,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
       return;
     }
     setReconciliation(null);
+    setReconciliationId(null);
     setPinnedPublication(publicationId);
     setTask(null);
     setScopes([]);
@@ -293,6 +295,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
       {view.canPreviewReconciliation && view.publicationId && <button type="button" disabled={busy} onClick={() => void act(async () => {
         const preview = await api.previewStoryboardReconciliation(projectId,chapterId,view.publicationId!);
         if (preview.publicationId !== view.publicationId) throw new Error("WRONG_PUBLICATION");
+        setReconciliationId(null);
         setReconciliation(preview);
       })}>预览分镜跨上游核对</button>}
       {view.formalRead && reconciliation && reconciliation.publicationId === view.publicationId && <section aria-label="分镜跨上游核对预览">
@@ -301,6 +304,13 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
           {shot.locked && " · 替换前须解锁"}
           {shot.referencesMatch === false ? " · 引用须重新核对" : shot.referencesMatch ? " · 引用可定位，待核对内容" : ""}
         </li>)}</ul>
+        {reconciliationId && <p>核对候选 {reconciliationId} · 待逐镜核对</p>}
+        {reconciliation.upstreamChanged && reconciliation.currentUpstream && !reconciliationId && <button type="button"
+          className="desktop-task-action" disabled={busy} onClick={() => void act(async () => {
+            const draft = await api.beginStoryboardReconciliation(projectId,chapterId,reconciliation.publicationId,reconciliation.currentUpstream!);
+            if (draft.publicationId !== reconciliation.publicationId || !draft.id) throw new Error("WRONG_RECONCILIATION");
+            setReconciliationId(draft.id);
+          })}>创建分镜核对候选</button>}
       </section>}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
       <div className="mode-sheet">

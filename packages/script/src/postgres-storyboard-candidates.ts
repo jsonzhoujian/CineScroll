@@ -65,6 +65,20 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     });
   }
 
+  beginReconciliation(actor: Actor,p: string,c: string,publicationId: string,sourceVersionId: string,upstreamIds: readonly string[]) {
+    return this.transaction(actor, async client => {
+      const key = [actor.workspaceId,p,c,publicationId,sourceVersionId,upstreamIds];
+      const inserted = (await client.query(`insert into storyboard_reconciliations
+        (workspace_id,project_id,chapter_id,base_publication_id,source_version_id,upstream_ids)
+        values($1,$2,$3,$4,$5,$6) on conflict(workspace_id,project_id,chapter_id,base_publication_id,source_version_id,upstream_ids)
+        do nothing returning id`,key)).rows[0];
+      const row = inserted ?? (await client.query(`select id from storyboard_reconciliations
+        where (workspace_id,project_id,chapter_id,base_publication_id,source_version_id,upstream_ids)=($1,$2,$3,$4,$5,$6)`,key)).rows[0];
+      if (!row) throw new StoryboardStorageError("STORAGE_UNAVAILABLE");
+      return { id: row.id as string,publicationId,sourceVersionId,upstreamConfirmedVersionIds: upstreamIds };
+    });
+  }
+
   listPublications(actor: Actor, projectId: string, chapterId: string, cursor: string | null) {
     return this.transaction(actor, async client => {
       const rows = (await client.query(`select publication_id::text as id, revision, recorded_at as "confirmedAt"

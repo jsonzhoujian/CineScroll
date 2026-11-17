@@ -19,7 +19,7 @@ type Services = {
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
   handoff: Pick<ConfirmedStoryboardHandoff, "read">;
-  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "findReview" | "saveReviewOperation">;
+  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "beginReconciliation" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
   projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
 };
@@ -152,6 +152,23 @@ class StoryboardController {
     });
   }
 
+  beginReconciliation(req: { actor: Actor },p: string,c: string,publication: string,body: unknown) {
+    const projectId = id(p),chapterId = id(c),selected = parsePublicationId(publication),actor = req.actor;
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new BadRequestException();
+    const command = body as Record<string,unknown>;
+    if (Object.keys(command).length !== 2 || !Array.isArray(command.upstreamConfirmedVersionIds) || command.upstreamConfirmedVersionIds.length !== 4) throw new BadRequestException();
+    const sourceVersionId = id(command.sourceVersionId), ids = command.upstreamConfirmedVersionIds.map(id);
+    return respond(async () => {
+      const access = await this.services.projects.findProjectAccess(actor,projectId);
+      if (!access || !await this.services.context.canRead?.(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (access.role !== "owner" && access.role !== "reviewer") throw new StoryboardStorageError("FORBIDDEN");
+      const current = await this.current(actor,projectId,chapterId);
+      if (!current || current.sourceVersionId !== sourceVersionId || current.upstreamConfirmedVersionIds.length !== ids.length
+        || ids.some((value,i) => value !== current.upstreamConfirmedVersionIds[i])) throw new ModelTaskError("UPSTREAM_CHANGED");
+      return this.services.candidates.beginReconciliation(actor,projectId,chapterId,selected,sourceVersionId,ids);
+    });
+  }
+
   review(req: { actor: Actor },p: string,c: string,review: string) {
     const projectId = id(p), chapterId = id(c), selected = reviewId(review);
     return respond(() => this.reviewView(req.actor,projectId,chapterId,selected));
@@ -243,7 +260,7 @@ UseGuards(SessionGuard)(StoryboardController);
 Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
-  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["beginReconciliation",Post("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
   ["operate",Post("reviews/:id/operations"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {
@@ -254,7 +271,7 @@ for (const [method,route,parameter] of [
   Param("projectId")(StoryboardController.prototype,method,1);
   Param("chapterId")(StoryboardController.prototype,method,2);
   parameter?.(StoryboardController.prototype,method,3);
-  if (method === "operate") Body()(StoryboardController.prototype,method,4);
+  if (method === "operate" || method === "beginReconciliation") Body()(StoryboardController.prototype,method,4);
 }
 export class StoryboardApiModule {
   static register(services: Services): DynamicModule {

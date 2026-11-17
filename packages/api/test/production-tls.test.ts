@@ -151,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -606,6 +606,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(preview.upstreamChanged,false);
       assert.equal(preview.shots[0].locked,true);
       assert.equal(preview.shots[0].referencesMatch,null);
+      await storyboardApp.http.post(reconciliationPath).set("authorization",bearer).send(preview.currentUpstream).expect(409);
     } finally { await storyboardApp.close(); }
     await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
     const impactApp = await start(ca,false,false,true,true,true);
@@ -657,6 +658,15 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.deepEqual(migratedPreview.currentUpstream.upstreamConfirmedVersionIds.slice(0,2),[confirmed.id,final.id]);
       assert.equal(migratedPreview.shots[0].locked,true);
       assert.equal(typeof migratedPreview.shots[0].referencesMatch,"boolean");
+      await impactApp.http.post(reconciliationPath!).set("authorization",bearer).send({
+        ...migratedPreview.currentUpstream,sourceVersionId: "old",
+      }).expect(409);
+      const attempts = await Promise.all([1,2].map(() => impactApp.http.post(reconciliationPath!).set("authorization",bearer)
+        .send(migratedPreview.currentUpstream).expect(201)));
+      assert.deepEqual(attempts[0]!.body,attempts[1]!.body);
+      assert.equal(attempts[0]!.body.publicationId,migratedPreview.publicationId);
+      const stillFormal = (await impactApp.http.get(reconciliationPath!).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(stillFormal,migratedPreview);
 
 
     } finally { await impactApp.close(); }
