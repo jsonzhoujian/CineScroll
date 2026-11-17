@@ -11,6 +11,7 @@ export type StoryboardReviewCommand = { requestId: string; expectedRevision: num
   | { kind: "confirm"; expectedPublicationId: string | null }
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
+export type StoryboardPublication = { id: string; revision: number; confirmedAt: string };
 export type StoryboardView = {
   current: boolean;
   reviewId?: string;
@@ -181,6 +182,14 @@ export class ApiClient {
   }
   getStoryboardReview(p: string,c: string,id: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
+  listStoryboardPublications(p: string,c: string,cursor: string | null) {
+    const query = cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+    return this.request<{ publications: StoryboardPublication[]; nextCursor: string | null }>(
+      `${storyboardPath(p,c)}/publications${query}`,{ method: "GET" },"session");
+  }
+  getStoryboardPublication(p: string,c: string,id: string) {
+    return this.request<StoryboardView>(`${storyboardPath(p,c)}/publications/${encodeURIComponent(id)}`,{ method: "GET" },"session");
   }
   getConfirmedStoryboard(p: string,c: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/confirmed`,{ method: "GET" },"session");

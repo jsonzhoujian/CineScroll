@@ -65,6 +65,19 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     });
   }
 
+  listPublications(actor: Actor, projectId: string, chapterId: string, cursor: string | null) {
+    return this.transaction(actor, async client => {
+      const rows = (await client.query(`select publication_id::text as id, revision, recorded_at as "confirmedAt"
+        from storyboard_review_operations where (workspace_id,project_id,chapter_id)=($1,$2,$3)
+          and publication_id is not null and ($4::bigint is null or publication_id<$4)
+        order by publication_id desc limit 21`,[actor.workspaceId,projectId,chapterId,cursor])).rows;
+      const publications = rows.slice(0,20).map(row => ({
+        id: row.id as string, revision: row.revision as number, confirmedAt: (row.confirmedAt as Date).toISOString(),
+      }));
+      return { publications,nextCursor: rows.length > 20 ? publications.at(-1)!.id : null };
+    });
+  }
+
   findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string | null, publicationId: string | null = null) {
     return this.transaction(actor, async client => {
       const scope = [actor.workspaceId,projectId,chapterId];

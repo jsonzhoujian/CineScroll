@@ -17,7 +17,7 @@ type Services = {
   tasks: ModelTaskService;
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
-  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "findReview" | "saveReviewOperation">;
+  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
   projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
 };
@@ -27,6 +27,10 @@ function id(value: unknown): string {
 }
 function reviewId(value: unknown) {
   if (typeof value !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value)) throw new BadRequestException();
+  return value;
+}
+function parsePublicationId(value: unknown) {
+  if (typeof value !== "string" || !/^[1-9][0-9]{0,18}$/.test(value) || BigInt(value) > 9223372036854775807n) throw new BadRequestException();
   return value;
 }
 function submission(body: unknown, retry: boolean) {
@@ -103,10 +107,20 @@ class StoryboardController {
     return respond(() => this.reviewView(req.actor,projectId,chapterId,null));
   }
 
+  publications(req: { actor: Actor },p: string,c: string,query: Record<string,unknown>) {
+    const projectId = id(p), chapterId = id(c);
+    if (Object.keys(query).some(key => key !== "cursor")) throw new BadRequestException();
+    const cursor = query.cursor === undefined ? null : parsePublicationId(query.cursor);
+    return respond(async () => {
+      if (!await this.services.context.canRead?.(req.actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      return this.services.candidates.listPublications(req.actor,projectId,chapterId,cursor);
+    });
+  }
+
   publication(req: { actor: Actor },p: string,c: string,publicationId: string) {
     const projectId = id(p), chapterId = id(c);
-    if (!/^[1-9][0-9]{0,18}$/.test(publicationId) || BigInt(publicationId) > 9223372036854775807n) throw new BadRequestException();
-    return respond(() => this.reviewView(req.actor,projectId,chapterId,null,publicationId));
+    const selected = parsePublicationId(publicationId);
+    return respond(() => this.reviewView(req.actor,projectId,chapterId,null,selected));
   }
 
   review(req: { actor: Actor },p: string,c: string,review: string) {
@@ -199,7 +213,7 @@ UseGuards(SessionGuard)(StoryboardController);
 Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
-  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publication",Get("publications/:id"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
   ["operate",Post("reviews/:id/operations"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {

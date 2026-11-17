@@ -565,6 +565,13 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(published.formalRead,true);
       assert.equal(published.permissions.canEdit,false);
       assert.equal(published.episodeDurations[0].seconds,60);
+      await storyboardApp.http.get(`${root}/publications`).expect(401);
+      const page = (await storyboardApp.http.get(`${root}/publications`).set("authorization",bearer).expect("Cache-Control","no-store").expect(200)).body;
+      assert.equal(page.publications[0].id,published.publicationId);
+      assert.equal(page.publications[0].revision,published.revision);
+      assert.equal(page.nextCursor,null);
+      await storyboardApp.http.get(`${root}/publications?cursor=${published.publicationId}`).set("authorization",bearer)
+        .expect(200,{ publications: [],nextCursor: null });
       const pinnedPath = `${root}/publications/${published.publicationId}`;
       await storyboardApp.http.get(pinnedPath).expect(401);
       await storyboardApp.http.get(pinnedPath).set("authorization",bearer).expect("Cache-Control","no-store").expect(200,published);

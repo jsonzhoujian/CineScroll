@@ -35,3 +35,5 @@ For browser WeChat login, `wechatRedirectUri` must be the public HTTPS web callb
 正式分镜需应用迁移 0041。审核操作支持 `lock`、`unlock` 与 `confirm`。确认携带上一正式发布编号或 `null`，逐集允许的实际时长偏差为 ±10%。`GET /reviews/confirmed` 读取章节当前正式内容。
 
 分镜历史发布可通过 `GET /projects/:projectId/chapters/:chapterId/storyboard-tasks/publications/:id` 按正式发布编号只读查询。返回内容和锁定状态重建到该次确认修订。
+
+同一路径的 `GET /publications` 按发布编号倒序返回每页最多 20 条，使用 `nextCursor` 继续读取。

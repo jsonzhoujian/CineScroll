@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
+import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardPublication, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
 import { readStoryboardShot, writeStoryboardCursor } from "../lib/storyboard-cursor";
 import { taskPresentation } from "../lib/task-status";
@@ -26,6 +26,9 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
   const [model,setModel] = useState("");
   const [tasks,setTasks] = useState<StoryboardTask[]>([]);
   const [cursor,setCursor] = useState<string | null>(null);
+  const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
+  const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
+  const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
   const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
   const [reviewCursor,setReviewCursor] = useState<string | null>(null);
   const [submitted,setSubmitted] = useState<Record<string,string>>({});
@@ -166,14 +169,21 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     setNotice("已提交审核，项目成员可查看此候选。");
   }
 
-  async function loadReview(id: string | null, preserveShot = false) {
-    const next = id === null ? await api.getConfirmedStoryboard(projectId,chapterId) : await api.getStoryboardReview(projectId,chapterId,id);
-    if ((id === null ? !next.formalRead : next.reviewId !== id) || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
+  async function loadReview(id: string | null, preserveShot = false, publicationId: string | null = null) {
+    const next = publicationId !== null ? await api.getStoryboardPublication(projectId,chapterId,publicationId) : id === null ? await api.getConfirmedStoryboard(projectId,chapterId) : await api.getStoryboardReview(projectId,chapterId,id);
+    if ((publicationId !== null && next.publicationId !== publicationId) || (id === null ? !next.formalRead : next.reviewId !== id) || next.version.projectId !== projectId || next.version.chapterId !== chapterId || next.version.jobId !== undefined) throw new Error("WRONG_REVIEW");
+    setPinnedPublication(publicationId);
     setTask(null);
     setScopes([]);
     if (!preserveShot) setShotId("");
     setView(next);
     setNotice("");
+  }
+
+  async function readPublications(more = false) {
+    const page = await api.listStoryboardPublications(projectId,chapterId,more ? publicationCursor : null);
+    setPublications(old => more ? [...(old ?? []),...page.publications] : page.publications);
+    setPublicationCursor(page.nextCursor);
   }
 
   async function saveReview(command: StoryboardReviewCommand) {
@@ -221,6 +231,15 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多分镜任务</button>}
     <button type="button" disabled={busy} onClick={() => void act(() => readReviews())}>读取项目审核候选</button>
     <button type="button" disabled={busy} onClick={() => void act(() => loadReview(null))}>读取正式分镜</button>
+    <button type="button" disabled={busy} onClick={() => void act(() => readPublications())}>读取分镜发布历史</button>
+    {publications?.length === 0 && <p>暂无正式发布</p>}
+    {!!publications?.length && <ul aria-label="分镜发布历史">{publications.map(publication => <li key={publication.id}>
+      <button type="button" disabled={busy} aria-pressed={view?.formalRead === true && pinnedPublication === publication.id}
+        onClick={() => void act(() => loadReview(null,false,publication.id))}>
+        发布 {publication.id} · 修订 {publication.revision} · {new Date(publication.confirmedAt).toLocaleString("zh-CN")}
+      </button>
+    </li>)}</ul>}
+    {publicationCursor && <button type="button" disabled={busy} onClick={() => void act(() => readPublications(true))}>更多分镜发布</button>}
     {reviews.length > 0 && <ul aria-label="项目分镜审核候选">{reviews.map(review => <li key={review.id}>
       <button type="button" disabled={busy} aria-pressed={view?.reviewId === review.id} onClick={() => void act(() => loadReview(review.id))}>
         审核候选 · {new Date(review.submittedAt).toLocaleString("zh-CN")} · {review.id.slice(0,8)}
@@ -233,7 +252,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     }}>返回分镜任务列表</button>}
     {task?.state === "succeeded" && task.result && <button type="button" disabled={busy || !!pending.current} onClick={() => void act(load)}>载入分镜候选</button>}
     {view && <div className="storyboard-candidate">
-      <h3>{view.formalRead ? "正式分镜" : view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
+      <h3>{view.formalRead ? (pinnedPublication ? `正式分镜 · 发布 ${pinnedPublication}` : "正式分镜") : view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
       {view.confirmed && !view.formalRead && <p>当前镜头内容已正式确认</p>}
       {!!view.episodeDurations?.length && <ul aria-label="逐集时长">
         {view.episodeDurations.map(episode => <li key={episode.id}>{episode.title} · {episode.seconds === null ? "超出显示范围" : `${Number(episode.seconds.toPrecision(12))} 秒`}
@@ -246,7 +265,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
           expectedPublicationId: view.publicationId ?? null,reason: confirmationReason.trim(),
         })}>确认正式分镜</button>
       </div>}
-      {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.formalRead ? null : view.reviewId!,true))}>刷新当前审核候选</button>}
+      {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.formalRead ? null : view.reviewId!,true,view.formalRead ? pinnedPublication : null))}>刷新当前审核候选</button>}
       {view.version.jobId && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
         disabled={busy || !!pending.current} onClick={() => void act(() => submitReview(view.version.jobId!))}>提交分镜审核</button>)}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
