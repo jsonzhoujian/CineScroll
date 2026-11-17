@@ -22,7 +22,19 @@ export class PostgresScriptContentRepository implements ScriptContentRepository 
     return this.transaction(actor,async client => (await client.query("select confirmed_version_id,source_version_id,source_element_id,target_stage,target_version_id,target_item_id,status from script_impact_links where workspace_id=$1 and project_id=$2 and chapter_id=$3 and target_stage='settings' and target_version_id=$4 order by confirmed_version_id,source_version_id,source_element_id,target_item_id",[actor.workspaceId,p,c,targetVersionId])).rows as ScriptImpactLink[]);
   }
   listImpacts(actor: Actor,p: string,c: string,confirmedVersionId: string) {
-    return this.transaction(actor,async client => (await client.query("select confirmed_version_id,source_version_id,source_element_id,target_stage,target_version_id,target_item_id,status from script_impact_links where workspace_id=$1 and project_id=$2 and chapter_id=$3 and confirmed_version_id=$4 order by source_version_id,source_element_id,target_stage,target_version_id,target_item_id",[actor.workspaceId,p,c,confirmedVersionId])).rows as ScriptImpactLink[]);
+    return this.transaction(actor,async client => {
+      const sharedReviews = (await client.query("select to_regclass('public.storyboard_review_submissions') is not null as available")).rows[0]?.available === true;
+      const join = sharedReviews ? `left join storyboard_review_submissions r
+        on (r.workspace_id,r.project_id,r.chapter_id,r.job_id)=(i.workspace_id,i.project_id,i.chapter_id,i.target_version_id)
+        and i.target_stage='storyboard'` : "";
+      const target = sharedReviews ? "coalesce(r.id::text,i.target_version_id)" : "i.target_version_id";
+      const visible = sharedReviews ? "(i.target_stage<>'storyboard' or r.id is not null)" : "i.target_stage<>'storyboard'";
+      return (await client.query(`select i.confirmed_version_id,i.source_version_id,i.source_element_id,i.target_stage,
+        ${target} as target_version_id,i.target_item_id,i.status
+        from script_impact_links i ${join} where (i.workspace_id,i.project_id,i.chapter_id,i.confirmed_version_id)=($1,$2,$3,$4)
+        and ${visible} order by i.source_version_id,i.source_element_id,i.target_stage,target_version_id,i.target_item_id`,
+      [actor.workspaceId,p,c,confirmedVersionId])).rows as ScriptImpactLink[];
+    });
   }
   findRevisionOperation(actor: Actor,p: string,c: string,id: string) {
     return this.transaction(actor,client => this.revisionResult(client,actor,p,c,id));

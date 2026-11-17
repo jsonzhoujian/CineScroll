@@ -166,7 +166,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const revisedFormal = await publication.execute(actor,projectId,chapterId,{ kind: "confirm",requestId: "revision-confirm",reason: "重新审核通过",expectedActiveVersionId: revisionCandidate.id,reportId: revisedReport.id });
     assert.equal(revisedFormal.status,"confirmed");
     const impacts = await rebuilt.listImpacts(actor,projectId,chapterId,revisedFormal.id);
-    assert.equal(impacts.length,1);assert.equal(impacts[0]!.status,"unreviewed");assert.equal(impacts[0]!.target_item_id,"shot-1");
+    assert.deepEqual(impacts,[]);
     assert.equal((await rebuilt.listImpacts({ ...actor,workspaceId: "other" },projectId,chapterId,revisedFormal.id)).length,0);
     assert.equal((await rebuilt.findConfirmed(actor,projectId,chapterId))?.id,revisedFormal.id);
     assert.equal((await rebuilt.findVersion(actor,projectId,chapterId,suggestedFormal.id))?.elements.find(e => e.id === "action")?.text,"edited after retry");
@@ -606,6 +606,15 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     await assert.rejects(() => staleStoryboardRepo.saveGeneration(actor,staleStoryboard),{ code: "UPSTREAM_CHANGED" });
     assert.equal(await staleStoryboardRepo.findGeneration(actor,staleStoryboard),null);
     assert.deepEqual(await reopenedStoryboard.findGeneration(actor,storyboard),storyboard);
+    const storyboardImpacts = (await rebuilt.listImpacts(reviewer,projectId,chapterId,upstreamConfirmed.id))
+      .filter(impact => impact.target_stage === "storyboard");
+    assert.ok(storyboardImpacts.some(impact => impact.target_version_id === completeReview
+      && impact.target_item_id === confirmShot.id && impact.source_element_id === "action"));
+    assert.ok(storyboardImpacts.every(impact => [shared.id,completeReview].includes(impact.target_version_id)));
+    const storedImpact = (await admin.query(`select target_version_id,target_item_id from script_impact_links
+      where workspace_id=$1 and confirmed_version_id=$2 and target_stage='storyboard' and target_version_id=$3`,
+    [actor.workspaceId,upstreamConfirmed.id,completeId])).rows;
+    assert.ok(storedImpact.some((impact: { target_item_id: string }) => impact.target_item_id === confirmShot.id));
     const settingsImpacts = await new PostgresScriptContentRepository(app).listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id);
     assert.deepEqual(settingsImpacts,[{ confirmed_version_id: upstreamConfirmed.id,source_version_id: revisedFormal.id,source_element_id: "action",target_stage: "settings",target_version_id: lockedSetting.id,target_item_id: settingAsset.id,status: "unreviewed" }]);
     assert.deepEqual(await settingsReviewRepo.findActive(actor,projectId,chapterId),lockedSetting);

@@ -1,3 +1,8 @@
+import { InMemorySettingsCandidateRepository, SettingsRunner } from "../src/settings-runner.ts";
+import { InMemorySettingsReviewRepository, SettingsReviewService } from "../src/settings-review.ts";
+import { ConfirmedStoryboardHandoff } from "../src/storyboard-handoff.ts";
+import { StoryboardRunner, type StoryboardCandidate } from "../src/storyboard-runner.ts";
+import storyboardFixture from "../../../docs/contracts/fixtures/ai/valid-storyboard.json" with { type: "json" };
 import { ScriptService,InMemoryScriptRepository } from "../src/index.ts";
 import { ScriptRevisionService } from "../src/script-revision.ts";
 import assert from "node:assert/strict";
@@ -13,7 +18,7 @@ const samples = [
   { genre: "都市",source: "会议室灯光明亮。记者担心证据被毁，将文件放到桌上。",action: "记者将文件放到桌上。",environment: "明亮会议室",fact: "记者展示文件",character: "记者",dialogue: "文件在这里。",sound: "文件落桌声",narration: "记者担心证据被毁。" },
   { genre: "悬疑",source: "走廊昏暗。侦探心生疑虑，停下脚步，检查门锁。",action: "侦探停下脚步，检查门锁。",environment: "昏暗走廊",fact: "侦探检查门锁",character: "侦探",dialogue: "门锁不对劲。",sound: "脚步停下",narration: "侦探心生疑虑。" },
 ];
-for (const sample of samples) for (const targetDurationSeconds of [60,180,300] as const) test(`T06 synthetic public-boundary acceptance: ${sample.genre}/${targetDurationSeconds}s`,async () => {
+for (const sample of samples) for (const targetDurationSeconds of [60,180,300] as const) test(`T06/T07 synthetic public-boundary acceptance: ${sample.genre}/${targetDurationSeconds}s`,async () => {
   const actor = { userId: "owner",workspaceId: "w" },repository = new InMemoryScriptContentRepository();let seq = 0;
   const plans = new ScriptService({ repository: new InMemoryScriptRepository(),accessReader: { findProjectAccess: async () => ({ role: "owner" }) },upstreamReader: { findConfirmedStoryBible: async () => ({ versionId: "bible_1",sourceVersionId: "source_1",factIds: ["fact_1"],fragmentIds: ["f1"] }) },idGenerator: () => `plan${++seq}`,clock: () => new Date("2026-11-03") });
   const planCandidate = await plans.recordEpisodePlan(actor,{ expectedActiveVersionId: null,projectId: "p",chapterId: "c",sourceVersionId: "source_1",storyBibleVersionId: "bible_1",targetDurationSeconds,aspectRatio: "9:16",narrativeMode: "narration",episodes: template.confirmedPlan!.episodes,majorAdaptationProposals: [{ id: "proposal",kind: "reorder_events",summary: "调整呈现顺序",rationale: "节奏",affectedFactIds: ["fact_1"] }] });
@@ -61,6 +66,68 @@ for (const sample of samples) for (const targetDurationSeconds of [60,180,300] a
   assert.deepEqual(handoff.version.scenes[0]?.characters,[sample.character]);
   assert.equal(handoff.version.elements.find(e => e.elementType === "dialogue")?.speaker,sample.character);
   for (const element of handoff.version.elements) for (const evidence of element.provenance) { assert.equal(evidence.type,"source_fragment");if (evidence.type === "source_fragment") { assert.equal(evidence.sourceVersionId,"source_1");assert.ok(handoff.sourceFragments.some(f => f.id === evidence.fragmentId)); } }
+
+  const makeId = () => `t07-${++seq}`, clock = () => new Date("2026-11-17");
+  const settings = await new SettingsRunner({ handoff: reader,repository: new InMemorySettingsCandidateRepository(reader),idGenerator: makeId,clock,
+    model: { async generate({ input,...identity }) {
+      assert.equal(input.version.id,revisedFormal.id);
+      return { ...identity,status: "succeeded",items: [
+        ["character",sample.character],["location",sample.environment],["prop","道具"],["visualStyle","叙事画风"],
+      ].map(([assetType,name]) => ({ scopeKey: assetType,status: "succeeded",value: {
+        id: assetType,assetType,name,visibleDefinition: { description: name },state: "",stateChanges: [],restrictions: [],
+        provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "visualized" }],
+      } })) };
+    } },
+  }).run(actor,"p","c","settings");
+  const settingReviews = new InMemorySettingsReviewRepository(actor,settings);
+  const reviews = new SettingsReviewService({ repository: settingReviews,handoff: reader,access: accessReader,idGenerator: makeId,clock });
+  const suggested = await reviews.execute(actor,"p","c",{ kind: "suggest",requestId: "asset-suggest",expectedActiveVersionId: settings.id,
+    assetId: "location",value: settings.assets.find(asset => asset.id === "location"),reason: "保持场景依据" });
+  const accepted = await reviews.execute(actor,"p","c",{ kind: "decide",requestId: "asset-decide",expectedActiveVersionId: suggested.id,
+    suggestionId: suggested.suggestions[0]!.id,decision: "accepted",reason: "核对原文" });
+  const settingsFormal = await reviews.execute(actor,"p","c",{ kind: "confirm",requestId: "asset-confirm",expectedActiveVersionId: accepted.id,reason: "核对全部资产" });
+  const lockedSettings = await reviews.execute(actor,"p","c",{ kind: "lock",requestId: "asset-lock",expectedActiveVersionId: settingsFormal.id,assetId: "location",reason: "锁定场景" });
+  const storyboardHandoff = new ConfirmedStoryboardHandoff(reader,settingReviews);
+  const upstream = await storyboardHandoff.read(actor,"p","c");
+  assert.equal(upstream.settings.id,lockedSettings.id);
+  const stored = new Map<string,StoryboardCandidate>();
+  const storyboard = new StoryboardRunner({ handoff: storyboardHandoff,repository: {
+    async findGeneration(_actor,identity) { return stored.get(identity.jobId) ?? null; },
+    async saveGeneration(_actor,value) { stored.set(value.jobId,value); return value; },
+  },model: { async generate({ input, scopeKeys, retryOfJobId,...identity }) {
+    if (retryOfJobId) assert.deepEqual(scopeKeys,["second"]);
+    const item = { ...storyboardFixture.items[0]!.value,episodeId: "episode_1",sceneId: "scene_1",
+      id: retryOfJobId ? "second" : "first",ordinal: retryOfJobId ? 2 : 1,visual: sample.action,
+      durationSeconds: targetDurationSeconds/2,assetIds: input.settings.assets.map(asset => asset.id),scriptElementIds: ["action"],
+      provenance: [{ type: "source_fragment",sourceVersionId: "source_1",fragmentId: "f1",transformation: "visualized" }],
+    };
+    const ok = { scopeKey: item.id,status: "succeeded",value: item };
+    return { ...identity,status: retryOfJobId ? "succeeded" : "partially_succeeded",
+      items: retryOfJobId ? [ok] : [ok,{ scopeKey: "second",status: "failed",error: { code: "RETRY",message: "",retryable: true } }] };
+  } } });
+  const snapshot = { projectId: "p",chapterId: "c",jobId: "shots",sourceVersionId: upstream.sourceVersionId,upstreamConfirmedVersionIds: upstream.upstreamConfirmedVersionIds };
+  const firstShots = await storyboard.run(actor,snapshot);
+  assert.equal(firstShots.generationStatus,"partially_succeeded");
+  const recoveredShots = await storyboard.run(actor,{ ...snapshot,jobId: "retry-shots" },{
+    expectedActiveVersionId: snapshot.jobId,retryOfJobId: snapshot.jobId,scopeKeys: ["second"],
+  });
+  assert.equal(recoveredShots.generationStatus,"succeeded");
+  assert.deepEqual(recoveredShots.shots[0],firstShots.shots[0]);
+  assert.equal(recoveredShots.shots.reduce((sum,shot) => sum+shot.durationSeconds,0),targetDurationSeconds);
+  assert.deepEqual(recoveredShots.upstreamConfirmedVersionIds,[revisedFormal.id,lockedSettings.id,plan.id,"bible_1"]);
+  const changedDraft = await revision.execute(actor,"p","c",{ ...suggestion,requestId: "post-storyboard-suggest",
+    expectedActiveVersionId: revisedFormal.id,text: `${sample.action}停顿片刻。` });
+  const changed = await revision.execute(actor,"p","c",{ kind: "decide",requestId: "post-storyboard-accept",expectedActiveVersionId: changedDraft.id,
+    reason: "核对后修订",suggestionId: changedDraft.suggestions!.find(s => s.status === "pending")!.id,decision: "accepted" });
+  const changedReport = await publication.assess(actor,"p","c",{ jobId: "upstream-impact-quality",binding: qualityBinding(changed,context),model: { async assess() {
+    return { versionId: changed.id,events: [{ factId: "fact_1",elementIds: [changed.elements.find(element => element.elementType === "action")!.id],verdict: "covered" }],facts: [{ factId: "fact_1",verdict: "consistent" }],
+      episodes: [{ episodeId: "episode_1",estimatedSeconds: targetDurationSeconds }],unsupportedCoreFactElementIds: [] };
+  } } });
+  assert.equal(changedReport.passed,true,JSON.stringify(changedReport.reasons));
+  await publication.execute(actor,"p","c",{ kind: "confirm",requestId: "changed-formal",expectedActiveVersionId: changed.id,reason: "重新确认",reportId: changedReport.id });
+  await assert.rejects(() => storyboard.run(actor,{ ...snapshot,jobId: "stale-shots" }),{ code: "UPSTREAM_CHANGED" });
+  assert.ok((await settingReviews.findConfirmed(actor,"p","c"))?.locks.location);
+
 });
 
 test("unresolved major adaptation blocks model invocation and candidate writes",async () => {
