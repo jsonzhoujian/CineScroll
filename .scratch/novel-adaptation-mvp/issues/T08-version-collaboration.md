@@ -1,6 +1,6 @@
 # T08 — Versions, impact analysis, and collaboration
 
-status: ready
+status: in_progress
 prerequisite: T07 completed
 unlocks: [T10]
 
@@ -18,3 +18,8 @@ Protect confirmed work when upstream content changes and support non-realtime st
 - Key operations appear in an immutable project audit view.
 - Concurrent edit attempts fail safely without overwriting another member’s work.
 
+
+## 实施进度
+
+- 已支持按发布编号读取历史正式分镜。镜头、建议和锁定记录按该次确认修订重建，证据仍绑定当时的正式剧本和原文。读取入口遵循章节成员权限。
+- 下一切片接入工作台版本列表、历史发布定位和影响证据跳转。

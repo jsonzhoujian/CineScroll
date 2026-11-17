@@ -103,6 +103,12 @@ class StoryboardController {
     return respond(() => this.reviewView(req.actor,projectId,chapterId,null));
   }
 
+  publication(req: { actor: Actor },p: string,c: string,publicationId: string) {
+    const projectId = id(p), chapterId = id(c);
+    if (!/^[1-9][0-9]{0,18}$/.test(publicationId) || BigInt(publicationId) > 9223372036854775807n) throw new BadRequestException();
+    return respond(() => this.reviewView(req.actor,projectId,chapterId,null,publicationId));
+  }
+
   review(req: { actor: Actor },p: string,c: string,review: string) {
     const projectId = id(p), chapterId = id(c), selected = reviewId(review);
     return respond(() => this.reviewView(req.actor,projectId,chapterId,selected));
@@ -117,9 +123,9 @@ class StoryboardController {
     });
   }
 
-  private async reviewView(actor: Actor,projectId: string,chapterId: string,selected: string | null) {
+  private async reviewView(actor: Actor,projectId: string,chapterId: string,selected: string | null, publicationIdFilter: string | null = null) {
     const [review,access] = await Promise.all([
-      this.services.candidates.findReview(actor,projectId,chapterId,selected),
+      this.services.candidates.findReview(actor,projectId,chapterId,selected,publicationIdFilter),
       this.services.projects.findProjectAccess(actor,projectId),
     ]);
     if (!review || !access) throw new ModelTaskError("TASK_NOT_FOUND");
@@ -193,7 +199,7 @@ UseGuards(SessionGuard)(StoryboardController);
 Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
-  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publication",Get("publications/:id"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
   ["operate",Post("reviews/:id/operations"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {

@@ -33,3 +33,5 @@ For browser WeChat login, `wechatRedirectUri` must be the public HTTPS web callb
 分镜镜头审核需应用迁移 0040。项目成员可从 `GET /reviews/:id` 读取当前审核修订和建议状态。通过 `POST /reviews/:id/operations` 提交画面或时长修改、建议及裁决，附原请求编号和预期修订号。
 
 正式分镜需应用迁移 0041。审核操作支持 `lock`、`unlock` 与 `confirm`。确认携带上一正式发布编号或 `null`，逐集允许的实际时长偏差为 ±10%。`GET /reviews/confirmed` 读取章节当前正式内容。
+
+分镜历史发布可通过 `GET /projects/:projectId/chapters/:chapterId/storyboard-tasks/publications/:id` 按正式发布编号只读查询。返回内容和锁定状态重建到该次确认修订。

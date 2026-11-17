@@ -65,12 +65,13 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     });
   }
 
-  findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string | null) {
+  findReview(actor: Actor, projectId: string, chapterId: string, reviewId: string | null, publicationId: string | null = null) {
     return this.transaction(actor, async client => {
       const scope = [actor.workspaceId,projectId,chapterId];
       const formal = (await client.query(`select publication_id::text as "publicationId",review_id as "reviewId",revision
         from storyboard_review_operations where (workspace_id,project_id,chapter_id)=($1,$2,$3)
-          and publication_id is not null order by publication_id desc limit 1`,scope)).rows[0] as
+          and publication_id is not null and ($4::bigint is null or publication_id=$4)
+          order by publication_id desc limit 1`,[...scope,publicationId])).rows[0] as
         { publicationId: string; reviewId: string; revision: number } | undefined;
       const selected = reviewId ?? formal?.reviewId;
       if (!selected) return null;
@@ -88,7 +89,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       const decisions = new Map<number,"accepted" | "rejected">();
       const locks = new Set<string>();
       let lastChange = 0;
-      for (const operation of log) {
+      for (const operation of publicationId === null ? log : operations) {
         if (operation.command.kind === "lock") locks.add(operation.shotId);
         if (operation.command.kind === "unlock") locks.delete(operation.shotId);
       }

@@ -621,6 +621,12 @@ test(`PostgreSQL T07 ${genre}: formal storyboard, lock, recovery and upstream im
     assert.deepEqual(historicalFormal.lockedShotIds,[]);
     assert.equal(historicalFormal.revision,8);
     assert.equal(historicalFormal.candidate.shots[0]?.visual,"待确认");
+    assert.ok(formalStoryboard.publicationId);
+    const pinnedStoryboard = await storyboardRepo.findReview(reviewer,projectId,chapterId,null,formalStoryboard.publicationId);
+    assert.deepEqual(pinnedStoryboard,formalStoryboard);
+    assert.equal(await storyboardRepo.findReview({ ...reviewer,userId: "outsider" },projectId,chapterId,null,formalStoryboard.publicationId),null);
+    assert.equal(await storyboardRepo.findReview(reviewer,projectId,"another-chapter",null,formalStoryboard.publicationId),null);
+
     const staleStoryboard = { ...storyboard,jobId: "stale-storyboard" };
     const staleStoryboardRepo = new PostgresStoryboardCandidateRepository(app,{ read: async () => storyboardInput });
     await assert.rejects(() => staleStoryboardRepo.saveGeneration(actor,staleStoryboard),{ code: "UPSTREAM_CHANGED" });

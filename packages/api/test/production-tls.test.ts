@@ -565,6 +565,12 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(published.formalRead,true);
       assert.equal(published.permissions.canEdit,false);
       assert.equal(published.episodeDurations[0].seconds,60);
+      const pinnedPath = `${root}/publications/${published.publicationId}`;
+      await storyboardApp.http.get(pinnedPath).expect(401);
+      await storyboardApp.http.get(pinnedPath).set("authorization",bearer).expect("Cache-Control","no-store").expect(200,published);
+      await storyboardApp.http.get(`${root}/publications/9223372036854775808`).set("authorization",bearer).expect(400);
+      await storyboardApp.http.get(`${root}/publications/9223372036854775807`).set("authorization",bearer).expect(404);
+
       assert.equal(modelCalls,before+3);
       completeStoryboardResponse = false;
       const privateRetry = (await storyboardApp.http.post(`${root}/retries`).set("authorization",bearer)
