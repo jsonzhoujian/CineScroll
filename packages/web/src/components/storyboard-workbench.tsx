@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardPublication, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
+import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardPublication, type StoryboardReconciliationPreview, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
 import { readStoryboardShot, writeStoryboardCursor } from "../lib/storyboard-cursor";
 import type { StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
@@ -29,6 +29,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [cursor,setCursor] = useState<string | null>(null);
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
+  const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
   const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
   const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
   const [reviewCursor,setReviewCursor] = useState<string | null>(null);
@@ -191,6 +192,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
       setNotice("该审核候选找不到受影响的镜头。");
       return;
     }
+    setReconciliation(null);
     setPinnedPublication(publicationId);
     setTask(null);
     setScopes([]);
@@ -288,6 +290,18 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
       {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.formalRead ? null : view.reviewId!,true,view.formalRead ? pinnedPublication : null))}>刷新当前审核候选</button>}
       {view.version.jobId && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
         disabled={busy || !!pending.current} onClick={() => void act(() => submitReview(view.version.jobId!))}>提交分镜审核</button>)}
+      {view.canPreviewReconciliation && view.publicationId && <button type="button" disabled={busy} onClick={() => void act(async () => {
+        const preview = await api.previewStoryboardReconciliation(projectId,chapterId,view.publicationId!);
+        if (preview.publicationId !== view.publicationId) throw new Error("WRONG_PUBLICATION");
+        setReconciliation(preview);
+      })}>预览分镜跨上游核对</button>}
+      {view.formalRead && reconciliation && reconciliation.publicationId === view.publicationId && <section aria-label="分镜跨上游核对预览">
+        <p>{!reconciliation.currentUpstream ? "当前正式上游尚未齐备。" : reconciliation.upstreamChanged ? "请逐镜核对新上游的依据。" : "正式上游未变化。"}</p>
+        <ul>{reconciliation.shots.map(shot => <li key={shot.id}>{shot.visual}
+          {shot.locked && " · 替换前须解锁"}
+          {shot.referencesMatch === false ? " · 引用须重新核对" : shot.referencesMatch ? " · 引用可定位，待核对内容" : ""}
+        </li>)}</ul>
+      </section>}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
       <div className="mode-sheet">
         <section aria-label="镜头列表">

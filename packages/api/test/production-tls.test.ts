@@ -489,6 +489,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query("alter table storyboard_candidate_versions disable trigger storyboard_candidate_task");
     try { await assert.rejects(() => start(ca,false,false,false,false,true), { message: "STORYBOARD_DATABASE_NOT_READY" }); }
     finally { await admin.query("alter table storyboard_candidate_versions enable trigger storyboard_candidate_task"); }
+    let reconciliationPath: string;
     const storyboardApp = await start(ca,false,false,false,false,true);
     try {
       const root = `/projects/${projectId}/chapters/${chapterId}/storyboard-tasks`;
@@ -595,9 +596,19 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const unchangedReviewList = (await storyboardApp.http.get(`${root}/reviews`).set("authorization",bearer).expect(200)).body;
       assert.deepEqual(new Set(unchangedReviewList.reviews.map((item: { id: string }) => item.id)),new Set([submitted.id,fullReview]));
       assert.equal(modelCalls,before+4);
+      reconciliationPath = `${pinnedPath}/reconciliation`;
+      await storyboardApp.http.get(reconciliationPath).expect(401);
+      await storyboardApp.http.get(`${root}/publications/9223372036854775807/reconciliation`).set("authorization",bearer).expect(409);
+      await storyboardApp.http.post(publishOperation).set("authorization",bearer).send({
+        kind: "lock",requestId: "tls-reconciliation-lock",expectedRevision: published.revision,shotId: published.version.shots[0].id,reason: "保留镜头",
+      }).expect(201);
+      const preview = (await storyboardApp.http.get(reconciliationPath).set("authorization",bearer).expect("Cache-Control","no-store").expect(200)).body;
+      assert.equal(preview.upstreamChanged,false);
+      assert.equal(preview.shots[0].locked,true);
+      assert.equal(preview.shots[0].referencesMatch,null);
     } finally { await storyboardApp.close(); }
     await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
-    const impactApp = await start(ca,false,false,true,true);
+    const impactApp = await start(ca,false,false,true,true,true);
     try {
       const settingsBase = `/projects/${projectId}/chapters/${chapterId}/settings`,scriptBase = `/projects/${projectId}/chapters/${chapterId}/script-content`;
       const setting = (await impactApp.http.get(settingsBase).set("authorization",bearer).expect(200)).body;
@@ -641,6 +652,12 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal((await impactApp.http.post(`${settingsBase}/reconciliation`).set("authorization",bearer).send(begin).expect(201)).body.id,begun.id);
       const final = (await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer).send({ kind: "confirm",requestId: "tls-reconfirm",expectedActiveVersionId: retained.id,reason: "checked" }).expect(201)).body;
       assert.equal((await impactApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version.id,final.id);
+      const migratedPreview = (await impactApp.http.get(reconciliationPath!).set("authorization",bearer).expect(200)).body;
+      assert.equal(migratedPreview.upstreamChanged,true);
+      assert.deepEqual(migratedPreview.currentUpstream.upstreamConfirmedVersionIds.slice(0,2),[confirmed.id,final.id]);
+      assert.equal(migratedPreview.shots[0].locked,true);
+      assert.equal(typeof migratedPreview.shots[0].referencesMatch,"boolean");
+
 
     } finally { await impactApp.close(); }
     const compliance = t.mock.method(globalThis,"fetch",async (url: Parameters<typeof fetch>[0]) => {

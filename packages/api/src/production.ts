@@ -431,7 +431,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
           enabled: true, workspaceIds: taskConfig.workspaceIds, ...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
         storyboardWorker = worker;
         apiModule.imports!.push(StoryboardApiModule.register({
-          sessionVerifier: sessions,tasks,context: storyboardContext,candidates,scripts: contentRepository,projects,
+          sessionVerifier: sessions,tasks,context: storyboardContext,handoff: storyboardHandoff,candidates,scripts: contentRepository,projects,
           rateLimiter: new PostgresModelRateLimiter(restrictedPool),
         }));
         apiModule.providers!.push(

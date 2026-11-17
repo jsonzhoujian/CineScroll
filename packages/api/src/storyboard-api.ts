@@ -4,7 +4,8 @@ import type { ProjectImportRepository } from "@novel-adaptation/project-import";
 import { ModelSettingsError } from "@novel-adaptation/script/model-settings";
 import { ModelTaskError, type ModelTaskContextReader, type ModelTaskService } from "@novel-adaptation/script/model-tasks";
 import type { ScriptContentRepository } from "@novel-adaptation/script/script-content";
-import { StoryboardUpstreamError } from "@novel-adaptation/script/storyboard-handoff";
+import { validateStoryboardShot } from "@novel-adaptation/script/storyboard-content";
+import { StoryboardUpstreamError, type ConfirmedStoryboardHandoff } from "@novel-adaptation/script/storyboard-handoff";
 import { StoryboardStorageError, type StoryboardReviewCommand, type PostgresStoryboardCandidateRepository } from "@novel-adaptation/script/postgres-storyboard-candidates";
 import type { StoryboardCandidate } from "@novel-adaptation/script/storyboard-runner";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
@@ -17,6 +18,7 @@ type Services = {
   tasks: ModelTaskService;
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
+  handoff: Pick<ConfirmedStoryboardHandoff, "read">;
   candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
   projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
@@ -123,6 +125,33 @@ class StoryboardController {
     return respond(() => this.reviewView(req.actor,projectId,chapterId,null,selected));
   }
 
+  reconciliation(req: { actor: Actor },p: string,c: string,publication: string) {
+    const projectId = id(p), chapterId = id(c), selected = parsePublicationId(publication), actor = req.actor;
+    return respond(async () => {
+      const access = await this.services.projects.findProjectAccess(actor,projectId);
+      if (!access || !await this.services.context.canRead?.(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (access.role !== "owner" && access.role !== "reviewer") throw new StoryboardStorageError("FORBIDDEN");
+      const baseline = await this.services.candidates.findReview(actor,projectId,chapterId,null);
+      if (!baseline) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (baseline.publicationId !== selected) throw new ModelTaskError("STATE_CONFLICT");
+      const current = await this.current(actor,projectId,chapterId);
+      const { candidate,lockedShotIds } = baseline;
+      const upstreamChanged = !!current && (current.sourceVersionId !== candidate.sourceVersionId ||
+        current.upstreamConfirmedVersionIds.length !== candidate.upstreamConfirmedVersionIds.length ||
+        current.upstreamConfirmedVersionIds.some((value,i) => value !== candidate.upstreamConfirmedVersionIds[i]));
+      const formal = upstreamChanged ? await this.services.handoff.read(actor,projectId,chapterId) : null;
+      if (formal && current && (formal.sourceVersionId !== current.sourceVersionId ||
+        formal.upstreamConfirmedVersionIds.length !== current.upstreamConfirmedVersionIds.length ||
+        formal.upstreamConfirmedVersionIds.some((value,i) => value !== current.upstreamConfirmedVersionIds[i]))) throw new ModelTaskError("UPSTREAM_CHANGED");
+      return { publicationId: selected,upstreamChanged,currentUpstream: current && {
+        sourceVersionId: current.sourceVersionId,upstreamConfirmedVersionIds: current.upstreamConfirmedVersionIds,
+      },shots: candidate.shots.map(shot => ({
+        id: shot.id,visual: shot.visual,locked: lockedShotIds.includes(shot.id),
+        referencesMatch: formal ? !!validateStoryboardShot(shot,formal.context) : null,
+      })) };
+    });
+  }
+
   review(req: { actor: Actor },p: string,c: string,review: string) {
     const projectId = id(p), chapterId = id(c), selected = reviewId(review);
     return respond(() => this.reviewView(req.actor,projectId,chapterId,selected));
@@ -149,6 +178,7 @@ class StoryboardController {
     const canReview = reviewer && view.current;
     return { ...view, reviewId: review.reviewId, revision, suggestions,lockedShotIds,publicationId,confirmed,
       formalRead: selected === null,episodeDurations,
+      canPreviewReconciliation: selected === null && (access.role === "owner" || access.role === "reviewer"),
       permissions: { canSuggest: selected !== null && view.current,canEdit: canReview,canDecide: canReview,
         canConfirm: canReview && !confirmed,canLock: canReview && confirmed,canUnlock: reviewer && isFormalReview },
       version: { projectId, chapterId, sourceVersionId: version.sourceVersionId, upstreamConfirmedVersionIds: version.upstreamConfirmedVersionIds,
@@ -213,7 +243,7 @@ UseGuards(SessionGuard)(StoryboardController);
 Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
-  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
   ["operate",Post("reviews/:id/operations"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {

@@ -12,12 +12,18 @@ export type StoryboardReviewCommand = { requestId: string; expectedRevision: num
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
 export type StoryboardPublication = { id: string; revision: number; confirmedAt: string };
+export type StoryboardReconciliationPreview = {
+  publicationId: string; upstreamChanged: boolean;
+  currentUpstream: { sourceVersionId: string; upstreamConfirmedVersionIds: string[] } | null;
+  shots: Array<{ id: string; visual: string; locked: boolean; referencesMatch: boolean | null }>;
+};
 export type StoryboardView = {
   current: boolean;
   reviewId?: string;
   revision?: number;
   confirmed?: boolean;
   formalRead?: boolean;
+  canPreviewReconciliation?: boolean;
   publicationId?: string | null;
   lockedShotIds?: string[];
   episodeDurations?: Array<{ id: string;title: string;seconds: number | null;targetSeconds: number }>;
@@ -190,6 +196,10 @@ export class ApiClient {
   }
   getStoryboardPublication(p: string,c: string,id: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/publications/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
+  previewStoryboardReconciliation(p: string,c: string,publicationId: string) {
+    return this.request<StoryboardReconciliationPreview>(
+      `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation`,{ method: "GET" },"session");
   }
   getConfirmedStoryboard(p: string,c: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/confirmed`,{ method: "GET" },"session");
