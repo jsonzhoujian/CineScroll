@@ -1,7 +1,7 @@
 # T08 — Versions, impact analysis, and collaboration
 
-status: blocked  
-blocked_by: [T07]  
+status: ready
+prerequisite: T07 completed
 unlocks: [T10]
 
 ## Goal

@@ -1,6 +1,7 @@
+import { genreSamples } from "./t07-genre-fixtures.ts";
 import { PostgresStoryboardCandidateRepository } from "../src/postgres-storyboard-candidates.ts";
 import { ConfirmedStoryboardHandoff } from "../src/storyboard-handoff.ts";
-import type { StoryboardCandidate } from "../src/storyboard-runner.ts";
+import { StoryboardRunner, type StoryboardCandidate } from "../src/storyboard-runner.ts";
 import storyboardFixture from "../../../docs/contracts/fixtures/ai/valid-storyboard.json" with { type: "json" };
 import { SettingsReconciliationService } from "../src/settings-reconciliation.ts";
 import { PostgresSettingsRegenerationRepository } from "../src/postgres-settings-regeneration.ts";
@@ -24,7 +25,11 @@ import type { ScriptContentVersion } from "../src/script-content.ts";
 import { PostgresScriptRepository } from "../src/postgres-episode-plan.ts";
 import { ScriptUpstreamChangedError, type EpisodePlanVersion } from "../src/index.ts";
 
-test("PostgreSQL script candidate survives reconstruction, CAS races and upstream changes with isolated task recovery", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+const genre = process.env.TEST_T07_GENRE ?? "悬疑";
+const sample = genreSamples.find(entry => entry.genre === genre);
+if (!sample) throw new Error(`Unknown T07 fixture genre: ${genre}`);
+
+test(`PostgreSQL T07 ${genre}: formal storyboard, lock, recovery and upstream impacts`, { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const { Pool } = createRequire(new URL("../../project-import/package.json", import.meta.url))("pg");
   const admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const app = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: "-c role=novel_app" });
@@ -33,14 +38,14 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     for (const path of ["../../project-import/migrations/0001_project_import.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql", "../../story-knowledge/migrations/0003_generation_policy.sql", "../migrations/0010_episode_plans.sql", "../migrations/0003_model_tasks.sql", "../migrations/0004_model_task_results.sql", "../migrations/0005_model_task_recovery.sql", "../migrations/0008_generation_policy_reason.sql", "../migrations/0013_script_content.sql", "../migrations/0014_script_review.sql", "../migrations/0015_script_retry.sql", "../migrations/0016_script_publication.sql", "../migrations/0017_script_confirmed_head.sql", "../migrations/0018_script_revision.sql", "../migrations/0019_script_revision_transitions.sql", "../migrations/0020_script_revision_confirmation.sql", "../migrations/0021_script_revision_change_scope.sql", "../migrations/0022_script_impacts.sql", "../migrations/0023_script_revision_lock_audit.sql", "../migrations/0024_script_revision_rejection.sql", "../migrations/0025_settings_candidates.sql", "../migrations/0026_settings_dependencies.sql", "../migrations/0027_settings_tasks.sql", "../migrations/0028_settings_review.sql", "../migrations/0029_settings_regeneration_tasks.sql", "../migrations/0030_settings_regeneration_results.sql", "../migrations/0031_settings_reconciliation.sql", "../migrations/0032_settings_source_reconciliation.sql", "../migrations/0033_settings_pending_regeneration.sql", "../migrations/0034_settings_failure_decisions.sql", "../migrations/0035_episode_plan_source_head.sql", "../migrations/0036_script_source_publication.sql", "../migrations/0037_storyboard_candidates.sql", "../migrations/0038_storyboard_tasks.sql", "../migrations/0039_storyboard_review_submissions.sql", "../migrations/0040_storyboard_review_operations.sql", "../migrations/0041_storyboard_confirmation.sql"]) await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await admin.query("insert into projects(id,workspace_id,owner_user_id,title,aspect_ratio,target_duration_seconds,narrative_mode,created_at) values($1,$2,$3,'作品','9:16',60,'dialogue',now())", [projectId, actor.workspaceId, actor.userId]);
     for (const [user, role] of [[actor.userId, "owner"], ["editor", "editor"], ["reviewer", "reviewer"]]) await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)", [projectId, actor.workspaceId, user, role]);
-    await admin.query("insert into chapters(project_id,id,title) values($1,$2,'雨落')", [projectId, chapterId]);
-    await admin.query("insert into source_versions(project_id,chapter_id,id,ordinal,created_at,created_by,character_count,source_text) values($1,$2,$3,1,now(),$4,2,'雨落')", [projectId, chapterId, sourceId, actor.userId]);
+    await admin.query("insert into chapters(project_id,id,title) values($1,$2,$3)", [projectId, chapterId,sample.genre]);
+    await admin.query("insert into source_versions(project_id,chapter_id,id,ordinal,created_at,created_by,character_count,source_text) values($1,$2,$3,1,now(),$4,$5,$6)", [projectId,chapterId,sourceId,actor.userId,sample.source.length,sample.source]);
     await admin.query("update chapters set active_source_version_id=$3 where project_id=$1 and id=$2", [projectId, chapterId, sourceId]);
     await admin.query("insert into story_knowledge_versions(id,workspace_id,project_id,chapter_id,source_version_id,extraction_job_id,created_at,created_by,extraction_status,status,version_json) values($1,$2,$3,$4,$5,'job',now(),$6,'succeeded','confirmed',$7::jsonb)", [bibleId, actor.workspaceId, projectId, chapterId, sourceId, actor.userId, JSON.stringify({ id: bibleId, status: "confirmed", sourceVersionId: sourceId })]);
     await admin.query("insert into story_bibles(id,workspace_id,project_id,chapter_id,version_id,bible_json) values($1,$2,$3,$4,$1,$5::jsonb)", [bibleId, actor.workspaceId, projectId, chapterId, JSON.stringify({ versionId: bibleId })]);
     await admin.query("select set_config('app.story_knowledge_operation','confirm',false)");
     await admin.query("insert into story_knowledge_heads(workspace_id,project_id,chapter_id,active_version_id,confirmed_version_id) values($1,$2,$3,$4,$4)", [actor.workspaceId, projectId, chapterId, bibleId]);
-    const version: EpisodePlanVersion = { id: `plan-${suffix}`, parentVersionId: null, projectId, chapterId, sourceVersionId: sourceId, storyBibleVersionId: bibleId, targetDurationSeconds: 60, aspectRatio: "9:16", narrativeMode: "dialogue", episodes: [{ id: "e", ordinal: 1, title: "雨落", sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }], majorAdaptationProposals: [], status: "candidate", createdBy: actor.userId, createdAt: "2026-10-06T00:00:00Z" };
+    const version: EpisodePlanVersion = { id: `plan-${suffix}`, parentVersionId: null, projectId, chapterId, sourceVersionId: sourceId, storyBibleVersionId: bibleId, targetDurationSeconds: 60, aspectRatio: "9:16", narrativeMode: "dialogue", episodes: [{ id: "e", ordinal: 1, title: sample.genre, sourceFragmentIds: ["f"], coreEventFactIds: ["event"] }], majorAdaptationProposals: [], status: "candidate", createdBy: actor.userId, createdAt: "2026-10-06T00:00:00Z" };
     const repository = new PostgresScriptRepository(app);
     const generationOperation = { key: `generation:task-${suffix}`, fingerprint: "trusted-generation" };
     await repository.saveEpisodePlan(actor, version, null, generationOperation);
@@ -94,7 +99,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const { reviewOperation: _audit,...unreviewed } = accepted;
     const partial = { ...unreviewed,id: `partial-${suffix}`,parentVersionId: accepted.id,scenes: [{ id: "scene",episodeId: "e",ordinal: 1,title: "rain",environment: "outside",characters: [] }],failures: [{ scopeKey: "dialogue",code: "INVALID_ELEMENT",message: "missing",retryable: true }],generationStatus: "partially_succeeded" as const };
     await content.save(actor,partial,accepted.id);
-    const retries = new ScriptContentService({ repository: content,contextReader: { findGenerationContext: async () => ({ sourceVersionId: sourceId,planVersionId: confirmed.id,confirmedPlan: confirmed,fragments: [{ id: "f",text: "雨落" }],approvedAdditionIds: [] }) },idGenerator: () => `retried-${suffix}`,clock: () => new Date("2026-10-29") });
+    const retries = new ScriptContentService({ repository: content,contextReader: { findGenerationContext: async () => ({ sourceVersionId: sourceId,planVersionId: confirmed.id,confirmedPlan: confirmed,fragments: [{ id: "f",text: sample.source }],approvedAdditionIds: [] }) },idGenerator: () => `retried-${suffix}`,clock: () => new Date("2026-10-29") });
     const merged = await retries.recordRetry(actor,{ projectId,chapterId,sourceVersionId: sourceId,planVersionId: confirmed.id,jobId: `retry-job-${suffix}`,retry: { expectedActiveVersionId: partial.id,retryOfJobId: partial.jobId,scopeKeys: ["dialogue"] },scenes: [],items: [{ scopeKey: "dialogue",value: { id: "dialogue",sceneId: "scene",elementType: "dialogue",ordinal: 2,text: "下雨了",provenance: [{ type: "source_fragment",sourceVersionId: sourceId,fragmentId: "f",transformation: "retained" }] } }] });
     assert.deepEqual(merged.elements[0],partial.elements[0]); assert.equal(merged.failures.length,0);
     assert.deepEqual(await rebuilt.findGeneration(actor,projectId,chapterId,merged.jobId),merged);
@@ -114,7 +119,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const ready = { ...cleanCurrentScript,id: `quality-ready-${suffix}`,parentVersionId: currentScript.id,elements: currentScript.elements.map(e => ({ ...e,provenance: [{ type: "source_fragment" as const,sourceVersionId: sourceId,fragmentId: "f",transformation: "retained" as const }] })) };
     await content.save(actor,ready,currentScript.id);
     assert.equal(await rebuilt.findRevisionOperation(actor,projectId,chapterId,"missing"),null);
-    const qualityContext = { sourceVersionId: sourceId,planVersionId: confirmed.id,confirmedPlan: confirmed,confirmedStoryKnowledge: { versionId: bibleId,facts: [{ id: "event",statement: "雨落" }] },fragments: [{ id: "f",text: "雨落" }],approvedAdditionIds: [] };
+    const qualityContext = { sourceVersionId: sourceId,planVersionId: confirmed.id,confirmedPlan: confirmed,confirmedStoryKnowledge: { versionId: bibleId,facts: [{ id: "event",statement: sample.fact }] },fragments: [{ id: "f",text: sample.source }],approvedAdditionIds: [] };
     const contextReader = { findGenerationContext: async () => qualityContext };
     const accessReader = { findProjectAccess: async (a: typeof actor) => ({ role: a.userId === "editor" ? "editor" as const : "owner" as const }) };
     const formalService = new ScriptContentService({ repository: rebuilt,contextReader,accessReader,idGenerator: () => `formal-${suffix}-${++sequence}`,clock: () => new Date("2026-11-02") });
@@ -153,11 +158,11 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const rejected = await revision.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "reject-locked",reason: "不采用建议",expectedActiveVersionId: lockedWithSuggestion.id,suggestionId: proposedForRejection.suggestions!.find(s => s.status === "pending")!.id,decision: "rejected" });
     assert.deepEqual(rejected.elements,lockedWithSuggestion.elements);
     const available = await revision.execute(actor,projectId,chapterId,{ kind: "unlock",requestId: "unlock-final",reason: "修订",expectedActiveVersionId: rejected.id,elementId: "action" });
-    const suggestedFormal = await revision.execute({ ...actor,userId: "editor" },projectId,chapterId,{ kind: "suggest",requestId: "formal-suggestion",reason: "节奏",expectedActiveVersionId: available.id,elementId: "action",text: "雨落庭院" });
+    const suggestedFormal = await revision.execute({ ...actor,userId: "editor" },projectId,chapterId,{ kind: "suggest",requestId: "formal-suggestion",reason: "节奏",expectedActiveVersionId: available.id,elementId: "action",text: sample.action });
     const pending = suggestedFormal.suggestions!.find(s => s.status === "pending")!;
     const accept = { kind: "decide" as const,requestId: "revision-accept",reason: "符合原文",expectedActiveVersionId: suggestedFormal.id,suggestionId: pending.id,decision: "accepted" as const };
     const revisionCandidate = await revision.execute(actor,projectId,chapterId,accept);
-    assert.equal(revisionCandidate.status,"candidate");assert.equal(revisionCandidate.elements.find(e => e.id === "action")?.text,"雨落庭院");
+    assert.equal(revisionCandidate.status,"candidate");assert.equal(revisionCandidate.elements.find(e => e.id === "action")?.text,sample.action);
     assert.equal((await rebuilt.findConfirmed(actor,projectId,chapterId))?.id,suggestedFormal.id);
     assert.equal((await revision.execute(actor,projectId,chapterId,accept)).id,revisionCandidate.id);
     await admin.query("insert into script_downstream_dependencies values($1,$2,$3,'storyboard','board-version','shot-1',$4,'action')",[actor.workspaceId,projectId,chapterId,lockedScript.id]);
@@ -202,8 +207,8 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal(await reopenedSettings.findGeneration({ ...actor,userId: "outsider" },projectId,chapterId,savedSettings.jobId),null);
     await assert.rejects(() => reopenedSettings.saveGeneration(actor,{ ...generatedSettings,scriptVersionId: lockedScript.id }),{ code: "UPSTREAM_CHANGED" });
     assert.deepEqual((await admin.query("select target_item_id,script_element_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1 order by script_element_id",[savedSettings.id])).rows,[{ target_item_id: "rain-location",script_element_id: "action" },{ target_item_id: "rain-location",script_element_id: "dialogue" }]);
-    await admin.query("insert into source_fragments(id,project_id,chapter_id,text_content,content_hash) values('f',$1,$2,'雨落','fixture')",[projectId,chapterId]);
-    await admin.query("insert into source_version_fragments values($1,'f',$2,$3,1,0,2)",[sourceId,projectId,chapterId]);
+    await admin.query("insert into source_fragments(id,project_id,chapter_id,text_content,content_hash) values('f',$1,$2,$3,'fixture')",[projectId,chapterId,sample.source]);
+    await admin.query("insert into source_version_fragments values($1,'f',$2,$3,1,0,$4)",[sourceId,projectId,chapterId,sample.source.length]);
     const settingsReviewRepo = new PostgresSettingsReviewRepository(app,settingsHandoff);
     const settingsReview = new SettingsReviewService({ repository: settingsReviewRepo,handoff: settingsHandoff,access: accessReader,idGenerator: () => `settings-review-${suffix}-${++sequence}`,clock: () => new Date("2026-11-04") });
     const initialSettings = (await settingsReviewRepo.findActive(actor,projectId,chapterId))!;
@@ -417,7 +422,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
       upstreamConfirmedVersionIds: storyboardInput.upstreamConfirmedVersionIds, generationStatus: "partially_succeeded",
       failures: ["shot:2", "shot:3"].map(scopeKey => ({ scopeKey, code: "INVALID_SHOT", retryable: true })),
       shots: [{ ...storyboardFixture.items[0]!.value, shotSize: "wide", cameraAngle: "eye_level",
-        splitReason: ["information_change"], sceneId: shotScene.id, episodeId: shotScene.episodeId,
+        splitReason: ["information_change"], visual: sample.action, characters: [sample.character], sceneId: shotScene.id, episodeId: shotScene.episodeId,
         assetIds: [settingAsset.id], scriptElementIds: ["action"], provenance: settingAsset.provenance }],
     };
     await admin.query("insert into project_generation_policy(workspace_id,project_id,state) values($1,$2,'allowed')", [actor.workspaceId,projectId]);
@@ -443,7 +448,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
       [{ target_item_id: storyboard.shots[0]!.id, script_element_id: "action" }]);
     const retry = { expectedActiveVersionId: storyboard.jobId, retryOfJobId: storyboard.jobId, scopeKeys: ["shot:2"] };
     const retryCandidate: StoryboardCandidate = { ...storyboard, jobId: "storyboard-retry", retry,
-      shots: [...storyboard.shots, { ...storyboard.shots[0]!, id: "retry-shot" }],
+      shots: [...storyboard.shots, { ...storyboard.shots[0]!, id: "retry-shot",ordinal: 2,durationSeconds: 1 }],
       failures: [storyboard.failures[1]!],
     };
     await taskRepository.insert({ ...storyboardTask, id: retryCandidate.jobId, input: { ...storyboardTask.input, retry } });
@@ -468,7 +473,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.equal(await storyboardRepo.findReview({ ...reviewer,workspaceId: "other" },projectId,chapterId,shared.id),null);
     const editor = { ...actor,userId: "editor" };
     const proposal = { kind: "suggest",requestId: "story-suggest",expectedRevision: 0,reason: "调整视觉",
-      shotId: storyboard.shots[0]!.id,value: { visual: "雨落庭院",durationSeconds: 6 } } as const;
+      shotId: storyboard.shots[0]!.id,value: { visual: sample.action,durationSeconds: 6 } } as const;
     await assert.rejects(() => storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,{ ...proposal,kind: "edit" }),{ code: "FORBIDDEN" });
     const proposals = await Promise.allSettled([storyboardRepo.saveReviewOperation(editor,projectId,chapterId,shared.id,proposal),
       storyboardRepo.saveReviewOperation(actor,projectId,chapterId,shared.id,{ ...proposal,requestId: "competing",kind: "edit",value: { visual: "夜雨落下",durationSeconds: 8 } })]);
@@ -485,7 +490,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,decision);
     const acceptedStoryboard = (await storyboardRepo.findReview(reviewer,projectId,chapterId,shared.id))!;
     assert.equal(acceptedStoryboard.revision,reviewed.revision+1);
-    assert.equal(acceptedStoryboard.candidate.shots[0]?.visual,"雨落庭院");
+    assert.equal(acceptedStoryboard.candidate.shots[0]?.visual,sample.action);
     assert.equal(acceptedStoryboard.suggestions[0]?.status,"accepted");
     assert.deepEqual(await storyboardRepo.findGeneration(actor,storyboard),storyboard);
     const nextSuggestion = acceptedStoryboard.revision+1;
@@ -516,14 +521,29 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,shared.id,{
       ...confirmStoryboard,expectedRevision: rejectedStoryboard.revision,
     }),{ code: "REVIEW_INCOMPLETE" });
-    const completeStoryboard: StoryboardCandidate = { ...storyboard,jobId: "storyboard-complete",failures: [],generationStatus: "succeeded",
-      shots: storyboardInput.context.scenes.map((scene,i) => ({ ...storyboard.shots[0]!,id: `complete-${i}`,sceneId: scene.id,
-        episodeId: scene.episodeId,scriptElementIds: [scene.scriptElementIds[0]!],durationSeconds: 1 })),
-    };
-    const completeId = completeStoryboard.jobId;
-    await taskRepository.insert({ ...storyboardTask,id: completeId });
+    const completeId = "storyboard-complete";
+    const retryAll = { expectedActiveVersionId: retryCandidate.jobId,retryOfJobId: retryCandidate.jobId,scopeKeys: ["shot:3"] };
+    const uncoveredScenes = storyboardInput.context.scenes.filter(scene => scene.id !== shotScene.id);
+    assert.ok(uncoveredScenes.length <= retryAll.scopeKeys.length);
+    await taskRepository.insert({ ...storyboardTask,id: completeId,input: { ...storyboardTask.input,retry: retryAll } });
     await taskRepository.transition(actor.workspaceId,completeId,0,"running",null);
-    await storyboardRepo.saveGeneration(actor,completeStoryboard);
+    const fullRetry = new StoryboardRunner({ handoff: storyboardHandoff,repository: storyboardRepo,model: {
+      async generate({ input,scopeKeys,retryOfJobId,...identity }) {
+        assert.deepEqual(scopeKeys,retryAll.scopeKeys);
+        assert.equal(retryOfJobId,retryCandidate.jobId);
+        assert.equal(input.settings.id,lockedSetting.id);
+        return { ...identity,status: "succeeded",items: retryAll.scopeKeys.map((scopeKey,i) => {
+          const scene = uncoveredScenes[i] ?? shotScene;
+          return { scopeKey,status: "succeeded",value: { ...storyboard.shots[0]!,id: `complete-${i}`,ordinal: i+3,
+            sceneId: scene.id,episodeId: scene.episodeId,scriptElementIds: [scene.scriptElementIds[0]!],durationSeconds: 1 } };
+        }) };
+      },
+    } });
+    const completeStoryboard = await fullRetry.run(actor,{
+      jobId: completeId,projectId,chapterId,sourceVersionId: sourceId,upstreamConfirmedVersionIds: storyboard.upstreamConfirmedVersionIds,
+    },retryAll);
+    assert.deepEqual(completeStoryboard.shots.slice(0,2),retryCandidate.shots);
+    assert.deepEqual(completeStoryboard.failures,[]);
     await taskRepository.transition(actor.workspaceId,completeId,1,"succeeded",null,{ candidateVersionId: completeId,extractionStatus: "succeeded" });
     const completeReview = (await storyboardRepo.submitReview(actor,projectId,chapterId,completeId)).id;
     assert.equal(await storyboardRepo.findReview(reviewer,projectId,chapterId,null),null);
@@ -533,14 +553,14 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     const fitDuration = totalFloor-completeStoryboard.shots.length+1;
     const confirmShot = completeStoryboard.shots[0]!;
     await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{ ...proposal,kind: "edit",shotId: confirmShot.id,
-      value: { visual: confirmShot.visual,durationSeconds: fitDuration } });
-    const pendingConfirm = { ...proposal,requestId: "before-confirm",expectedRevision: 1,shotId: confirmShot.id };
+      value: { visual: confirmShot.visual,durationSeconds: fitDuration+1 } });
+    const pendingConfirm = { ...proposal,requestId: "before-confirm",expectedRevision: 1,shotId: confirmShot.id,value: { visual: sample.action,durationSeconds: fitDuration } };
     await storyboardRepo.saveReviewOperation(editor,projectId,chapterId,completeReview,pendingConfirm);
     await assert.rejects(() => storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
       ...confirmStoryboard,expectedRevision: 2,
     }),{ code: "REVIEW_INCOMPLETE" });
     await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,{
-      ...decision,requestId: "before-confirm-reject",decision: "rejected",suggestionRevision: 2,expectedRevision: 2,
+      ...decision,requestId: "before-confirm-accept",decision: "accepted",suggestionRevision: 2,expectedRevision: 2,
     });
     const confirmAtFloor = { ...confirmStoryboard,expectedRevision: 3 };
     await storyboardRepo.saveReviewOperation(reviewer,projectId,chapterId,completeReview,confirmAtFloor);
@@ -586,7 +606,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
         [actor.workspaceId,projectId,chapterId,rollbackCandidate.jobId,actor.userId,JSON.stringify(rollbackCandidate)]),{ code: "42501" });
     } finally { await storyboardWriter.query("rollback");storyboardWriter.release(); }
     assert.equal(await reopenedStoryboard.findGeneration(actor,rollbackCandidate),null);
-    const upstreamSuggestion = await revision.execute(actor,projectId,chapterId,{ kind: "suggest",requestId: "settings-impact-suggest",reason: "节奏",expectedActiveVersionId: revisedFormal.id,elementId: "action",text: "细雨洒落庭院" });
+    const upstreamSuggestion = await revision.execute(actor,projectId,chapterId,{ kind: "suggest",requestId: "settings-impact-suggest",reason: "节奏",expectedActiveVersionId: revisedFormal.id,elementId: "action",text: `${sample.action}停顿片刻。` });
     const upstreamCandidate = await revision.execute(actor,projectId,chapterId,{ kind: "decide",requestId: "settings-impact-accept",reason: "checked",expectedActiveVersionId: upstreamSuggestion.id,suggestionId: upstreamSuggestion.suggestions!.find(s => s.status === "pending")!.id,decision: "accepted" });
     assert.equal((await rebuilt.listSettingsImpacts(actor,projectId,chapterId,lockedSetting.id)).length,0);
     const upstreamReport = await publication.assess(actor,projectId,chapterId,{ jobId: `settings-impact-report-${suffix}`,binding: qualityBinding(upstreamCandidate,qualityContext),model: { async assess() { return { versionId: upstreamCandidate.id,events: [{ factId: "event",elementIds: ["action"],verdict: "covered" }],facts: [{ factId: "event",verdict: "consistent" }],episodes: [{ episodeId: "e",estimatedSeconds: 60 }],unsupportedCoreFactElementIds: [] }; } } });
@@ -621,7 +641,7 @@ test("PostgreSQL script candidate survives reconstruction, CAS races and upstrea
     assert.deepEqual(await settingsReviewRepo.findConfirmed(actor,projectId,chapterId),lockedSetting);
     assert.equal((await rebuilt.listSettingsImpacts({ ...actor,workspaceId: "other" },projectId,chapterId,lockedSetting.id)).length,0);
     assert.equal((await rebuilt.listSettingsImpacts({ ...actor,userId: "outsider" },projectId,chapterId,lockedSetting.id)).length,0);
-    const newHandoff = { async read() { return { version: upstreamConfirmed,sourceFragments: [{ id: "f",text: "雨落" }],upstreamConfirmedVersionIds: [confirmed.id,bibleId] }; } };
+    const newHandoff = { async read() { return { version: upstreamConfirmed,sourceFragments: [{ id: "f",text: sample.source }],upstreamConfirmedVersionIds: [confirmed.id,bibleId] }; } };
     const reconciliationRepo = new PostgresSettingsReviewRepository(app,newHandoff),reconciliation = new SettingsReconciliationService({ repository: reconciliationRepo,handoff: newHandoff,access: accessReader,idGenerator: () => `reconciliation-${suffix}-${++sequence}`,clock: () => new Date("2026-11-04") });
     const begin = { kind: "begin" as const,requestId: "begin-reconciliation",expectedActiveVersionId: lockedSetting.id,expectedUpstreamConfirmedVersionIds: [upstreamConfirmed.id,confirmed.id,bibleId],reason: "retain for new script" };
     assert.equal((await reconciliation.preview(actor,projectId,chapterId)).canBegin,true);

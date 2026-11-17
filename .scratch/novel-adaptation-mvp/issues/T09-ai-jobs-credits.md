@@ -1,12 +1,12 @@
 # T09 — Background AI jobs, model routing, and credits
 
-status: blocked  
-blocked_by: [T07]  
+status: ready
+prerequisite: T07 completed
 unlocks: [T10]
 
 ## Goal
 
-当前状态导航见 [基础设施与整体验收](./T09-infrastructure-status.md)。以下增量是按时间保留的历史记录；其中旧的剩余项须结合后续记录阅读，不能当作当前待办。整体 blocked 状态及原始验收条件保持不变。
+当前状态导航见 [基础设施与整体验收](./T09-infrastructure-status.md)。以下增量是按时间保留的历史记录；其中旧的剩余项须结合后续记录阅读，不能当作当前待办。T07 前置已完成，原始产品验收条件继续有效。
 
 Operate every AI stage reliably with resumable background work, transparent credit settlement, and optional BYOK.
 

@@ -1,7 +1,7 @@
 # T07 — Settings and storyboard workflow
 
-status: in_progress
-blocked_by: [T06]  
+status: done
+prerequisite: T06 completed
 unlocks: [T08, T09]
 
 ## Goal
@@ -17,3 +17,5 @@ Complete the creative-preproduction workflow with production-oriented text setti
 - Storyboard mode preserves the same canonical selection and approval state as trace and review modes.
 - Episode shot duration totals remain within 10% of target duration or show a blocking validation result.
 
+
+技术验收与后继交接见 [T07-05 验收记录](../../../docs/plans/2026-11-17-t07-acceptance-handoff.md)。
