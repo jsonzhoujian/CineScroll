@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
+import { readStoryboardShot, writeStoryboardCursor } from "../lib/storyboard-cursor";
 import { taskPresentation } from "../lib/task-status";
 
 type Pending = StoryboardSubmission & Partial<StoryboardRetry>;
@@ -63,6 +64,20 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
     }).catch(() => {});
     return () => { cancelled = true; };
   },[api,projectId,chapterId,active]);
+
+  useEffect(() => {
+    if (!active || !view) return;
+    const query = new URL(window.location.href).searchParams;
+    setShotId(selected => readStoryboardShot(view,query,selected) ?? selected);
+  },[active,view]);
+
+  function selectShot(id: string, fragmentId?: string) {
+    setShotId(id);
+    if (!view) return;
+    const url = new URL(window.location.href);
+    writeStoryboardCursor(url.searchParams,view,id,fragmentId);
+    window.history.replaceState(null,"",url);
+  }
 
   function checkTask(next: StoryboardTask, id = next.id) {
     if (next.id !== id || next.projectId !== projectId || next.chapterId !== chapterId
@@ -239,7 +254,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
         <section aria-label="镜头列表">
           <h4>镜头</h4>
           <ol>{view.version.shots.map(shot => <li key={shot.id}>
-            <button type="button" aria-pressed={shotId === shot.id} onClick={() => setShotId(shot.id)}>{shot.visual}</button>
+            <button type="button" aria-pressed={shotId === shot.id} onClick={() => selectShot(shot.id)}>{shot.visual}</button>
           </li>)}</ol>
         </section>
         {selected && <section aria-label="镜头详情">
@@ -249,7 +264,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active }: { api
           <h5>剧本元素</h5>
           <ul aria-label="关联剧本元素">{elements.map(element => <li key={element.id}>{element.text}</li>)}</ul>
           <h5>原文依据</h5>
-          <ul aria-label="镜头原文依据">{fragments.map(fragment => <li key={fragment.id}>{fragment.text}</li>)}
+          <ul aria-label="镜头原文依据">{fragments.map(fragment => <li key={fragment.id}><button type="button" onClick={() => selectShot(selected.id,fragment.id)}>{fragment.text}</button></li>)}
             {selected.provenance.filter(item => item.type === "approved_addition").map((item,i) => <li key={i}>获批改编新增 {item.additionId}</li>)}
           </ul>
           {view.reviewId && view.revision !== undefined && <StoryboardShotReview key={JSON.stringify([view.reviewId,view.revision,selected.id])}

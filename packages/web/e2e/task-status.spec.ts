@@ -1097,13 +1097,26 @@ for (const mode of ["success","unknown","read-failure","conflict","editor","mobi
 test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async ({ page }) => {
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   await setup(page);
-  const chapter = { id: "c",title: "雨夜",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [] }] };
+  const chapter = { id: "c",title: "雨夜",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "原文雨落",fragments: [{ id: "f",text: "原文雨落" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c`,route => route.fulfill({ headers,json: chapter }));
   await page.route(`${origin}/projects/p/chapters/c/context`,route => route.fulfill({ headers,json: { project: { id: "p",title: "作品",role: "owner" },chapter } }));
   await page.route(`${origin}/projects/p/chapters/c/story-knowledge`,route => route.fulfill({ headers,json: {
     id: "candidate",extractionJobId: "task",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",extractionStatus: "succeeded",facts: [],failures: [],
   } }));
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,route => route.fulfill({ headers,json: {
+    current: true,canReview: false,sourceFragments: [],coreEvents: [],plan: { id: "plan",projectId: "p",chapterId: "c",sourceVersionId: "s",
+      storyBibleVersionId: "candidate",status: "confirmed",targetDurationSeconds: 60,episodes: [],majorAdaptationProposals: [] },
+  } }));
+  const script = { id: "script",projectId: "p",chapterId: "c",sourceVersionId: "s",status: "confirmed",
+    planVersionId: "plan",generationStatus: "succeeded",scenes: [{ id: "scene",title: "庭院" }],failures: [],
+    elements: [{ id: "element",sceneId: "scene",text: "庭院落雨",provenance: [{ type: "source_fragment",fragmentId: "f" }] }] };
+  await page.route(`${origin}/projects/p/chapters/c/script-content`,route => route.fulfill({ headers,json: {
+    current: true,sourceFragments: chapter.versions[0]!.fragments,
+    version: { ...script,id: "draft",status: "candidate",elements: [{ ...script.elements[0],text: "未确认的改写" }] },
+  } }));
+  await page.route(`${origin}/projects/p/chapters/c/script-content/versions/script`,route => route.fulfill({ headers,json: { version: script } }));
   const root = `${origin}/projects/p/chapters/c/storyboard-tasks`;
-  const input = { stage: "storyboard",resultType: "storyboardContent",sourceVersionId: "s",upstreamConfirmedVersionIds: ["script","settings","plan","knowledge"] };
+  const input = { stage: "storyboard",resultType: "storyboardContent",sourceVersionId: "s",upstreamConfirmedVersionIds: ["script","settings","plan","candidate"] };
   const tasks = new Map<string,unknown>();
   const failures = [{ scopeKey: "shot:2",code: "INVALID_SHOT",retryable: true },{ scopeKey: "shot:3",code: "PROVIDER_ITEM_FAILED",retryable: false }];
   const shot = { id: "one",visual: "雨打空庭",ordinal: 1,sceneId: "scene",durationSeconds: 4,shotSize: "wide",cameraAngle: "eye_level",
@@ -1200,6 +1213,11 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByLabel("关联剧本元素")).toContainText("庭院落雨");
   await expect(panel.getByLabel("镜头原文依据")).toContainText("原文雨落");
   await page.getByRole("button",{ name: "追溯",exact: true }).click();
+  await expect(page.locator('.manuscript [aria-current="true"]')).toContainText("原文雨落");
+  await page.getByRole("button",{ name: "审核",exact: true }).click();
+  await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
+  await expect(page.getByRole("button",{ name: "庭院落雨",exact: true })).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByLabel("剧本原文依据")).toContainText("原文雨落");
   await page.getByRole("button",{ name: "分镜",exact: true }).click();
   await expect(panel.getByRole("button",{ name: "雨打空庭",exact: true })).toHaveAttribute("aria-pressed","true");
   await expect(panel.getByRole("checkbox",{ name: /shot:3/ })).toBeDisabled();
@@ -1238,6 +1256,11 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByRole("button",{ name: "重试所选失败项" })).toHaveCount(0);
   await panel.getByRole("button",{ name: "积水倒影",exact: true }).click();
   const audit = panel.getByRole("region",{ name: "镜头审核" });
+  await page.setViewportSize({ width: 390,height: 844 });
+  await expect(audit.getByRole("button",{ name: "保存镜头修改" })).toBeHidden();
+  await expect(panel.getByRole("button",{ name: "确认正式分镜" })).toBeHidden();
+  await expect(panel.getByLabel("镜头原文依据")).toContainText("原文雨落");
+  await page.setViewportSize(desktop);
   await audit.getByLabel("镜头画面").fill("雨水映出屋檐");
   await audit.getByLabel("镜头时长（秒）").fill("6");
   await audit.getByLabel("审核理由").fill("可见动作更明确");

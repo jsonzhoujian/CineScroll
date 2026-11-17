@@ -566,6 +566,22 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(published.permissions.canEdit,false);
       assert.equal(published.episodeDurations[0].seconds,60);
       assert.equal(modelCalls,before+3);
+      completeStoryboardResponse = false;
+      const privateRetry = (await storyboardApp.http.post(`${root}/retries`).set("authorization",bearer)
+        .send({ ...selection,requestId: "tls-retry-after-formal",expectedActiveVersionId: original.id,scopeKeys: ["shot:2"] }).expect(201)).body;
+      assert.equal((await waitForResult(privateRetry.id)).result.extractionStatus,"partially_succeeded");
+      const retryView = (await storyboardApp.http.get(`${root}/${privateRetry.id}/candidate`).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(retryView.version.shots[0],loadedOriginal.version.shots[0]);
+      assert.deepEqual(retryView.version.failures,merged.version.failures);
+      const unchangedFormal = (await storyboardApp.http.get(`${root}/reviews/confirmed`).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(unchangedFormal,published);
+      const audit = (await admin.query(`select revision,actor_id,publication_id::text,command->>'kind' as kind,command->>'reason' as reason
+        from storyboard_review_operations where (workspace_id,project_id,chapter_id,review_id)=($1,$2,$3,$4) order by revision`,
+      [workspaceId,projectId,chapterId,fullReview])).rows;
+      assert.deepEqual(audit,[{ revision: published.revision,actor_id: userId,publication_id: published.publicationId,kind: "confirm",reason: "核对通过" }]);
+      const unchangedReviewList = (await storyboardApp.http.get(`${root}/reviews`).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(new Set(unchangedReviewList.reviews.map((item: { id: string }) => item.id)),new Set([submitted.id,fullReview]));
+      assert.equal(modelCalls,before+4);
     } finally { await storyboardApp.close(); }
     await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
     const impactApp = await start(ca,false,false,true,true);

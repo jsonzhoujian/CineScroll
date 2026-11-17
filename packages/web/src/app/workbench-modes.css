@@ -194,3 +194,8 @@
 .storyboard-candidate dd {
   margin: 0;
 }
+
+.manuscript article[aria-current="true"] {
+  outline: 2px solid var(--jade);
+  outline-offset: -2px;
+}

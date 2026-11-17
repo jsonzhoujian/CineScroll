@@ -33,7 +33,18 @@ export function ImportWorkbench() {
   const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: "login", mode: "trace" });
   const { step, mode } = navigation;
   const setStep = (nextStep: Step) => setNavigation((current) => ({ ...current, step: nextStep }));
-  const setMode = (nextMode: WorkbenchMode) => setNavigation((current) => switchWorkbenchMode(current, nextMode));
+  const [traceFragment,setTraceFragment] = useState<{ projectId: string; chapterId: string; sourceVersionId: string; fragmentId: string } | null>(null);
+  const setMode = (nextMode: WorkbenchMode) => {
+    if (nextMode === "trace") {
+      const query = new URL(window.location.href).searchParams;
+      try {
+        const [projectId,chapterId,sourceVersionId] = JSON.parse(query.get("scriptReviewContext") ?? "[]");
+        const fragmentId = query.get("scriptFragment");
+        setTraceFragment(projectId && chapterId && sourceVersionId && fragmentId ? { projectId,chapterId,sourceVersionId,fragmentId } : null);
+      } catch { setTraceFragment(null); }
+    }
+    setNavigation((current) => switchWorkbenchMode(current, nextMode));
+  };
   const [phone, setPhone] = useState("13800138000");
   const [code, setCode] = useState("");
   const [challengeId, setChallengeId] = useState<string | null>(null);
@@ -231,7 +242,8 @@ export function ImportWorkbench() {
           <div className="inline-actions"><button className="text-button" onClick={() => setStep("source")}>返回修改原文</button><Action onClick={importChapter} busy={busy}>确认并创建原文版本</Action></div>
         </Panel>}
 
-        {mode === "trace" && step === "version" && chapter && <VersionDesk chapter={chapter} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
+        {mode === "trace" && step === "version" && chapter && <VersionDesk chapter={chapter} traceFragmentId={traceFragment?.projectId === project?.id && traceFragment?.chapterId === chapter.id
+          && traceFragment?.sourceVersionId === chapter.versions.at(-1)?.id ? traceFragment?.fragmentId : undefined} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
         {mode === "review" && taskReviewTarget && taskReviewTarget.project.id === project?.id && taskReviewTarget.chapter.id === chapter?.id
           ? <StoryKnowledgeWorkbench key={`task-review:${taskReviewTarget.expectedVersionId}`} api={api} project={taskReviewTarget.project} chapter={taskReviewTarget.chapter}
               expectedVersionId={taskReviewTarget.expectedVersionId} canManageStage={taskReviewTarget.project.role !== "editor"} cursor={reviewCursor}
@@ -260,10 +272,10 @@ function Field({ label, wide, children }: { label: string; wide?: boolean; child
 function Choice<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: ReadonlyArray<readonly [T, string]>; onChange(value: T): void }) { return <fieldset className="choice"><legend>{label}</legend><div>{options.map(([id, name]) => <button type="button" key={id} className={value === id ? "active" : ""} onClick={() => onChange(id)}>{name}</button>)}</div></fieldset>; }
 function Action({ children, onClick, busy }: { children: React.ReactNode; onClick(): void; busy: boolean }) { return <button className="button primary action" onClick={onClick} disabled={busy}>{busy ? "处理中…" : children}<span>→</span></button>; }
 
-function VersionDesk({ chapter, importedDocument, importSavedChapter, reimportText, setReimportText, reimport, busy, diff }: { chapter: Chapter; importedDocument: ImportedDocumentSummary | null; importSavedChapter(index: number): void; reimportText: string; setReimportText(value: string): void; reimport(): void; busy: boolean; diff: SourceVersionDiff | null }) {
+function VersionDesk({ chapter, traceFragmentId, importedDocument, importSavedChapter, reimportText, setReimportText, reimport, busy, diff }: { chapter: Chapter; traceFragmentId: string | undefined; importedDocument: ImportedDocumentSummary | null; importSavedChapter(index: number): void; reimportText: string; setReimportText(value: string): void; reimport(): void; busy: boolean; diff: SourceVersionDiff | null }) {
   const version = chapter.versions.at(-1)!;
   return <div className="version-desk"><div className="version-head"><div><span className="eyebrow">原文版本 {String(version.ordinal).padStart(2,'0')}</span><h2>{chapter.title}</h2></div><span className="version-badge" aria-label="当前原文版本状态">已入卷 · {version.characterCount} 字</span></div>
-    <div className="version-grid"><section className="manuscript"><div className="paper-head"><span>原文片段</span><small>{version.id}</small></div>{version.fragments.map((fragment) => <article key={fragment.id}><small>{fragment.id}</small><p>{fragment.text}</p></article>)}</section>
+    <div className="version-grid"><section className="manuscript"><div className="paper-head"><span>原文片段</span><small>{version.id}</small></div>{version.fragments.map((fragment) => <article key={fragment.id} aria-current={fragment.id === traceFragmentId ? "true" : undefined}><small>{fragment.id}</small><p>{fragment.text}</p></article>)}</section>
       <aside className="reimport" aria-label="重新导入">{importedDocument && <div className="saved-directory" role="region" aria-label="已保存章节目录"><span className="eyebrow">已保存章节目录</span>{importedDocument.chapters.map((item) => <p key={item.index}><span><b>{item.title}</b><small>{item.status === "imported" ? "已入卷" : "待后续处理"} · {item.characterCount} 字</small></span>{item.status === "pending" && <button onClick={() => importSavedChapter(item.index)} disabled={busy}>现在处理</button>}</p>)}</div>}<span className="eyebrow">重新导入</span><h3>比较新版本</h3><p>原版本不会被覆盖。修改正文后创建版本 {version.ordinal + 1}。</p><textarea aria-label="新版本正文" value={reimportText} onChange={(event) => setReimportText(event.target.value)} /><button className="button secondary" onClick={reimport} disabled={busy}>生成差异</button>
         {diff && <div className="diff"><Diff title="新增" tone="add" items={diff.added} /><Diff title="删除" tone="remove" items={diff.removed} /><Diff title="未变化" tone="same" items={diff.unchanged} /></div>}</aside></div></div>;
 }

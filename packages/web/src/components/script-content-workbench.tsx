@@ -26,7 +26,8 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
     }
     if (url.searchParams.get("scriptReviewContext") === context && url.searchParams.get("scriptReviewLoaded") === "1") {
       setElementId(url.searchParams.get("scriptElement") ?? "");
-      void act(readCurrent);
+      const pinned = url.searchParams.get("scriptCursorFromStoryboard") === "1" ? url.searchParams.get("scriptCursorVersion") : null;
+      void act(pinned ? () => readPinned(pinned) : readCurrent);
     }
     return () => { alive.current = false; };
   },[context]);
@@ -87,18 +88,38 @@ export function ScriptContentWorkbench({ api,projectId,chapterId,sourceVersionId
     }
     if (alive.current) { setView(next); rememberCursor(next); setNotice("已载入剧本候选，尚未正式确认。"); }
   }
-  function rememberCursor(next: ScriptContentView,selectedId = elementId) {
+  function rememberCursor(next: ScriptContentView,selectedId = elementId, preserveFragment = false) {
     const url = new URL(window.location.href); url.searchParams.set("scriptReviewContext",context); url.searchParams.set("scriptReviewLoaded","1");
     const element = next.version.elements.find(e => e.id === selectedId);
-    for (const [key,value] of [["scriptElement",element?.id],["scriptScene",element?.sceneId],["scriptFragment",element?.provenance.find(p => p.type === "source_fragment")?.fragmentId]] as const) {
+    const savedFragment = url.searchParams.get("scriptFragment");
+    const fragment = preserveFragment && url.searchParams.get("scriptCursorVersion") === next.version.id
+      && url.searchParams.get("scriptElement") === element?.id && next.sourceFragments.some(item => item.id === savedFragment)
+      ? savedFragment : element?.provenance.find(p => p.type === "source_fragment")?.fragmentId;
+    url.searchParams.set("scriptCursorVersion",next.version.id);
+    for (const [key,value] of [["scriptElement",element?.id],["scriptScene",element?.sceneId],["scriptFragment",fragment]] as const) {
       if (value) url.searchParams.set(key,value); else url.searchParams.delete(key);
     }
     window.history.replaceState(null,"",url);
   }
+  async function readPinned(id: string) {
+    const [{ version },chapter] = await Promise.all([api.getScriptVersion(projectId,chapterId,id),api.getChapter(projectId,chapterId)]);
+    const source = chapter.versions.find(item => item.id === sourceVersionId);
+    if (!source || chapter.id !== chapterId || version.id !== id || version.status !== "confirmed"
+      || version.projectId !== projectId || version.chapterId !== chapterId || version.sourceVersionId !== sourceVersionId
+      || version.planVersionId !== planVersionId) throw new Error("stale context");
+    if (alive.current) {
+      setView({ version,current: false,sourceFragments: source.fragments });
+      setNotice("正在查看分镜关联的正式剧本。");
+    }
+  }
   async function readCurrent() {
     const next = await api.getScriptContent(projectId,chapterId);
     if (next.version.projectId !== projectId || next.version.chapterId !== chapterId || !next.current && next.version.status !== "confirmed" || next.current && (next.version.sourceVersionId !== sourceVersionId || next.version.planVersionId !== planVersionId)) throw new Error("stale context");
-    if (alive.current) { if (!next.current) setNotice("历史正式剧本仅供追溯，写入已关闭。");setView(next); setReviewUnknown(false); setReplacement(""); setReason(""); rememberCursor(next,new URL(window.location.href).searchParams.get("scriptElement") ?? elementId); }
+    if (alive.current) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("scriptCursorFromStoryboard");
+      window.history.replaceState(null,"",url);
+      if (!next.current) setNotice("历史正式剧本仅供追溯，写入已关闭。");setView(next); setReviewUnknown(false); setReplacement(""); setReason(""); rememberCursor(next,new URL(window.location.href).searchParams.get("scriptElement") ?? elementId,true); }
   }
   async function review(kind: "edit" | "suggest" | "decide",suggestionId?: string,decision?: "accepted" | "rejected") {
     if (!view || reviewUnknown || !reason.trim()) return;
