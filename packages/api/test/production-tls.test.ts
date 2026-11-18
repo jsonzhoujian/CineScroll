@@ -909,6 +909,18 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const projectAudit = (await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(200)).body;
       assert.ok(projectAudit.events.some((event: { chapterId: string; publicationId: string }) =>
         event.chapterId === chapterId && event.publicationId === lockedPublication.publicationId));
+      let versionAuditPage = projectAudit;
+      const events = [...versionAuditPage.events];
+      while (versionAuditPage.nextCursor) {
+        versionAuditPage = (await impactApp.http.get(projectAuditPath).set("authorization",bearer)
+          .query(versionAuditPage.nextCursor).expect(200)).body;
+        events.push(...versionAuditPage.events);
+      }
+      const imported = events.find(event => event.kind === "source_import" && event.sourceVersionId === sourceId);
+      assert.equal(imported?.actorId,userId);
+      assert.equal(imported?.previousSourceVersionId,null);
+      assert.ok(!("sourceText" in imported) && !("text" in imported));
+      assert.ok(audit.events.every((event: { kind: string }) => !event.kind.startsWith("source_")));
       const first = projectAudit.events[0];
       const afterFirst = (await impactApp.http.get(projectAuditPath).set("authorization",bearer)
         .query({ chapterId: first.chapterId,recordedAt: first.recordedAt,eventId: first.eventId }).expect(200)).body;

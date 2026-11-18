@@ -1339,15 +1339,18 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await page.route("**/projects/p/storyboard-audit",route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
     return route.fulfill({ headers,json: {
-      events: [{ eventId: "operation:other:1",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:00.000000Z",
+      events: [{ eventId: "source:s2",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:01.000000Z",
+        actorId: "editor",kind: "source_reimport",previousSourceVersionId: "s1",sourceVersionId: "s2" },{ eventId: "operation:other:1",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:00.000000Z",
         actorId: "reviewer",kind: "confirm",publicationId: "43",reason: "跨章节发布" }],
       nextCursor: null,
     } });
   });
-  await panel.getByRole("button",{ name: "查看项目分镜审计" }).click();
-  const projectAuditPanel = panel.getByRole("region",{ name: "项目分镜审计" });
+  await panel.getByRole("button",{ name: "查看项目版本审计" }).click();
+  const projectAuditPanel = panel.getByRole("region",{ name: "项目版本审计" });
   await expect(projectAuditPanel).toContainText("章节 other-chapter");
   await expect(projectAuditPanel).toContainText("发布 43");
+  await expect(projectAuditPanel).toContainText("重新导入原文");
+  await expect(projectAuditPanel).toContainText("原版本 s1 · 新版本 s2");
   await panel.getByRole("button",{ name: "查看分镜审计" }).click();
   const auditPanel = panel.getByRole("region",{ name: "分镜审计" });
   await expect(auditPanel).toContainText("核对完成");
@@ -1395,7 +1398,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
       version: { ...historical.version,chapterId: "other-chapter" },
     } });
   });
-  await panel.getByRole("button",{ name: "查看项目分镜审计" }).click();
+  await panel.getByRole("button",{ name: "查看项目版本审计" }).click();
   await projectAuditPanel.getByRole("button",{ name: "查看发布 43" }).click();
   await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 43" })).toBeVisible();
   await panel.getByRole("button",{ name: "刷新当前审核候选" }).click();

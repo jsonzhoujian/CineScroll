@@ -22,7 +22,7 @@ function readPending(key: string): Pending | null {
 }
 
 const auditLabels = new Map([
-  ["submit","提交审核"],["suggest","提出建议"],["edit","编辑镜头"],["decide","处理建议"],
+  ["source_import","导入原文"],["source_reimport","重新导入原文"],["submit","提交审核"],["suggest","提出建议"],["edit","编辑镜头"],["decide","处理建议"],
   ["lock","锁定镜头"],["unlock","解锁镜头"],["confirm","确认发布"],["retain","原样保留"],
   ["revise","核对修订"],["adopt","采用重生"],
 ]);
@@ -280,14 +280,16 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
     <button type="button" disabled={busy} onClick={() => void act(() => loadReview(null))}>读取正式分镜</button>
     {canReadAudit && <>
       <button type="button" disabled={busy} onClick={() => void act(() => readAudit())}>查看分镜审计</button>
-      <button type="button" disabled={busy} onClick={() => void act(() => readAudit(true))}>查看项目分镜审计</button>
+      <button type="button" disabled={busy} onClick={() => void act(() => readAudit(true))}>查看项目版本审计</button>
     </>}
-    {chapterAudit && <section aria-label={chapterAudit.projectWide ? "项目分镜审计" : "分镜审计"}>
-      {chapterAudit.events.length === 0 ? <p>暂无分镜审核记录。</p> : <ol>
+    {chapterAudit && <section aria-label={chapterAudit.projectWide ? "项目版本审计" : "分镜审计"}>
+      {chapterAudit.events.length === 0 ? <p>{chapterAudit.projectWide ? "暂无项目版本审计记录。" : "暂无分镜审核记录。"}</p> : <ol>
         {chapterAudit.events.map(event => <li key={JSON.stringify([event.chapterId,event.eventId])}>
           <time dateTime={event.recordedAt}>{new Date(event.recordedAt).toLocaleString("zh-CN")}</time>
           {" · "}{auditLabels.get(event.kind) ?? event.kind}{" · "}{event.actorId}
           {chapterAudit.projectWide && ` · 章节 ${event.chapterId}`}
+          {event.previousSourceVersionId && ` · 原版本 ${event.previousSourceVersionId}`}
+          {event.sourceVersionId && ` · 新版本 ${event.sourceVersionId}`}
           {event.shotId && ` · 镜头 ${event.shotId}`}
           {event.decision && (event.decision === "accepted" ? " · 已采纳" : " · 已驳回")}
           {event.reason && <p>{event.reason}</p>}

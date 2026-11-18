@@ -213,21 +213,34 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       const rows = (await client.query(`with events as (
         select chapter_id,'review:'||id::text as event_id,submitted_at as recorded_at,submitted_by as actor_id,
           'submit' as kind,id as review_id,null::uuid as reconciliation_id,null::text as shot_id,
-          null::text as publication_id,null::text as reason,null::text as decision
+          null::text as publication_id,null::text as reason,null::text as decision,
+          null::text as previous_source_id,null::text as source_id
         from storyboard_review_submissions where (workspace_id,project_id)=($1,$2) and ($3::text is null or chapter_id=$3)
         union all
         select chapter_id,'operation:'||review_id::text||':'||revision,recorded_at,actor_id,command->>'kind',review_id,null,
-          nullif(shot_id,''),publication_id::text,command->>'reason',command->>'decision'
+          nullif(shot_id,''),publication_id::text,command->>'reason',command->>'decision',null,null
         from storyboard_review_operations where (workspace_id,project_id)=($1,$2) and ($3::text is null or chapter_id=$3)
         union all
         select chapter_id,'reconciliation:'||reconciliation_id::text||':'||shot_id,retained_at,retained_by,
           case when regenerated_shot is not null then 'adopt' when revision_value is not null then 'revise' else 'retain' end,
-          null,reconciliation_id,shot_id,null,revision_reason,null
+          null,reconciliation_id,shot_id,null,revision_reason,null,null,null
         from storyboard_reconciliation_retains where (workspace_id,project_id)=($1,$2) and ($3::text is null or chapter_id=$3)
+        union all
+        select source.chapter_id,'source:'||source.id,source.created_at,source.created_by,
+          case when source.ordinal=1 then 'source_import' else 'source_reimport' end,
+          null,null,null,null,null,null,previous.id,source.id
+        from source_versions source
+        join projects p on p.id=source.project_id
+        left join lateral (
+          select v.id from source_versions v where (v.project_id,v.chapter_id)=(source.project_id,source.chapter_id)
+            and v.ordinal<source.ordinal order by v.ordinal desc limit 1
+        ) previous on true
+        where $3::text is null and (p.workspace_id,p.id)=($1,$2)
       )
       select chapter_id as "chapterId",event_id as "eventId",to_char(recorded_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "recordedAt",
         actor_id as "actorId",kind,review_id as "reviewId",reconciliation_id as "reconciliationId",
-        shot_id as "shotId",publication_id as "publicationId",reason,decision
+        shot_id as "shotId",publication_id as "publicationId",reason,decision,
+        previous_source_id as "previousSourceVersionId",source_id as "sourceVersionId"
       from events where $4::timestamptz is null or (recorded_at,chapter_id,event_id)<($4::timestamptz,$6::text,$5::text)
       order by recorded_at desc,chapter_id desc,event_id desc limit 21`,[actor.workspaceId,projectId,chapterId,cursor?.recordedAt ?? null,cursor?.eventId ?? null,cursor?.chapterId ?? chapterId])).rows;
       const events = rows.slice(0,20);
