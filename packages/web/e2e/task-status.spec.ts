@@ -1159,6 +1159,11 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     const request = route.request(), suffix = request.url().slice(root.length);
     if (request.method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
     expect(request.headers().authorization).toBe("Bearer session");
+    if (suffix === "/audit") return route.fulfill({ headers,json: {
+      events: [{ eventId: "operation:42:1",recordedAt: "2026-11-17T00:00:00.000000Z",actorId: "reviewer",
+        kind: "confirm",publicationId: "42",reason: "核对完成",reviewId,reconciliationId: null,shotId: null,decision: null }],
+      nextCursor: null,
+    } });
     if (suffix === "/publications") return route.fulfill({ headers,json: {
       publications: [{ id: "42",revision: 1,confirmedAt: "2026-11-17T00:00:00Z" }],nextCursor: null,
     } });
@@ -1329,6 +1334,11 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await panel.getByLabel("分镜确认理由").fill("尝试确认");
   await panel.getByRole("button",{ name: "确认正式分镜" }).click();
   await expect(panel.getByRole("status")).toContainText("请补齐缺失镜头并处理失败项和待决建议");
+  await panel.getByRole("button",{ name: "查看分镜审计" }).click();
+  const auditPanel = panel.getByRole("region",{ name: "分镜审计" });
+  await expect(auditPanel).toContainText("核对完成");
+  await auditPanel.getByRole("button",{ name: "查看发布 42" }).click();
+  await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 42" })).toBeVisible();
   await panel.getByRole("button",{ name: "读取分镜发布历史" }).click();
   await panel.getByRole("list",{ name: "分镜发布历史" }).getByRole("button",{ name: /发布 42/ }).click();
   await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 42" })).toBeVisible();

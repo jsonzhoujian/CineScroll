@@ -19,7 +19,7 @@ type Services = {
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
   handoff: Pick<ConfirmedStoryboardHandoff, "read">;
-  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "adoptReconciliationShot" | "beginReconciliation" | "confirmReconciliation" | "previewReconciliationRegeneration" | "retainReconciliationShot" | "findReview" | "saveReviewOperation">;
+  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listAudit" | "listPublications" | "adoptReconciliationShot" | "beginReconciliation" | "confirmReconciliation" | "previewReconciliationRegeneration" | "retainReconciliationShot" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
   projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
 };
@@ -107,6 +107,19 @@ class StoryboardController {
   confirmed(req: { actor: Actor },p: string,c: string) {
     const projectId = id(p), chapterId = id(c);
     return respond(() => this.reviewView(req.actor,projectId,chapterId,null));
+  }
+
+  audit(req: { actor: Actor },p: string,c: string,query: Record<string,unknown>) {
+    const projectId = id(p), chapterId = id(c);
+    if (Object.keys(query).some(key => key !== "recordedAt" && key !== "eventId")) throw new BadRequestException();
+    const { recordedAt,eventId } = query;
+    const cursor = recordedAt === undefined && eventId === undefined ? null : { recordedAt,eventId };
+    if (cursor && (typeof recordedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(recordedAt)
+      || !Number.isFinite(Date.parse(recordedAt)) || typeof eventId !== "string" || !eventId || eventId.length > 1024)) throw new BadRequestException();
+    return respond(async () => {
+      if (!await this.services.context.canRead?.(req.actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      return this.services.candidates.listAudit(req.actor,projectId,chapterId,cursor as { recordedAt: string; eventId: string } | null);
+    });
   }
 
   publications(req: { actor: Actor },p: string,c: string,query: Record<string,unknown>) {
@@ -348,7 +361,7 @@ UseGuards(SessionGuard)(StoryboardController);
 Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
-  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["beginReconciliation",Post("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["audit",Get("audit"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["beginReconciliation",Post("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
   ["confirmReconciliation",Post("publications/:id/reconciliation/:draftId/confirm"),Param("id")],
   ["submitReconciliationRegeneration",Post("publications/:id/reconciliation/:draftId/regeneration-tasks"),Param("id")],
   ["previewReconciliationRegeneration",Post("publications/:id/reconciliation/:draftId/regeneration-preview"),Param("id")],

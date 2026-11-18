@@ -788,6 +788,13 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(lockedFormal.publicationId,lockedPublication.publicationId);
       assert.deepEqual(lockedFormal.lockedShotIds,[oldShot.id]);
       assert.deepEqual(lockedFormal.version.shots,latest.version.shots);
+      const auditPath = reviewPath.replace(/\/reviews$/,"/audit");
+      await impactApp.http.get(auditPath).expect(401);
+      await impactApp.http.get(auditPath).set("authorization",bearer).query({ eventId: "missing-time" }).expect(400);
+      const audit = (await impactApp.http.get(auditPath).set("authorization",bearer).expect(200)).body;
+      assert.ok(audit.events.some((event: { kind: string; publicationId: string }) => event.kind === "confirm" && event.publicationId === lockedPublication.publicationId));
+      assert.ok(audit.events.some((event: { kind: string; shotId: string }) => event.kind === "adopt" && event.shotId === oldShot.id));
+      assert.ok(audit.events.every((event: object) => !["jobId","requestId","command"].some(key => key in event)));
     } finally { await impactApp.close(); }
     const compliance = t.mock.method(globalThis,"fetch",async (url: Parameters<typeof fetch>[0]) => {
       assert.equal(String(url),config.complianceEndpoint);

@@ -12,6 +12,11 @@ export type StoryboardReviewCommand = { requestId: string; expectedRevision: num
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
 export type StoryboardPublication = { id: string; revision: number; confirmedAt: string };
+export type StoryboardAuditCursor = { recordedAt: string; eventId: string };
+export type StoryboardAuditEvent = StoryboardAuditCursor & {
+  actorId: string; kind: string; reviewId: string | null; reconciliationId: string | null;
+  shotId: string | null; publicationId: string | null; reason: string | null; decision: string | null;
+};
 export type StoryboardRevisedShot = { shotId: string; value: { visual: string; durationSeconds: number } };
 export type StoryboardReconciliationPreview = {
   publicationId: string; upstreamChanged: boolean;
@@ -189,6 +194,11 @@ export class ApiClient {
   }
   getStoryboardReview(p: string,c: string,id: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
+  listStoryboardAudit(p: string,c: string,cursor: StoryboardAuditCursor | null) {
+    const query = cursor ? `?${new URLSearchParams(cursor)}` : "";
+    return this.request<{ events: StoryboardAuditEvent[]; nextCursor: StoryboardAuditCursor | null }>(
+      `${storyboardPath(p,c)}/audit${query}`,{ method: "GET" },"session");
   }
   listStoryboardPublications(p: string,c: string,cursor: string | null) {
     const query = cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`;
