@@ -208,6 +208,11 @@ export class ApiClient {
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/retains`,
       { method: "POST",body: JSON.stringify({ shotId }) },"session");
   }
+  previewStoryboardRegeneration(p: string,c: string,publicationId: string,draftId: string,shotIds: string[]) {
+    return this.request<{ reconciliationId: string; publicationId: string; targets: Array<{ shotId: string; scopeKey: string }> }>(
+      `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/regeneration-preview`,
+      { method: "POST",body: JSON.stringify({ shotIds }) },"session");
+  }
   reviseStoryboardReconciliationShot(p: string,c: string,publicationId: string,draftId: string,revision: StoryboardRevisedShot,reason: string) {
     return this.request<{ shotId: string }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/revisions`,

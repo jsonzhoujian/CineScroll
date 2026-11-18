@@ -691,12 +691,26 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const nextPreview = (await impactApp.http.get(reconciliationPath!).set("authorization",bearer).expect(200)).body;
       const nextDraft = (await impactApp.http.post(reconciliationPath!).set("authorization",bearer)
         .send(nextPreview.currentUpstream).expect(201)).body;
+      await impactApp.http.post(`${reconciliationPath}/${nextDraft.id}/regeneration-preview`).set("authorization",bearer)
+        .send({ shotIds: [oldShot.id] }).expect(409);
       const reviewPath = reconciliationPath!.replace(/publications\/[^/]+\/reconciliation$/,"reviews");
       const formal = (await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",bearer).expect(200)).body;
       const review = (await impactApp.http.get(`${reviewPath}/${formal.reviewId}`).set("authorization",bearer).expect(200)).body;
       await impactApp.http.post(`${reviewPath}/${formal.reviewId}/operations`).set("authorization",bearer)
         .send({ kind: "unlock",requestId: "tls-reconciliation-unlock",expectedRevision: review.revision,shotId: oldShot.id,reason: "允许修订" }).expect(201);
+      const scopes = (draftId: string) => `${reconciliationPath}/${draftId}/regeneration-preview`;
+      const selection = { shotIds: [oldShot.id] };
+      await impactApp.http.post(scopes(attempts[0]!.body.id)).set("authorization",bearer).send(selection).expect(409);
+      await impactApp.http.post(scopes(nextDraft.id)).set("authorization",bearer).send({ shotIds: [oldShot.id,oldShot.id] }).expect(400);
+      await impactApp.http.post(scopes(nextDraft.id)).set("authorization",bearer).send({ shotIds: ["missing"] }).expect(404);
+      const scope = (await impactApp.http.post(scopes(nextDraft.id)).set("authorization",bearer).send(selection).expect(201)).body;
+      const original = formal.version.shots[0];
+      assert.deepEqual(scope,{
+        reconciliationId: nextDraft.id,publicationId: nextPreview.publicationId,...nextPreview.currentUpstream,
+        targets: [{ scopeKey: oldShot.id,shotId: oldShot.id,episodeId: original.episodeId,sceneId: original.sceneId,ordinal: original.ordinal }],
+      });
       await impactApp.http.post(revisions(nextDraft.id)).set("authorization",bearer).send(revision).expect(201);
+      await impactApp.http.post(scopes(nextDraft.id)).set("authorization",bearer).send(selection).expect(409);
       await impactApp.http.post(revisions(nextDraft.id)).set("authorization",bearer).send(revision).expect(201);
       await impactApp.http.post(revisions(nextDraft.id)).set("authorization",bearer).send({ ...revision,visual: "另一版" }).expect(409);
       const reopened = (await impactApp.http.post(reconciliationPath!).set("authorization",bearer)

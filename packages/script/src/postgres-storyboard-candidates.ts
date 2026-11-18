@@ -113,6 +113,35 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     });
   }
 
+  previewReconciliationRegeneration(actor: Actor,p: string,c: string,publicationId: string,draftId: string,shotIds: readonly string[]) {
+    return this.transaction(actor, async client => {
+      const key = [actor.workspaceId,p,c,draftId,publicationId];
+      const draft = (await client.query(`select d.source_version_id, d.upstream_ids, assert_storyboard_reconciliation(d) as shots
+        from storyboard_reconciliations d
+        where (d.workspace_id,d.project_id,d.chapter_id,d.id,d.base_publication_id)=($1,$2,$3,$4,$5)`,key)).rows[0];
+      if (!draft) throw new StoryboardStorageError("TASK_NOT_FOUND");
+      const targets = (draft.shots as StoryboardCandidate["shots"]).filter(shot => shotIds.includes(shot.id));
+      if (targets.length !== shotIds.length) throw new StoryboardStorageError("TASK_NOT_FOUND");
+      const blocked = (await client.query(`select 1 from storyboard_reconciliation_retains
+        where (workspace_id,project_id,chapter_id,reconciliation_id)=($1,$2,$3,$4) and shot_id=any($6::text[])
+        union all
+        select 1 from (
+          select distinct on (op.shot_id) op.command->>'kind' as kind
+          from storyboard_review_operations publication
+          join storyboard_review_operations op using(workspace_id,project_id,chapter_id,review_id)
+          where (publication.workspace_id,publication.project_id,publication.chapter_id,publication.publication_id)=($1,$2,$3,$5)
+            and op.shot_id=any($6::text[]) and op.command->>'kind' in ('lock','unlock')
+          order by op.shot_id,op.revision desc
+        ) locks where kind='lock' limit 1`,[...key,shotIds])).rows[0];
+      if (blocked) throw new StoryboardStorageError("STATE_CONFLICT");
+      return {
+        reconciliationId: draftId,publicationId,sourceVersionId: draft.source_version_id as string,
+        upstreamConfirmedVersionIds: draft.upstream_ids as string[],
+        targets: targets.map(({ id,episodeId,sceneId,ordinal }) => ({ scopeKey: id,shotId: id,episodeId,sceneId,ordinal })),
+      };
+    });
+  }
+
   listPublications(actor: Actor, projectId: string, chapterId: string, cursor: string | null) {
     return this.transaction(actor, async client => {
       const rows = (await client.query(`select publication_id::text as id, revision, recorded_at as "confirmedAt"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardRevisedShot, type StoryboardPublication, type StoryboardReconciliationPreview, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
 import { readStoryboardShot, writeStoryboardCursor } from "../lib/storyboard-cursor";
@@ -29,6 +29,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [cursor,setCursor] = useState<string | null>(null);
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
+  const regenerationFormId = useId();
   const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[] } | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
   const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
@@ -312,7 +313,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
               if (retained.shotId !== shot.id) throw new Error("WRONG_RECONCILIATION");
               setReconciliationDraft({ ...reconciliationDraft, retainedShotIds: [...reconciliationDraft.retainedShotIds,shot.id] });
             })}>核对无误，原样保留</button>}
-          {reconciliationDraft && shot.locked && shot.referencesMatch && view.reviewId &&
+          {reconciliationDraft && shot.locked && !revised && view.reviewId &&
             !reconciliationDraft.retainedShotIds.includes(shot.id) && <form onSubmit={event => {
               event.preventDefault();
               const reason = String(new FormData(event.currentTarget).get("reason")).trim();
@@ -328,6 +329,8 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
               <label>解锁原因<input name="reason" required maxLength={1000} /></label>
               <button disabled={busy}>解锁镜头</button>
             </form>}
+          {reconciliationDraft && !shot.locked && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
+            <label><input type="checkbox" form={regenerationFormId} name="shotId" value={shot.id} disabled={busy} />选择重生</label>}
           {revised && <p>已修订 · {revised.value.visual} · {revised.value.durationSeconds} 秒</p>}
           {reconciliationDraft && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
             !shot.locked && shot.referencesMatch && original && <details>
@@ -351,6 +354,22 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
           </li>;
         })}</ul>
         {reconciliationDraft && <p>核对候选 {reconciliationDraft.id} · 待逐镜核对</p>}
+        {reconciliationDraft && <form id={regenerationFormId} onSubmit={event => {
+          event.preventDefault();
+          const ids = new FormData(event.currentTarget).getAll("shotId").map(String);
+          if (!ids.length) { setNotice("请选择要重生的镜头。"); return; }
+          if (ids.length > 100) { setNotice("每次最多选择 100 个镜头。"); return; }
+          void act(async () => {
+            const result = await api.previewStoryboardRegeneration(projectId,chapterId,reconciliation.publicationId,reconciliationDraft.id,ids);
+            if (result.reconciliationId !== reconciliationDraft.id || result.publicationId !== reconciliation.publicationId ||
+              result.targets.length !== ids.length || !ids.every(id => result.targets.some(target => target.shotId === id && target.scopeKey === id))) {
+              throw new Error("WRONG_RECONCILIATION");
+            }
+            setNotice(`重生范围检查通过，共 ${ids.length} 个镜头。`);
+          });
+        }}>
+          <button disabled={busy}>检查重生范围</button>
+        </form>}
         {reconciliation.upstreamChanged && reconciliation.currentUpstream && !reconciliationDraft && <button type="button"
           className="desktop-task-action" disabled={busy} onClick={() => void act(async () => {
             const draft = await api.beginStoryboardReconciliation(projectId,chapterId,reconciliation.publicationId,reconciliation.currentUpstream!);
