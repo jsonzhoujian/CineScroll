@@ -22,6 +22,11 @@ function readPending(key: string): Pending | null {
 }
 
 const auditLabels = new Map([
+  ["settings_edit","编辑设定"],["settings_suggest","提出设定建议"],["settings_decide","裁决设定建议"],
+  ["settings_confirm","确认设定"],["settings_lock","锁定设定"],["settings_unlock","解锁设定"],
+  ["settings_regenerate","局部重生设定"],["settings_reconcile","开始设定核对"],["settings_retain","原样保留设定"],
+  ["settings_reconcileUnlock","核对时解锁设定"],["settings_reconcileRepair","核对时修订设定"],
+  ["settings_reconcileResolveFailure","处理设定失败项"],
   ["script_suggest","提出剧本建议"],["script_edit","编辑剧本"],["script_decide","裁决剧本建议"],
   ["script_confirm","确认剧本"],["script_lock","锁定剧本"],["script_unlock","解锁剧本"],
   ["source_import","导入原文"],["source_reimport","重新导入原文"],["submit","提交审核"],["suggest","提出建议"],["edit","编辑镜头"],["decide","处理建议"],

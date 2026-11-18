@@ -916,6 +916,11 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
           .query(versionAuditPage.nextCursor).expect(200)).body;
         events.push(...versionAuditPage.events);
       }
+      const settingConfirmation = events.find(event => event.kind === "settings_confirm" && event.versionId === final.id);
+      assert.equal(settingConfirmation?.actorId,userId);
+      assert.equal(settingConfirmation?.previousVersionId,retained.id);
+      assert.equal(settingConfirmation?.reason,"checked");
+      assert.ok(!("assets" in settingConfirmation) && !("jobId" in settingConfirmation) && !("requestId" in settingConfirmation));
       const scriptDecision = events.find(event => event.kind === "script_decide" && event.reason === "checked");
       assert.equal(scriptDecision?.decision,"accepted");
       assert.equal(scriptDecision?.actorId,userId);

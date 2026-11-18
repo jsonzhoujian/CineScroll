@@ -253,6 +253,17 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
           and operation.value->>'kind' in ('suggest','edit','decide','confirm','lock','unlock')
           and operation.value is distinct from coalesce(parent.version_json->'publicationOperation',parent.version_json->'revisionOperation',parent.version_json->'reviewOperation')
+        union all
+        select v.chapter_id,'settings:'||v.id,(v.version_json->>'createdAt')::timestamptz,v.created_by,
+          'settings_'||(operation.value->>'kind'),null,null,null,null,operation.value->>'reason',
+          case when operation.value->>'kind'='decide' then (
+            select suggestion->>'status' from jsonb_array_elements(coalesce(v.version_json->'suggestions','[]'::jsonb)) suggestion
+            where suggestion->>'id'=operation.value->>'targetId' limit 1
+          ) end,
+          null,null,coalesce(v.parent_review_id,v.origin_version_id),v.id,operation.value->>'targetId'
+        from settings_review_versions v
+        cross join lateral (select v.version_json->'operation' as value) operation
+        where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
       )
       select chapter_id as "chapterId",event_id as "eventId",to_char(recorded_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "recordedAt",
         actor_id as "actorId",kind,review_id as "reviewId",reconciliation_id as "reconciliationId",
