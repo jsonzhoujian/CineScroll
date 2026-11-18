@@ -27,7 +27,7 @@ const auditLabels = new Map([
   ["revise","核对修订"],["adopt","采用重生"],
 ]);
 
-export function StoryboardWorkbench({ api, projectId, chapterId, active, impactTarget, onImpactHandled }: { api: ApiClient; projectId: string; chapterId: string; active: boolean; impactTarget: StoryboardImpactTarget | null; onImpactHandled(target: null): void }) {
+export function StoryboardWorkbench({ api, projectId, chapterId, active, impactTarget, onImpactHandled, initialPublication, onPublicationOpened, onOpenAuditPublication }: { api: ApiClient; projectId: string; chapterId: string; active: boolean; impactTarget: StoryboardImpactTarget | null; onImpactHandled(target: null): void; initialPublication: StoryboardView | null; onPublicationOpened(): void; onOpenAuditPublication(chapterId: string,publicationId: string): Promise<void> }) {
   const [ready,setReady] = useState(false);
   const [models,setModels] = useState<ModelConfiguration | null>(null);
   const [model,setModel] = useState("");
@@ -44,12 +44,12 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const regenerationRequest = useRef<{ key: string; requestId: string } | null>(null);
   const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[]; regeneratedShots: StoryboardView["version"]["shots"] } | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
-  const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
+  const [pinnedPublication,setPinnedPublication] = useState<string | null>(initialPublication?.publicationId ?? null);
   const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
   const [reviewCursor,setReviewCursor] = useState<string | null>(null);
   const [submitted,setSubmitted] = useState<Record<string,string>>({});
   const [task,setTask] = useState<StoryboardTask | null>(null);
-  const [view,setView] = useState<StoryboardView | null>(null);
+  const [view,setView] = useState<StoryboardView | null>(initialPublication);
   const [confirmationReason,setConfirmationReason] = useState("");
   const shotHeading = useRef<HTMLHeadingElement>(null);
   const impactView = useRef<StoryboardView | null>(null);
@@ -60,6 +60,10 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const inFlight = useRef(false);
   const pending = useRef<Pending | null>(null);
   const storageKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (initialPublication) onPublicationOpened();
+  },[initialPublication,onPublicationOpened]);
 
   function applyReadiness(result: Awaited<ReturnType<ApiClient["storyboardReadiness"]>>) {
     const key = `storyboard-submission:${JSON.stringify([result.userId,projectId,chapterId])}`;
@@ -285,9 +289,10 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
           {event.shotId && ` · 镜头 ${event.shotId}`}
           {event.decision && (event.decision === "accepted" ? " · 已采纳" : " · 已驳回")}
           {event.reason && <p>{event.reason}</p>}
-          {event.publicationId && (!chapterAudit.projectWide || event.chapterId === chapterId) && <button type="button" disabled={busy}
-            onClick={() => void act(() => loadReview(null,false,event.publicationId))}>查看发布 {event.publicationId}</button>}
-          {chapterAudit.projectWide && event.publicationId && event.chapterId !== chapterId && ` · 发布 ${event.publicationId}`}
+          {event.publicationId && <button type="button" disabled={busy}
+            onClick={() => void act(() => chapterAudit.projectWide && event.chapterId !== chapterId
+              ? onOpenAuditPublication(event.chapterId,event.publicationId!)
+              : loadReview(null,false,event.publicationId))}>查看发布 {event.publicationId}</button>}
         </li>)}
       </ol>}
       {chapterAudit.nextCursor && <button type="button" disabled={busy} onClick={() => void act(() => readAudit(chapterAudit.projectWide,true))}>更多审计记录</button>}

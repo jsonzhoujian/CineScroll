@@ -1382,6 +1382,23 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(preview).toContainText("已保留");
   await expect(preview).toContainText("已修订 · 雨滴滑过瓦片 · 3 秒");
   await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 42" })).toBeVisible();
+  await page.route(`${origin}/projects/p/chapters/other-chapter`,route => route.fulfill({ headers,
+    json: { ...chapter,id: "other-chapter",title: "次章" },
+  }));
+  let historicalReads = 0;
+  await page.route(`${origin}/projects/p/chapters/other-chapter/storyboard-tasks/publications/43`,route => {
+    historicalReads++;
+    const historical = reviewView();
+    return route.fulfill({ headers,json: { ...historical,current: false,formalRead: true,publicationId: "43",
+      version: { ...historical.version,chapterId: "other-chapter" },
+    } });
+  });
+  await panel.getByRole("button",{ name: "查看项目分镜审计" }).click();
+  await projectAuditPanel.getByRole("button",{ name: "查看发布 43" }).click();
+  await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 43" })).toBeVisible();
+  await panel.getByRole("button",{ name: "刷新当前审核候选" }).click();
+  await expect.poll(() => historicalReads).toBe(2);
+  await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 43" })).toBeVisible();
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
 });

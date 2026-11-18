@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type SourceVersionDiff } from "../lib/api";
+import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type StoryboardView, type SourceVersionDiff } from "../lib/api";
 import { buildDocumentRequest, type DocumentRequest, type ProjectDraft, validateProjectDraft } from "../lib/workflow";
 import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type WorkbenchMode, workbenchModes } from "../lib/workbench-mode";
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
@@ -81,6 +81,7 @@ export function ImportWorkbench() {
   const syncStoryKnowledgeConfirmation = useCallback((chapterId: string, confirmed: boolean) => {
     setConfirmedStoryKnowledgeChapterId((current) => confirmed ? chapterId : current === chapterId ? null : current);
   }, []);
+  const [auditPublication,setAuditPublication] = useState<StoryboardView | null>(null);
   const [impactTarget,setImpactTarget] = useState<StoryboardImpactTarget | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTab>("progress");
   const expectedWechatState = useRef<string | null>(null);
@@ -187,6 +188,27 @@ export function ImportWorkbench() {
     setDiff(null);
   });
 
+  async function openAuditPublication(chapterId: string, publicationId: string) {
+    if (!project || workflowBusy.current) throw new Error("WORKFLOW_BUSY");
+    await run(async () => {
+      const [targetChapter,publication] = await Promise.all([
+        api.getChapter(project.id,chapterId),api.getStoryboardPublication(project.id,chapterId,publicationId),
+      ]);
+      if (targetChapter.id !== chapterId || publication.version.projectId !== project.id ||
+        publication.version.chapterId !== chapterId || publication.publicationId !== publicationId ||
+        !publication.formalRead || publication.version.jobId !== undefined) throw new Error("WRONG_PUBLICATION");
+      setChapter(targetChapter);
+      setAuditPublication(publication);
+      setTaskReviewTarget(null);
+      setImpactTarget(null);
+      setImportedDocument(null);
+      setDiff(null);
+      setReimportText(targetChapter.versions.at(-1)?.text ?? "");
+      setNavigation({ step: "version",mode: "storyboard" });
+      setNotice(null);
+    });
+  }
+
   return <OpenStoryboardImpact.Provider value={target => {
     if (target.projectId !== project?.id || target.chapterId !== chapter?.id) return;
     setImpactTarget(target);
@@ -256,7 +278,9 @@ export function ImportWorkbench() {
               onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
           : mode !== "trace" && !(mode === "storyboard" && project && chapter) && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
         {project && chapter && <div hidden={mode !== "storyboard"}>
-          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} impactTarget={impactTarget} onImpactHandled={setImpactTarget} />
+          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} impactTarget={impactTarget} onImpactHandled={setImpactTarget}
+            initialPublication={auditPublication?.version.projectId === project.id && auditPublication.version.chapterId === chapter.id ? auditPublication : null}
+            onPublicationOpened={() => setAuditPublication(null)} onOpenAuditPublication={openAuditPublication} />
         </div>}
         {notice && <div className="notice" role="status"><span>!</span>{notice}<button onClick={() => setNotice(null)}>×</button></div>}
       </section>
