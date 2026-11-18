@@ -931,7 +931,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(knowledgeDecision?.decision,"accepted");
       assert.equal(knowledgeDecision?.actorId,userId);
       assert.ok(knowledgeDecision?.previousVersionId && knowledgeDecision?.versionId);
-      assert.ok(events.some(event => event.kind === "knowledge_confirm"));
+      const knowledgeConfirmation = events.find(event => event.kind === "knowledge_confirm");
+      assert.equal(knowledgeConfirmation?.reason,"确认测试知识");
+      assert.ok(!("fingerprint" in knowledgeConfirmation));
       assert.ok(!("facts" in knowledgeDecision) && !("extractionJobId" in knowledgeDecision));
       const settingConfirmation = events.find(event => event.kind === "settings_confirm" && event.versionId === final.id);
       assert.equal(settingConfirmation?.actorId,userId);

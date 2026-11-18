@@ -271,10 +271,15 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
         union all
         select v.chapter_id,'knowledge-confirm:'||v.id,v.created_at,v.created_by,
-          'knowledge_confirm',null,null,null,null,null,null,null,null,confirmation.candidate_version_id,v.id,null
+          'knowledge_confirm',null,null,null,null,
+          case when command.value->>'expectedActiveVersionId'=confirmation.candidate_version_id
+            and jsonb_typeof(command.value->'reason')='string' then command.value->>'reason' end,
+          null,null,null,confirmation.candidate_version_id,v.id,null
         from story_knowledge_confirmation_results confirmation
         join story_knowledge_versions v on (v.workspace_id,v.project_id,v.chapter_id,v.id)
-          =(confirmation.workspace_id,confirmation.project_id,confirmation.chapter_id,confirmation.version_id)
+          = (confirmation.workspace_id,confirmation.project_id,confirmation.chapter_id,confirmation.version_id)
+        cross join lateral (select case when confirmation.fingerprint is json object
+          then confirmation.fingerprint::jsonb end as value) command
         where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
         union all
         select v.chapter_id,'knowledge:'||v.id||':'||action.kind||':'||(fact.value->>'id'),v.created_at,v.created_by,
