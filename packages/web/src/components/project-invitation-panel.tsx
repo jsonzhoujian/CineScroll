@@ -12,6 +12,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
   onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
   const [members,setMembers] = useState<Awaited<ReturnType<ApiClient["listProjectMembers"]>>["members"] | null>(null);
+  const [pending,setPending] = useState<Awaited<ReturnType<ApiClient["listPendingProjectInvitations"]>>["invitations"] | null>(null);
   const [issued,setIssued] = useState<Awaited<ReturnType<ApiClient["issueProjectInvitation"]>> | null>(null);
   const [joined,setJoined] = useState<Awaited<ReturnType<ApiClient["acceptProjectInvitation"]>> | null>(null);
   const switchRequired = !!joined?.workspaceId && joined.workspaceId !== activeWorkspaceId;
@@ -55,6 +56,25 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
     <h2>项目邀请</h2>
     {accountId && <p>我的账号 ID <code>{accountId}</code></p>}
     {ownerProjectId && <>
+      <button type="button" disabled={busy} onClick={() => void run(async () => {
+        const page = await api.listPendingProjectInvitations(ownerProjectId);
+        if (page.projectId !== ownerProjectId) throw new Error("WRONG_PROJECT");
+        setPending(page.invitations);
+      },"无法读取待接受邀请。")}>查看待接受邀请</button>
+      {pending && <section aria-label="待接受邀请">
+        {pending.length ? <ul>{pending.map(invitation => <li key={invitation.id}>
+          <code>{invitation.recipientUserId}</code> · {invitation.role === "editor" ? "编辑" : "审核人"}
+          {" · "}<time dateTime={invitation.expiresAt}>{new Date(invitation.expiresAt).toLocaleString("zh-CN")}</time>
+          <label>邀请编号 <input readOnly value={invitation.id} onFocus={event => event.currentTarget.select()} /></label>
+          <button type="button" disabled={busy} onClick={() => void run(async () => {
+            const revoked = await api.revokeProjectInvitation(ownerProjectId,invitation.id);
+            if (revoked.id !== invitation.id) throw new Error("WRONG_INVITATION");
+            setPending(previous => previous?.filter(item => item.id !== invitation.id) ?? null);
+            setIssued(previous => previous?.id === invitation.id ? null : previous);
+            setNotice("邀请已撤回。");
+          },"撤回失败，请刷新待接受邀请。")}>撤回邀请</button>
+        </li>)}</ul> : <p>暂无待接受邀请。</p>}
+      </section>}
       <button type="button" disabled={busy} onClick={() => void run(() => loadMembers(ownerProjectId),"无法读取项目成员，请重试。")}>读取项目成员</button>
       {members && <section aria-label="项目成员"><ul>{members.map(member => {
         const { role,userId } = member;
@@ -78,7 +98,9 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
       if (!recipient || (role !== "editor" && role !== "reviewer")) return;
       void run(async () => {
         setIssued(null);
-        setIssued(await api.issueProjectInvitation(ownerProjectId,recipient,role));
+        const invitation = await api.issueProjectInvitation(ownerProjectId,recipient,role);
+        setIssued(invitation);
+        setPending(previous => previous ? [{ ...invitation,recipientUserId: recipient },...previous] : null);
       },"生成邀请失败，请核对账号 ID 或现有成员关系。");
     }}>
       <label>受邀账号 ID <input name="recipient" required maxLength={256} disabled={busy} /></label>

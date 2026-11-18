@@ -151,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   };
   try {
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
-      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
+      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../project-import/migrations/0006_manage_pending_invitations.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
       "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
@@ -840,6 +840,17 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       await impactApp.http.post(switchPath).set("authorization",guestBearer).expect(404);
       const guestInvitation = (await impactApp.http.post(`/projects/${projectId}/invitations`).set("authorization",bearer)
         .send({ recipientUserId: guest,role: "reviewer" }).expect(201)).body;
+      const invitationsPath = `/projects/${projectId}/invitations`;
+      const mistaken = (await impactApp.http.post(invitationsPath).set("authorization",bearer)
+        .send({ recipientUserId: guest,role: "editor" }).expect(201)).body;
+      await impactApp.http.get(invitationsPath).set("authorization",guestBearer).expect(403);
+      const pending = (await impactApp.http.get(invitationsPath).set("authorization",bearer).expect(200)).body.invitations;
+      assert.ok(pending.some((item: { id: string }) => item.id === mistaken.id));
+      for (const actor of [guestBearer,bearer,bearer]) {
+        await impactApp.http.post(`${invitationsPath}/revoke`).set("authorization",actor)
+          .send({ invitationId: mistaken.id }).expect(actor === bearer ? 201 : 403);
+      }
+      await impactApp.http.post(`/project-invitations/${mistaken.id}/accept`).set("authorization",guestBearer).expect(409);
       await impactApp.http.post(`/project-invitations/${guestInvitation.id}/accept`).set("authorization",guestBearer)
         .expect(201,{ projectId,role: "reviewer",workspaceId });
       await impactApp.http.get(projectAuditPath).set("authorization",guestBearer).expect(404);

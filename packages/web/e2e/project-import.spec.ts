@@ -241,9 +241,18 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
     changes.push(body);
     return route.fulfill({ headers,json: { userId: body.userId,role: body.role } });
   });
+  const pendingId = "f82dd3ee-091d-4863-8b60-598ea7170b03";
+  await page.route(`${apiOrigin}/projects/project-1/invitations/revoke`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    expect(route.request().postDataJSON()).toEqual({ invitationId: pendingId });
+    return route.fulfill({ status: 201,headers,json: { id: pendingId } });
+  });
   await page.route(`${apiOrigin}/projects/project-1/invitations`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
     expect(route.request().headers().authorization).toBe("Bearer session-token");
+    if (route.request().method() === "GET") return route.fulfill({ headers,json: { projectId: "project-1",invitations: [
+      { id: pendingId,recipientUserId: "previous-reviewer",role: "reviewer",expiresAt: "2026-11-25T00:00:00Z" },
+    ] } });
     expect(route.request().postDataJSON()).toEqual({ recipientUserId: "reviewer-1",role: "reviewer" });
     return route.fulfill({ status: 201,headers,json: { id: invitationId,projectId: "project-1",role: "reviewer",expiresAt: "2026-11-25T00:00:00Z" } });
   });
@@ -277,7 +286,7 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await expect(panel).toContainText("我的账号 ID user-1");
   await expect(panel.getByRole("button",{ name: "生成邀请" })).toHaveCount(0);
   await panel.getByLabel("待接受的邀请编号").fill(invitationId);
-  await panel.getByRole("button",{ name: "接受邀请" }).click();
+  await panel.getByRole("button",{ name: "接受邀请",exact: true }).click();
   await expect(panel.getByRole("status")).toContainText("已加入项目 shared-project，角色为编辑");
   await page.getByLabel("项目名称").fill("人间剑令");
   await page.getByRole("checkbox",{ name: /拥有该作品或合法改编权/ }).check();
@@ -294,12 +303,17 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
     { userId: "editor-1",expectedRole: "editor",role: "reviewer" },
     { userId: "editor-1",expectedRole: "reviewer",role: null },
   ]);
+  await panel.getByRole("button",{ name: "查看待接受邀请" }).click();
+  const pendingInvitations = panel.getByRole("region",{ name: "待接受邀请" });
+  await expect(pendingInvitations).toContainText("previous-reviewer");
+  await pendingInvitations.getByRole("button",{ name: "撤回邀请" }).click();
+  await expect(pendingInvitations).toContainText("暂无待接受邀请");
   await panel.getByLabel("受邀账号 ID").fill("reviewer-1");
   await panel.getByLabel("邀请角色").selectOption("reviewer");
   await panel.getByRole("button",{ name: "生成邀请" }).click();
   await expect(panel.getByLabel("生成的邀请编号")).toHaveValue(invitationId);
   await panel.getByLabel("待接受的邀请编号").fill(invitationId);
-  await panel.getByRole("button",{ name: "接受邀请" }).click();
+  await panel.getByRole("button",{ name: "接受邀请",exact: true }).click();
   await panel.getByRole("button",{ name: "查看受邀项目章节" }).click();
   await panel.getByRole("button",{ name: "共享章节" }).click();
   await expect(page.getByRole("heading",{ name: "共享章节" })).toBeVisible();

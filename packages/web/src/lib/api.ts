@@ -425,6 +425,16 @@ export class ApiClient {
       { method: "POST",body: JSON.stringify({ userId,expectedRole,role }) },"session");
   }
 
+  listPendingProjectInvitations(projectId: string) {
+    return this.request<{ projectId: string; invitations: Array<{ id: string; recipientUserId: string; role: "editor" | "reviewer"; expiresAt: string }> }>(
+      `/projects/${encodeURIComponent(projectId)}/invitations`,{ method: "GET" },"session");
+  }
+
+  revokeProjectInvitation(projectId: string,invitationId: string) {
+    return this.request<{ id: string }>(`/projects/${encodeURIComponent(projectId)}/invitations/revoke`,
+      { method: "POST",body: JSON.stringify({ invitationId }) },"session");
+  }
+
   issueProjectInvitation(projectId: string,recipientUserId: string,role: "editor" | "reviewer") {
     return this.request<{ id: string; projectId: string; role: "editor" | "reviewer"; expiresAt: string }>(
       `/projects/${encodeURIComponent(projectId)}/invitations`,

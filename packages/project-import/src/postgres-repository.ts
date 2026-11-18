@@ -49,6 +49,19 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     )).rows;
   }
 
+  listPendingInvitations(actor: Actor,projectId: string) {
+    return this.inTransaction(actor,async client => (await client.query<{
+      id: string; recipientUserId: string; role: "editor" | "reviewer"; expiresAt: Date;
+    }>("select * from list_pending_project_invitations($1)",[projectId])).rows);
+  }
+
+  revokePendingInvitation(actor: Actor,projectId: string,invitationId: string) {
+    return this.inTransaction(actor,async client => {
+      await client.query("select revoke_pending_project_invitation($1,$2::uuid)",[projectId,invitationId]);
+      return { id: invitationId };
+    });
+  }
+
   listProjectMembers(actor: Actor,projectId: string) {
     return this.inTransaction(actor, async client => (await client.query<{
       userId: string; role: "owner" | "editor" | "reviewer";
