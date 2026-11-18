@@ -14,6 +14,7 @@ export type StoryboardReviewCommand = { requestId: string; expectedRevision: num
 export type StoryboardPublication = { id: string; revision: number; confirmedAt: string };
 export type StoryboardAuditCursor = { recordedAt: string; eventId: string; chapterId?: string };
 export type StoryboardAuditEvent = StoryboardAuditCursor & {
+  previousVersionId: string | null; versionId: string | null; targetId: string | null;
   previousSourceVersionId: string | null; sourceVersionId: string | null;
   chapterId: string;
   actorId: string; kind: string; reviewId: string | null; reconciliationId: string | null;

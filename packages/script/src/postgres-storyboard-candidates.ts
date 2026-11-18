@@ -210,7 +210,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
 
   listAudit(actor: Actor,projectId: string,chapterId: string | null,cursor: { recordedAt: string; eventId: string; chapterId?: string } | null) {
     return this.transaction(actor, async client => {
-      const rows = (await client.query(`with events as (
+      const rows = (await client.query(`with storyboard_and_source as (
         select chapter_id,'review:'||id::text as event_id,submitted_at as recorded_at,submitted_by as actor_id,
           'submit' as kind,id as review_id,null::uuid as reconciliation_id,null::text as shot_id,
           null::text as publication_id,null::text as reason,null::text as decision,
@@ -236,11 +236,29 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
             and v.ordinal<source.ordinal order by v.ordinal desc limit 1
         ) previous on true
         where $3::text is null and (p.workspace_id,p.id)=($1,$2)
+      ), events as (
+        select *,null::text as previous_version_id,null::text as version_id,null::text as target_id from storyboard_and_source
+        union all
+        select v.chapter_id,'script:'||v.id,(v.version_json->>'createdAt')::timestamptz,v.created_by,
+          'script_'||(operation.value->>'kind'),null,null,null,null,operation.value->>'reason',
+          case when operation.value->>'kind'='decide' then (
+            select suggestion->>'status' from jsonb_array_elements(coalesce(v.version_json->'suggestions','[]'::jsonb)) suggestion
+            where suggestion->>'id'=operation.value->>'targetId' limit 1
+          ) end,
+          null,null,v.parent_version_id,v.id,operation.value->>'targetId'
+        from script_content_versions v
+        left join script_content_versions parent
+          on (parent.workspace_id,parent.project_id,parent.chapter_id,parent.id)=(v.workspace_id,v.project_id,v.chapter_id,v.parent_version_id)
+        cross join lateral (select coalesce(v.version_json->'publicationOperation',v.version_json->'revisionOperation',v.version_json->'reviewOperation') as value) operation
+        where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
+          and operation.value->>'kind' in ('suggest','edit','decide','confirm','lock','unlock')
+          and operation.value is distinct from coalesce(parent.version_json->'publicationOperation',parent.version_json->'revisionOperation',parent.version_json->'reviewOperation')
       )
       select chapter_id as "chapterId",event_id as "eventId",to_char(recorded_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "recordedAt",
         actor_id as "actorId",kind,review_id as "reviewId",reconciliation_id as "reconciliationId",
         shot_id as "shotId",publication_id as "publicationId",reason,decision,
-        previous_source_id as "previousSourceVersionId",source_id as "sourceVersionId"
+        previous_source_id as "previousSourceVersionId",source_id as "sourceVersionId",
+        previous_version_id as "previousVersionId",version_id as "versionId",target_id as "targetId"
       from events where $4::timestamptz is null or (recorded_at,chapter_id,event_id)<($4::timestamptz,$6::text,$5::text)
       order by recorded_at desc,chapter_id desc,event_id desc limit 21`,[actor.workspaceId,projectId,chapterId,cursor?.recordedAt ?? null,cursor?.eventId ?? null,cursor?.chapterId ?? chapterId])).rows;
       const events = rows.slice(0,20);
