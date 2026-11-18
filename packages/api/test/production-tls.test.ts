@@ -795,6 +795,15 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.ok(audit.events.some((event: { kind: string; publicationId: string }) => event.kind === "confirm" && event.publicationId === lockedPublication.publicationId));
       assert.ok(audit.events.some((event: { kind: string; shotId: string }) => event.kind === "adopt" && event.shotId === oldShot.id));
       assert.ok(audit.events.every((event: object) => !["jobId","requestId","command"].some(key => key in event)));
+      const projectAuditPath = `/projects/${projectId}/storyboard-audit`;
+      await impactApp.http.get(projectAuditPath).expect(401);
+      const projectAudit = (await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(200)).body;
+      assert.ok(projectAudit.events.some((event: { chapterId: string; publicationId: string }) =>
+        event.chapterId === chapterId && event.publicationId === lockedPublication.publicationId));
+      const first = projectAudit.events[0];
+      const afterFirst = (await impactApp.http.get(projectAuditPath).set("authorization",bearer)
+        .query({ chapterId: first.chapterId,recordedAt: first.recordedAt,eventId: first.eventId }).expect(200)).body;
+      assert.notEqual(afterFirst.events[0].eventId,first.eventId);
     } finally { await impactApp.close(); }
     const compliance = t.mock.method(globalThis,"fetch",async (url: Parameters<typeof fetch>[0]) => {
       assert.equal(String(url),config.complianceEndpoint);

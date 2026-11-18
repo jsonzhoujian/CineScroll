@@ -41,6 +41,16 @@ function submission(body: unknown, retry: boolean) {
   const value = body as Record<string,unknown>;
   return { configurationVersionId: id(value.configurationVersionId), modelId: id(value.modelId), requestId: id(value.requestId), value };
 }
+function auditCursor(query: Record<string,unknown>, chapterId: string | null) {
+  if (Object.keys(query).some(key => !["recordedAt","eventId","chapterId"].includes(key))) throw new BadRequestException();
+  const { recordedAt,eventId } = query;
+  if (!Object.keys(query).length) return null;
+  const scope = query.chapterId ?? chapterId;
+  if (typeof recordedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(recordedAt)
+    || !Number.isFinite(Date.parse(recordedAt)) || typeof eventId !== "string" || !eventId || eventId.length > 1024
+    || typeof scope !== "string" || !scope.length || scope.length > 256 || (chapterId !== null && scope !== chapterId)) throw new BadRequestException();
+  return { recordedAt,eventId,chapterId: scope };
+}
 async function respond<T>(action: () => Promise<T>) {
   try { return await action(); }
   catch (error) {
@@ -111,14 +121,10 @@ class StoryboardController {
 
   audit(req: { actor: Actor },p: string,c: string,query: Record<string,unknown>) {
     const projectId = id(p), chapterId = id(c);
-    if (Object.keys(query).some(key => key !== "recordedAt" && key !== "eventId")) throw new BadRequestException();
-    const { recordedAt,eventId } = query;
-    const cursor = recordedAt === undefined && eventId === undefined ? null : { recordedAt,eventId };
-    if (cursor && (typeof recordedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(recordedAt)
-      || !Number.isFinite(Date.parse(recordedAt)) || typeof eventId !== "string" || !eventId || eventId.length > 1024)) throw new BadRequestException();
+    const cursor = auditCursor(query,chapterId);
     return respond(async () => {
       if (!await this.services.context.canRead?.(req.actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
-      return this.services.candidates.listAudit(req.actor,projectId,chapterId,cursor as { recordedAt: string; eventId: string } | null);
+      return this.services.candidates.listAudit(req.actor,projectId,chapterId,cursor);
     });
   }
 
@@ -381,9 +387,31 @@ for (const [method,route,parameter] of [
   if (method === "adoptReconciliationShot" || method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration" || method === "confirmReconciliation") Body()(StoryboardController.prototype,method,4);
   if (method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration" || method === "confirmReconciliation") Param("draftId")(StoryboardController.prototype,method,5);
 }
+class ProjectStoryboardAuditController {
+  private readonly services: Services;
+  constructor(services: Services) { this.services = services; }
+
+  audit(req: { actor: Actor },p: string,query: Record<string,unknown>) {
+    const projectId = id(p), cursor = auditCursor(query,null);
+    return respond(async () => {
+      if (!await this.services.projects.findProjectAccess(req.actor,projectId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      return this.services.candidates.listAudit(req.actor,projectId,null,cursor);
+    });
+  }
+}
+Controller("projects/:projectId/storyboard-audit")(ProjectStoryboardAuditController);
+UseGuards(SessionGuard)(ProjectStoryboardAuditController);
+Inject(SERVICES)(ProjectStoryboardAuditController,undefined,0);
+const projectAudit = Object.getOwnPropertyDescriptor(ProjectStoryboardAuditController.prototype,"audit")!;
+Get()(ProjectStoryboardAuditController.prototype,"audit",projectAudit);
+Header("Cache-Control","no-store")(ProjectStoryboardAuditController.prototype,"audit",projectAudit);
+Req()(ProjectStoryboardAuditController.prototype,"audit",0);
+Param("projectId")(ProjectStoryboardAuditController.prototype,"audit",1);
+Query()(ProjectStoryboardAuditController.prototype,"audit",2);
+
 export class StoryboardApiModule {
   static register(services: Services): DynamicModule {
     return { module: StoryboardApiModule,providers: [{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier },{ provide: SERVICES,useValue: services }] };
   }
 }
-Module({ controllers: [StoryboardController],providers: [SessionGuard] })(StoryboardApiModule);
+Module({ controllers: [StoryboardController,ProjectStoryboardAuditController],providers: [SessionGuard] })(StoryboardApiModule);

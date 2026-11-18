@@ -34,7 +34,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [tasks,setTasks] = useState<StoryboardTask[]>([]);
   const [cursor,setCursor] = useState<string | null>(null);
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
-  const [audit,setAudit] = useState<{ scope: string; events: StoryboardAuditEvent[]; nextCursor: StoryboardAuditCursor | null } | null>(null);
+  const [audit,setAudit] = useState<{ scope: string; projectWide: boolean; events: StoryboardAuditEvent[]; nextCursor: StoryboardAuditCursor | null } | null>(null);
   const auditScope = JSON.stringify([projectId,chapterId]);
   const chapterAudit = audit?.scope === auditScope ? audit : null;
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
@@ -217,9 +217,10 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
     setNotice("");
   }
 
-  async function readAudit(more = false) {
-    const page = await api.listStoryboardAudit(projectId,chapterId,more ? chapterAudit?.nextCursor ?? null : null);
-    setAudit({ scope: auditScope,events: more ? [...(chapterAudit?.events ?? []),...page.events] : page.events,nextCursor: page.nextCursor });
+  async function readAudit(projectWide = false,more = false) {
+    const cursor = more ? chapterAudit?.nextCursor ?? null : null;
+    const page = projectWide ? await api.listProjectStoryboardAudit(projectId,cursor) : await api.listStoryboardAudit(projectId,chapterId,cursor);
+    setAudit({ scope: auditScope,projectWide,events: more ? [...(chapterAudit?.events ?? []),...page.events] : page.events,nextCursor: page.nextCursor });
   }
 
   async function readPublications(more = false) {
@@ -274,19 +275,22 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
     <button type="button" disabled={busy} onClick={() => void act(() => readReviews())}>读取项目审核候选</button>
     <button type="button" disabled={busy} onClick={() => void act(() => loadReview(null))}>读取正式分镜</button>
     <button type="button" disabled={busy} onClick={() => void act(() => readAudit())}>查看分镜审计</button>
-    {chapterAudit && <section aria-label="分镜审计">
+    <button type="button" disabled={busy} onClick={() => void act(() => readAudit(true))}>查看项目分镜审计</button>
+    {chapterAudit && <section aria-label={chapterAudit.projectWide ? "项目分镜审计" : "分镜审计"}>
       {chapterAudit.events.length === 0 ? <p>暂无分镜审核记录。</p> : <ol>
-        {chapterAudit.events.map(event => <li key={event.eventId}>
+        {chapterAudit.events.map(event => <li key={JSON.stringify([event.chapterId,event.eventId])}>
           <time dateTime={event.recordedAt}>{new Date(event.recordedAt).toLocaleString("zh-CN")}</time>
           {" · "}{auditLabels.get(event.kind) ?? event.kind}{" · "}{event.actorId}
+          {chapterAudit.projectWide && ` · 章节 ${event.chapterId}`}
           {event.shotId && ` · 镜头 ${event.shotId}`}
           {event.decision && (event.decision === "accepted" ? " · 已采纳" : " · 已驳回")}
           {event.reason && <p>{event.reason}</p>}
-          {event.publicationId && <button type="button" disabled={busy}
+          {event.publicationId && (!chapterAudit.projectWide || event.chapterId === chapterId) && <button type="button" disabled={busy}
             onClick={() => void act(() => loadReview(null,false,event.publicationId))}>查看发布 {event.publicationId}</button>}
+          {chapterAudit.projectWide && event.publicationId && event.chapterId !== chapterId && ` · 发布 ${event.publicationId}`}
         </li>)}
       </ol>}
-      {chapterAudit.nextCursor && <button type="button" disabled={busy} onClick={() => void act(() => readAudit(true))}>更多审计记录</button>}
+      {chapterAudit.nextCursor && <button type="button" disabled={busy} onClick={() => void act(() => readAudit(chapterAudit.projectWide,true))}>更多审计记录</button>}
     </section>}
     <button type="button" disabled={busy} onClick={() => void act(() => readPublications())}>读取分镜发布历史</button>
     {publications?.length === 0 && <p>暂无正式发布</p>}

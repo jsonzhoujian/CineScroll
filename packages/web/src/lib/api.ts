@@ -12,8 +12,9 @@ export type StoryboardReviewCommand = { requestId: string; expectedRevision: num
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
 export type StoryboardPublication = { id: string; revision: number; confirmedAt: string };
-export type StoryboardAuditCursor = { recordedAt: string; eventId: string };
+export type StoryboardAuditCursor = { recordedAt: string; eventId: string; chapterId?: string };
 export type StoryboardAuditEvent = StoryboardAuditCursor & {
+  chapterId: string;
   actorId: string; kind: string; reviewId: string | null; reconciliationId: string | null;
   shotId: string | null; publicationId: string | null; reason: string | null; decision: string | null;
 };
@@ -194,6 +195,11 @@ export class ApiClient {
   }
   getStoryboardReview(p: string,c: string,id: string) {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/reviews/${encodeURIComponent(id)}`,{ method: "GET" },"session");
+  }
+  listProjectStoryboardAudit(projectId: string,cursor: StoryboardAuditCursor | null) {
+    const query = cursor ? `?${new URLSearchParams(cursor)}` : "";
+    return this.request<{ events: StoryboardAuditEvent[]; nextCursor: StoryboardAuditCursor | null }>(
+      `/projects/${encodeURIComponent(projectId)}/storyboard-audit${query}`,{ method: "GET" },"session");
   }
   listStoryboardAudit(p: string,c: string,cursor: StoryboardAuditCursor | null) {
     const query = cursor ? `?${new URLSearchParams(cursor)}` : "";
