@@ -199,13 +199,18 @@ export class ApiClient {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/publications/${encodeURIComponent(id)}`,{ method: "GET" },"session");
   }
   beginStoryboardReconciliation(p: string,c: string,publicationId: string,upstream: NonNullable<StoryboardReconciliationPreview["currentUpstream"]>) {
-    return this.request<{ id: string; publicationId: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[] }>(
+    return this.request<{ id: string; publicationId: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[]; regeneratedShots: StoryboardView["version"]["shots"] }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation`,
       { method: "POST",body: JSON.stringify(upstream) },"session");
   }
   retainStoryboardReconciliationShot(p: string,c: string,publicationId: string,draftId: string,shotId: string) {
     return this.request<{ shotId: string }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/retains`,
+      { method: "POST",body: JSON.stringify({ shotId }) },"session");
+  }
+  adoptStoryboardRegeneratedShot(p: string,c: string,jobId: string,shotId: string) {
+    return this.request<StoryboardView["version"]["shots"][number]>(
+      `${storyboardPath(p,c)}/${encodeURIComponent(jobId)}/adopt-regenerated-shot`,
       { method: "POST",body: JSON.stringify({ shotId }) },"session");
   }
   submitStoryboardRegeneration(p: string,c: string,publicationId: string,draftId: string,input: StoryboardSubmission & { shotIds: string[] }) {

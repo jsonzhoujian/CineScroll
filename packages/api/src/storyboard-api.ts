@@ -19,7 +19,7 @@ type Services = {
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
   handoff: Pick<ConfirmedStoryboardHandoff, "read">;
-  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "beginReconciliation" | "previewReconciliationRegeneration" | "retainReconciliationShot" | "findReview" | "saveReviewOperation">;
+  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "adoptReconciliationShot" | "beginReconciliation" | "previewReconciliationRegeneration" | "retainReconciliationShot" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
   projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
 };
@@ -278,6 +278,19 @@ class StoryboardController {
     return respond(() => this.task(req.actor,...identity));
   }
 
+  adoptReconciliationShot(req: { actor: Actor },p: string,c: string,job: string,body: unknown) {
+    const projectId = id(p), chapterId = id(c), jobId = id(job);
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1) throw new BadRequestException();
+    const shotId = id((body as Record<string,unknown>).shotId);
+    return respond(async () => {
+      const task = await this.task(req.actor,projectId,chapterId,jobId);
+      const binding = task.input.storyboardRegeneration;
+      if (!binding || !binding.scopeKeys.includes(shotId) || task.state !== "succeeded" ||
+        task.result?.candidateVersionId !== jobId) throw new ModelTaskError("TASK_NOT_FOUND");
+      return this.services.candidates.adoptReconciliationShot(req.actor,projectId,chapterId,binding.reconciliationId,jobId,shotId);
+    });
+  }
+
   private async current(actor: Actor,p: string,c: string) {
     try { return await this.services.context.read(actor,p,c); }
     catch (error) {
@@ -328,6 +341,7 @@ for (const [method,route,parameter] of [
   ["reviseReconciliationShot",Post("publications/:id/reconciliation/:draftId/revisions"),Param("id")],
   ["retainReconciliationShot",Post("publications/:id/reconciliation/:draftId/retains"),Param("id")],
   ["operate",Post("reviews/:id/operations"),Param("id")],
+  ["adoptReconciliationShot",Post(":id/adopt-regenerated-shot"),Param("id")],
   ["submitReview",Post(":id/review"),Param("id")],["get",Get(":id"),Param("id")],["candidate",Get(":id/candidate"),Param("id")],
 ] as const) {
   const d = Object.getOwnPropertyDescriptor(StoryboardController.prototype,method)!;
@@ -337,7 +351,7 @@ for (const [method,route,parameter] of [
   Param("projectId")(StoryboardController.prototype,method,1);
   Param("chapterId")(StoryboardController.prototype,method,2);
   parameter?.(StoryboardController.prototype,method,3);
-  if (method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Body()(StoryboardController.prototype,method,4);
+  if (method === "adoptReconciliationShot" || method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Body()(StoryboardController.prototype,method,4);
   if (method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Param("draftId")(StoryboardController.prototype,method,5);
 }
 export class StoryboardApiModule {

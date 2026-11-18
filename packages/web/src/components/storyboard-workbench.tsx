@@ -29,9 +29,10 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [cursor,setCursor] = useState<string | null>(null);
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
+  const [adoptedShots,setAdoptedShots] = useState<Record<string,string[]>>({});
   const regenerationFormId = useId();
   const regenerationRequest = useRef<{ key: string; requestId: string } | null>(null);
-  const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[] } | null>(null);
+  const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[]; regeneratedShots: StoryboardView["version"]["shots"] } | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
   const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
   const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
@@ -304,17 +305,18 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
         <p>{!reconciliation.currentUpstream ? "当前正式上游尚未齐备。" : reconciliation.upstreamChanged ? "请逐镜核对新上游的依据。" : "正式上游未变化。"}</p>
         <ul>{reconciliation.shots.map(shot => {
           const revised = reconciliationDraft?.revisedShots.find(entry => entry.shotId === shot.id);
+          const regenerated = reconciliationDraft?.regeneratedShots.find(entry => entry.id === shot.id);
           const original = view.version.shots.find(entry => entry.id === shot.id);
           return <li key={shot.id}>{shot.visual}
           {shot.locked && " · 替换前须解锁"}
           {shot.referencesMatch === false ? " · 引用须重新核对" : shot.referencesMatch ? " · 引用可定位，待核对内容" : ""}
           {reconciliationDraft?.retainedShotIds.includes(shot.id) ? " · 已保留" :
-            reconciliationDraft && !revised && shot.referencesMatch && <button type="button" disabled={busy} onClick={() => void act(async () => {
+            reconciliationDraft && !regenerated && !revised && shot.referencesMatch && <button type="button" disabled={busy} onClick={() => void act(async () => {
               const retained = await api.retainStoryboardReconciliationShot(projectId,chapterId,reconciliation.publicationId,reconciliationDraft.id,shot.id);
               if (retained.shotId !== shot.id) throw new Error("WRONG_RECONCILIATION");
               setReconciliationDraft({ ...reconciliationDraft, retainedShotIds: [...reconciliationDraft.retainedShotIds,shot.id] });
             })}>核对无误，原样保留</button>}
-          {reconciliationDraft && shot.locked && !revised && view.reviewId &&
+          {reconciliationDraft && !regenerated && shot.locked && !revised && view.reviewId &&
             !reconciliationDraft.retainedShotIds.includes(shot.id) && <form onSubmit={event => {
               event.preventDefault();
               const reason = String(new FormData(event.currentTarget).get("reason")).trim();
@@ -330,10 +332,11 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
               <label>解锁原因<input name="reason" required maxLength={1000} /></label>
               <button disabled={busy}>解锁镜头</button>
             </form>}
-          {reconciliationDraft && !shot.locked && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
+          {reconciliationDraft && !regenerated && !shot.locked && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
             <label><input type="checkbox" form={regenerationFormId} name="shotId" value={shot.id} disabled={busy} />选择重生</label>}
+          {regenerated && <p>已采用重生 · {regenerated.visual} · {regenerated.durationSeconds} 秒</p>}
           {revised && <p>已修订 · {revised.value.visual} · {revised.value.durationSeconds} 秒</p>}
-          {reconciliationDraft && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
+          {reconciliationDraft && !regenerated && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
             !shot.locked && shot.referencesMatch && original && <details>
               <summary>修订镜头</summary>
               <form onSubmit={event => {
@@ -405,6 +408,15 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
         </section>
         {selected && <section aria-label="镜头详情">
           <h4 ref={shotHeading} tabIndex={-1}>{selected.visual}</h4>
+          {view.current && view.version.jobId === task?.id && task?.input.storyboardRegeneration &&
+            (adoptedShots[task.id]?.includes(selected.id) ? <p>已纳入核对候选</p> :
+              <button type="button" disabled={busy} onClick={() => void act(async () => {
+                const saved = await api.adoptStoryboardRegeneratedShot(projectId,chapterId,task.id,selected.id);
+                if (saved.id !== selected.id) throw new Error("WRONG_RECONCILIATION");
+                setAdoptedShots(old => ({ ...old,[task.id]: [...(old[task.id] ?? []),saved.id] }));
+                setNotice("已将所选镜头纳入核对候选。");
+              })}>采用此重生镜头</button>)}
+
           <p>镜头 {selected.ordinal} · {selected.durationSeconds} 秒 · {selected.shotSize} · {selected.cameraAngle}</p>
           <dl>{[["动作",selected.action],["台词",selected.speech],["运镜",selected.cameraMovement],["声音",selected.sound],["情绪",selected.emotion],["角色",selected.characters.join("、")],["资产",selected.assetIds.join("、")]].filter(([,value]) => value).map(([label,value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
           <h5>剧本元素</h5>

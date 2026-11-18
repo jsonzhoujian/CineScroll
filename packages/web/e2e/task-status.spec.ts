@@ -1164,7 +1164,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     } });
     if (suffix === "/publications/42/reconciliation" && request.method() === "POST") {
       expect(request.postDataJSON()).toEqual({ sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] });
-      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42",retainedShotIds,revisedShots } });
+      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42",retainedShotIds,revisedShots,regeneratedShots: [] } });
     }
     if (suffix === "/publications/42/reconciliation/reconcile-42/retains" && request.method() === "POST") {
       expect(request.postDataJSON()).toEqual({ shotId: "two" });

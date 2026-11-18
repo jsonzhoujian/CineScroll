@@ -75,11 +75,12 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       const row = inserted ?? (await client.query(`select id from storyboard_reconciliations
         where (workspace_id,project_id,chapter_id,base_publication_id,source_version_id,upstream_ids)=($1,$2,$3,$4,$5,$6)`,key)).rows[0];
       if (!row) throw new StoryboardStorageError("STORAGE_UNAVAILABLE");
-      const retained = (await client.query(`select shot_id,revision_value from storyboard_reconciliation_retains
+      const retained = (await client.query(`select shot_id,revision_value,regenerated_shot from storyboard_reconciliation_retains
         where (workspace_id,project_id,chapter_id,reconciliation_id)=($1,$2,$3,$4) order by shot_id`,
       [actor.workspaceId,p,c,row.id])).rows;
       return { id: row.id as string,publicationId,sourceVersionId,upstreamConfirmedVersionIds: upstreamIds,
-        retainedShotIds: retained.filter(entry => !entry.revision_value).map(entry => entry.shot_id as string),
+        retainedShotIds: retained.filter(entry => !entry.revision_value && !entry.regenerated_shot).map(entry => entry.shot_id as string),
+        regeneratedShots: retained.flatMap(entry => entry.regenerated_shot ? [entry.regenerated_shot as StoryboardCandidate["shots"][number]] : []),
         revisedShots: retained.flatMap(entry => entry.revision_value ? [{ shotId: entry.shot_id as string, value: entry.revision_value as NonNullable<ReviewOperation["change"]> }] : []) };
     });
   }
@@ -107,9 +108,22 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         values($1,$2,$3,$4,$5,$6,$7) on conflict do nothing returning shot_id`,[...shotKey,value,reason])).rows[0];
       if (!inserted && !(await client.query(`select 1 from storyboard_reconciliation_retains
         where (workspace_id,project_id,chapter_id,reconciliation_id,shot_id)=($1,$2,$3,$4,$5)
-          and revision_value is not distinct from $6::jsonb and revision_reason is not distinct from $7::text`,
+          and regeneration_job_id is null and revision_value is not distinct from $6::jsonb and revision_reason is not distinct from $7::text`,
       [...shotKey,value,reason])).rows[0]) throw new StoryboardStorageError("STATE_CONFLICT");
       return { shotId };
+    });
+  }
+
+  adoptReconciliationShot(actor: Actor,p: string,c: string,draftId: string,jobId: string,shotId: string) {
+    return this.transaction(actor, async client => {
+      const key = [actor.workspaceId,p,c,draftId,shotId,jobId];
+      const saved = (await client.query(`insert into storyboard_reconciliation_retains
+        (workspace_id,project_id,chapter_id,reconciliation_id,shot_id,regeneration_job_id)
+        values($1,$2,$3,$4,$5,$6) on conflict do nothing returning regenerated_shot`,key)).rows[0];
+      const row = saved ?? (await client.query(`select regenerated_shot from storyboard_reconciliation_retains
+        where (workspace_id,project_id,chapter_id,reconciliation_id,shot_id,regeneration_job_id)=($1,$2,$3,$4,$5,$6)`,key)).rows[0];
+      if (!row) throw new StoryboardStorageError("STATE_CONFLICT");
+      return row.regenerated_shot as StoryboardCandidate["shots"][number];
     });
   }
 

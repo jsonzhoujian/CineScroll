@@ -45,6 +45,7 @@ export async function assertStoryboardDatabase(pool: Pool, workspaceIds: readonl
         and relrowsecurity and relforcerowsecurity and not pg_has_role(session_user,relowner,'MEMBER')
         and has_table_privilege(current_user,oid,'SELECT') and has_column_privilege(current_user,oid,'shot_id','INSERT')
         and has_column_privilege(current_user,oid,'revision_value','INSERT') and has_column_privilege(current_user,oid,'revision_reason','INSERT')
+        and has_column_privilege(current_user,oid,'regeneration_job_id','INSERT') and not has_column_privilege(current_user,oid,'regenerated_shot','INSERT')
         and not has_column_privilege(current_user,oid,'retained_by','INSERT') and not has_table_privilege(current_user,oid,'UPDATE,DELETE'))
       and (select count(*)=2 from pg_trigger where tgrelid=to_regclass('public.storyboard_reconciliation_retains')
         and tgqual is null and tgenabled in ('O','A') and (tgname,tgfoid,tgtype) in (
