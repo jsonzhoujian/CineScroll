@@ -75,15 +75,16 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       const row = inserted ?? (await client.query(`select id from storyboard_reconciliations
         where (workspace_id,project_id,chapter_id,base_publication_id,source_version_id,upstream_ids)=($1,$2,$3,$4,$5,$6)`,key)).rows[0];
       if (!row) throw new StoryboardStorageError("STORAGE_UNAVAILABLE");
-      const retained = (await client.query(`select shot_id from storyboard_reconciliation_retains
+      const retained = (await client.query(`select shot_id,revision_value from storyboard_reconciliation_retains
         where (workspace_id,project_id,chapter_id,reconciliation_id)=($1,$2,$3,$4) order by shot_id`,
       [actor.workspaceId,p,c,row.id])).rows;
       return { id: row.id as string,publicationId,sourceVersionId,upstreamConfirmedVersionIds: upstreamIds,
-        retainedShotIds: retained.map(entry => entry.shot_id as string) };
+        retainedShotIds: retained.filter(entry => !entry.revision_value).map(entry => entry.shot_id as string),
+        revisedShots: retained.flatMap(entry => entry.revision_value ? [{ shotId: entry.shot_id as string, value: entry.revision_value as NonNullable<ReviewOperation["change"]> }] : []) };
     });
   }
 
-  async retainReconciliationShot(actor: Actor,p: string,c: string,publicationId: string,draftId: string,shotId: string) {
+  async retainReconciliationShot(actor: Actor,p: string,c: string,publicationId: string,draftId: string,shotId: string,revision?: { value: NonNullable<ReviewOperation["change"]>; reason: string }) {
     const baseline = await this.findReview(actor,p,c,null,publicationId);
     const shot = baseline?.candidate.shots.find(item => item.id === shotId);
     if (!shot) throw new StoryboardStorageError("TASK_NOT_FOUND");
@@ -98,9 +99,16 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         || JSON.stringify(draft.upstream_ids) !== JSON.stringify(upstream.upstreamConfirmedVersionIds)) {
         throw new StoryboardUpstreamError();
       }
-      if (!validateStoryboardShot(shot,upstream.context)) throw new StoryboardStorageError("INVALID_CANDIDATE");
-      await client.query(`insert into storyboard_reconciliation_retains(workspace_id,project_id,chapter_id,reconciliation_id,shot_id)
-        values($1,$2,$3,$4,$5) on conflict do nothing`,[actor.workspaceId,p,c,draftId,shotId]);
+      if (!validateStoryboardShot({ ...shot,...revision?.value },upstream.context)) throw new StoryboardStorageError("INVALID_CANDIDATE");
+      const shotKey = [actor.workspaceId,p,c,draftId,shotId];
+      const value = revision ? JSON.stringify(revision.value) : null, reason = revision?.reason ?? null;
+      const inserted = (await client.query(`insert into storyboard_reconciliation_retains
+        (workspace_id,project_id,chapter_id,reconciliation_id,shot_id,revision_value,revision_reason)
+        values($1,$2,$3,$4,$5,$6,$7) on conflict do nothing returning shot_id`,[...shotKey,value,reason])).rows[0];
+      if (!inserted && !(await client.query(`select 1 from storyboard_reconciliation_retains
+        where (workspace_id,project_id,chapter_id,reconciliation_id,shot_id)=($1,$2,$3,$4,$5)
+          and revision_value is not distinct from $6::jsonb and revision_reason is not distinct from $7::text`,
+      [...shotKey,value,reason])).rows[0]) throw new StoryboardStorageError("STATE_CONFLICT");
       return { shotId };
     });
   }

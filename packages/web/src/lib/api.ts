@@ -12,6 +12,7 @@ export type StoryboardReviewCommand = { requestId: string; expectedRevision: num
   | { kind: "decide"; suggestionRevision: number; decision: "accepted" | "rejected" }
 );
 export type StoryboardPublication = { id: string; revision: number; confirmedAt: string };
+export type StoryboardRevisedShot = { shotId: string; value: { visual: string; durationSeconds: number } };
 export type StoryboardReconciliationPreview = {
   publicationId: string; upstreamChanged: boolean;
   currentUpstream: { sourceVersionId: string; upstreamConfirmedVersionIds: string[] } | null;
@@ -198,7 +199,7 @@ export class ApiClient {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/publications/${encodeURIComponent(id)}`,{ method: "GET" },"session");
   }
   beginStoryboardReconciliation(p: string,c: string,publicationId: string,upstream: NonNullable<StoryboardReconciliationPreview["currentUpstream"]>) {
-    return this.request<{ id: string; publicationId: string; retainedShotIds: string[] }>(
+    return this.request<{ id: string; publicationId: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[] }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation`,
       { method: "POST",body: JSON.stringify(upstream) },"session");
   }
@@ -206,6 +207,11 @@ export class ApiClient {
     return this.request<{ shotId: string }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/retains`,
       { method: "POST",body: JSON.stringify({ shotId }) },"session");
+  }
+  reviseStoryboardReconciliationShot(p: string,c: string,publicationId: string,draftId: string,revision: StoryboardRevisedShot,reason: string) {
+    return this.request<{ shotId: string }>(
+      `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/revisions`,
+      { method: "POST",body: JSON.stringify({ shotId: revision.shotId,...revision.value,reason }) },"session");
   }
   previewStoryboardReconciliation(p: string,c: string,publicationId: string) {
     return this.request<StoryboardReconciliationPreview>(

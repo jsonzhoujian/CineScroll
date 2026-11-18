@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardPublication, type StoryboardReconciliationPreview, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
+import { ApiClientError, type ApiClient, type ModelConfiguration, type StoryboardReviewCommand, type StoryboardRevisedShot, type StoryboardPublication, type StoryboardReconciliationPreview, type StoryboardRetry, type StoryboardSubmission, type StoryboardTask, type StoryboardView } from "../lib/api";
 import { StoryboardShotReview } from "./storyboard-shot-review";
 import { readStoryboardShot, writeStoryboardCursor } from "../lib/storyboard-cursor";
 import type { StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
@@ -29,7 +29,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [cursor,setCursor] = useState<string | null>(null);
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
-  const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[] } | null>(null);
+  const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[] } | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
   const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
   const [reviews,setReviews] = useState<Array<{ id: string; submittedAt: string }>>([]);
@@ -300,16 +300,56 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
       })}>预览分镜跨上游核对</button>}
       {view.formalRead && reconciliation && reconciliation.publicationId === view.publicationId && <section aria-label="分镜跨上游核对预览">
         <p>{!reconciliation.currentUpstream ? "当前正式上游尚未齐备。" : reconciliation.upstreamChanged ? "请逐镜核对新上游的依据。" : "正式上游未变化。"}</p>
-        <ul>{reconciliation.shots.map(shot => <li key={shot.id}>{shot.visual}
+        <ul>{reconciliation.shots.map(shot => {
+          const revised = reconciliationDraft?.revisedShots.find(entry => entry.shotId === shot.id);
+          const original = view.version.shots.find(entry => entry.id === shot.id);
+          return <li key={shot.id}>{shot.visual}
           {shot.locked && " · 替换前须解锁"}
           {shot.referencesMatch === false ? " · 引用须重新核对" : shot.referencesMatch ? " · 引用可定位，待核对内容" : ""}
           {reconciliationDraft?.retainedShotIds.includes(shot.id) ? " · 已保留" :
-            reconciliationDraft && shot.referencesMatch && <button type="button" disabled={busy} onClick={() => void act(async () => {
+            reconciliationDraft && !revised && shot.referencesMatch && <button type="button" disabled={busy} onClick={() => void act(async () => {
               const retained = await api.retainStoryboardReconciliationShot(projectId,chapterId,reconciliation.publicationId,reconciliationDraft.id,shot.id);
               if (retained.shotId !== shot.id) throw new Error("WRONG_RECONCILIATION");
               setReconciliationDraft({ ...reconciliationDraft, retainedShotIds: [...reconciliationDraft.retainedShotIds,shot.id] });
             })}>核对无误，原样保留</button>}
-        </li>)}</ul>
+          {reconciliationDraft && shot.locked && shot.referencesMatch && view.reviewId &&
+            !reconciliationDraft.retainedShotIds.includes(shot.id) && <form onSubmit={event => {
+              event.preventDefault();
+              const reason = String(new FormData(event.currentTarget).get("reason")).trim();
+              void act(async () => {
+                const current = await api.getStoryboardReview(projectId,chapterId,view.reviewId!);
+                if (current.reviewId !== view.reviewId || current.revision === undefined || !current.permissions?.canUnlock) throw new Error("WRONG_REVIEW");
+                await api.operateStoryboardReview(projectId,chapterId,current.reviewId!,{
+                  kind: "unlock",shotId: shot.id,reason,requestId: crypto.randomUUID(),expectedRevision: current.revision,
+                });
+                setReconciliation(await api.previewStoryboardReconciliation(projectId,chapterId,reconciliation.publicationId));
+              });
+            }}>
+              <label>解锁原因<input name="reason" required maxLength={1000} /></label>
+              <button disabled={busy}>解锁镜头</button>
+            </form>}
+          {revised && <p>已修订 · {revised.value.visual} · {revised.value.durationSeconds} 秒</p>}
+          {reconciliationDraft && !revised && !reconciliationDraft.retainedShotIds.includes(shot.id) &&
+            !shot.locked && shot.referencesMatch && original && <details>
+              <summary>修订镜头</summary>
+              <form onSubmit={event => {
+                event.preventDefault();
+                const fields = new FormData(event.currentTarget);
+                const revision = { shotId: shot.id,value: { visual: String(fields.get("visual")).trim(),durationSeconds: Number(fields.get("duration")) } };
+                void act(async () => {
+                  const saved = await api.reviseStoryboardReconciliationShot(projectId,chapterId,reconciliation.publicationId,reconciliationDraft.id,revision,String(fields.get("reason")));
+                  if (saved.shotId !== shot.id) throw new Error("WRONG_RECONCILIATION");
+                  setReconciliationDraft({ ...reconciliationDraft,revisedShots: [...reconciliationDraft.revisedShots,revision] });
+                });
+              }}>
+                <label>画面<textarea name="visual" defaultValue={shot.visual} required maxLength={4000} /></label>
+                <label>时长（秒）<input name="duration" type="number" step="any" defaultValue={original.durationSeconds} required /></label>
+                <label>修订原因<input name="reason" required maxLength={1000} /></label>
+                <button disabled={busy}>保存修订</button>
+              </form>
+            </details>}
+          </li>;
+        })}</ul>
         {reconciliationDraft && <p>核对候选 {reconciliationDraft.id} · 待逐镜核对</p>}
         {reconciliation.upstreamChanged && reconciliation.currentUpstream && !reconciliationDraft && <button type="button"
           className="desktop-task-action" disabled={busy} onClick={() => void act(async () => {

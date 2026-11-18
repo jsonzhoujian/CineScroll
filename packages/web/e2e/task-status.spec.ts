@@ -1154,6 +1154,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     };
   }
   let retainedShotIds: string[] = [];
+  let revisedShots: Array<{ shotId: string; value: { visual: string; durationSeconds: number } }> = [];
   await page.route(`${root}**`,route => {
     const request = route.request(), suffix = request.url().slice(root.length);
     if (request.method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
@@ -1163,20 +1164,27 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     } });
     if (suffix === "/publications/42/reconciliation" && request.method() === "POST") {
       expect(request.postDataJSON()).toEqual({ sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] });
-      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42",retainedShotIds } });
+      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42",retainedShotIds,revisedShots } });
     }
     if (suffix === "/publications/42/reconciliation/reconcile-42/retains" && request.method() === "POST") {
       expect(request.postDataJSON()).toEqual({ shotId: "two" });
       retainedShotIds = ["two"];
       return route.fulfill({ headers,status: 201,json: { shotId: "two" } });
     }
+    if (suffix === "/publications/42/reconciliation/reconcile-42/revisions" && request.method() === "POST") {
+      expect(request.postDataJSON()).toEqual({ shotId: "three",visual: "雨滴滑过瓦片",durationSeconds: 3,reason: "按新剧本修改" });
+      revisedShots = [{ shotId: "three",value: { visual: "雨滴滑过瓦片",durationSeconds: 3 } }];
+      return route.fulfill({ headers,status: 201,json: { shotId: "three" } });
+    }
     if (suffix === "/publications/42/reconciliation") return route.fulfill({ headers,json: {
       publicationId: "42",upstreamChanged: true,currentUpstream: { sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] },
       shots: [{ id: "one",visual: "雨打空庭",locked: true,referencesMatch: false },
-        { id: "two",visual: "积水倒影",locked: true,referencesMatch: true }],
+        { id: "two",visual: "积水倒影",locked: true,referencesMatch: true },
+        { id: "three",visual: "屋檐滴水",locked: false,referencesMatch: true }],
     } });
     if (suffix === "/publications/42") return route.fulfill({ headers,json: {
-      ...reviewView(),publicationId: "42",revision: 1,formalRead: true,canPreviewReconciliation: true,
+      ...reviewView(),version: { ...reviewView().version,shots: [shot,reviewedShot,{ ...shot,id: "three",visual: "屋檐滴水" }] },
+      publicationId: "42",revision: 1,formalRead: true,canPreviewReconciliation: true,
       permissions: { canSuggest: false,canEdit: false,canDecide: false,canConfirm: false },
     } });
     if (suffix === "/reviews") return route.fulfill({ headers,json: {
@@ -1326,13 +1334,19 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(preview).toContainText("引用须重新核对");
   await preview.getByRole("button",{ name: "创建分镜核对候选" }).click();
   await expect(preview).toContainText("核对候选 reconcile-42 · 待逐镜核对");
-  const retain = preview.getByRole("button",{ name: "核对无误，原样保留" });
-  await expect(retain).toHaveCount(1);
+  const retain = preview.getByRole("listitem").filter({ hasText: "积水倒影" }).getByRole("button",{ name: "核对无误，原样保留" });
   await retain.click();
   await expect(preview).toContainText("已保留");
+  await preview.getByText("修订镜头",{ exact: true }).click();
+  await preview.getByRole("textbox",{ name: "画面",exact: true }).fill("雨滴滑过瓦片");
+  await preview.getByLabel("时长（秒）").fill("3");
+  await preview.getByLabel("修订原因").fill("按新剧本修改");
+  await preview.getByRole("button",{ name: "保存修订" }).click();
+  await expect(preview).toContainText("已修订 · 雨滴滑过瓦片 · 3 秒");
   await panel.getByRole("button",{ name: "预览分镜跨上游核对" }).click();
   await preview.getByRole("button",{ name: "创建分镜核对候选" }).click();
   await expect(preview).toContainText("已保留");
+  await expect(preview).toContainText("已修订 · 雨滴滑过瓦片 · 3 秒");
   await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 42" })).toBeVisible();
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
