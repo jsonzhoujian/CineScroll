@@ -3,12 +3,15 @@
 import { useRef, useState } from "react";
 import { ApiClientError, type ApiClient } from "../lib/api";
 
-export function ProjectInvitationPanel({ api, ownerProjectId, accountId }: {
+export function ProjectInvitationPanel({ api, ownerProjectId, accountId, onOpenChapter }: {
   api: ApiClient;
   ownerProjectId: string | null;
   accountId: string | null;
+  onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
   const [issued,setIssued] = useState<Awaited<ReturnType<ApiClient["issueProjectInvitation"]>> | null>(null);
+  const [joinedProject,setJoinedProject] = useState<string | null>(null);
+  const [directory,setDirectory] = useState<Awaited<ReturnType<ApiClient["listProjectChapters"]>> | null>(null);
   const [notice,setNotice] = useState("");
   const [busy,setBusy] = useState(false);
   const inFlight = useRef(false);
@@ -59,12 +62,26 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId }: {
       }
       void run(async () => {
         const membership = await api.acceptProjectInvitation(invitationId);
+        setJoinedProject(membership.projectId);
+        setDirectory(null);
         setNotice(`已加入项目 ${membership.projectId}，角色为${membership.role === "editor" ? "编辑" : "审核人"}。`);
       },"无法接受邀请，请核对登录账号、邀请编号和有效期。");
     }}>
       <label>待接受的邀请编号 <input name="invitationId" required maxLength={64} disabled={busy} /></label>
       <button type="submit" disabled={busy}>接受邀请</button>
     </form>
+    {joinedProject && <button type="button" disabled={busy} onClick={() => void run(async () => {
+      const result = await api.listProjectChapters(joinedProject);
+      if (result.projectId !== joinedProject) throw new Error("WRONG_PROJECT");
+      setDirectory(result);
+    },"无法读取项目章节，请重试。")}>查看受邀项目章节</button>}
+    {directory && <section aria-label="受邀项目章节">
+      {directory.chapters.length ? <ul>{directory.chapters.map(chapter => <li key={chapter.id}>
+        <button type="button" disabled={busy} onClick={() => void run(
+          () => onOpenChapter(directory.projectId,chapter.id),"无法打开该章节，请重试。",
+        )}>{chapter.title}</button>
+      </li>)}</ul> : <p>该项目暂无已导入的章节。</p>}
+    </section>}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

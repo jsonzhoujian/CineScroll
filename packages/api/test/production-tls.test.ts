@@ -822,6 +822,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
           await Promise.all([1,2].map(() => impactApp.http.post(accept).set("authorization",memberBearer).expect(201,{ projectId,role })));
           await impactApp.http.post(invitations).set("authorization",memberBearer).send(invitationInput).expect(403);
         }
+        const directory = await impactApp.http.get(`/projects/${projectId}/chapter-directory`)
+          .set("authorization",memberBearer).expect(role === "nonmember" ? 404 : 200);
+        if (role !== "nonmember") assert.deepEqual(directory.body,{ projectId,chapters: [{ id: chapterId,title: "chapter" }] });
         const expected = role === "editor" ? 403 : role === "reviewer" ? 200 : 404;
         await impactApp.http.get(auditPath).set("authorization",memberBearer).expect(expected);
         await impactApp.http.get(projectAuditPath).set("authorization",memberBearer).expect(expected);

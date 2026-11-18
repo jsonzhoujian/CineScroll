@@ -314,6 +314,11 @@ export class ApiClient {
   confirmEpisodePlan(projectId: string, chapterId: string, expectedActiveVersionId: string) {
     return this.request<EpisodePlanView["plan"]>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan/confirm`, { method: "POST", body: JSON.stringify({ expectedActiveVersionId }) }, "session");
   }
+  listProjectChapters(projectId: string) {
+    return this.request<{ projectId: string; chapters: Array<{ id: string; title: string }> }>(
+      `/projects/${encodeURIComponent(projectId)}/chapter-directory`,{ method: "GET" },"session");
+  }
+
   getChapterContext(projectId: string, chapterId: string) {
     return this.request<{ project: { id: string; title: string; role: "owner" | "editor" | "reviewer" } & Pick<ProjectDraft, "aspectRatio" | "targetDurationSeconds" | "narrativeMode">; chapter: Chapter }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/context`, { method: "GET", cache: "no-store" }, "session");
   }

@@ -222,7 +222,7 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   const invitationId = "09b8ed50-b429-49b0-abb1-43c92750090f";
   const headers = { "access-control-allow-origin": appOrigin,
     "access-control-allow-headers": "authorization,content-type",
-    "access-control-allow-methods": "POST,OPTIONS" };
+    "access-control-allow-methods": "GET,POST,OPTIONS" };
   await page.route(`${apiOrigin}/project-invitations/${invitationId}/accept`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
     expect(route.request().headers().authorization).toBe("Bearer session-token");
@@ -233,6 +233,23 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
     expect(route.request().headers().authorization).toBe("Bearer session-token");
     expect(route.request().postDataJSON()).toEqual({ recipientUserId: "reviewer-1",role: "reviewer" });
     return route.fulfill({ status: 201,headers,json: { id: invitationId,projectId: "project-1",role: "reviewer",expiresAt: "2026-11-25T00:00:00Z" } });
+  });
+  await page.route(`${apiOrigin}/projects/shared-project/chapter-directory`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: { projectId: "shared-project",chapters: [{ id: "shared-chapter",title: "共享章节" }] } });
+  });
+  await page.route(`${apiOrigin}/projects/shared-project/chapters/shared-chapter/context`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: {
+      project: { id: "shared-project",title: "共享项目",role: "editor",aspectRatio: "9:16",narrativeMode: "narration",targetDurationSeconds: 60 },
+      chapter: { id: "shared-chapter",title: "共享章节",activeSourceVersionId: "shared-source",versions: [
+        { id: "shared-source",ordinal: 1,characterCount: 4,text: "共享原文",fragments: [{ id: "f",text: "共享原文" }] },
+      ] },
+    } });
+  });
+  await page.route(`${apiOrigin}/projects/shared-project/chapters/shared-chapter/story-knowledge-tasks**`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: { tasks: [],nextCursor: null } });
   });
   await page.goto("/");
   await page.getByRole("button",{ name: "获取验证码" }).click();
@@ -252,4 +269,11 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await panel.getByLabel("邀请角色").selectOption("reviewer");
   await panel.getByRole("button",{ name: "生成邀请" }).click();
   await expect(panel.getByLabel("生成的邀请编号")).toHaveValue(invitationId);
+  await panel.getByLabel("待接受的邀请编号").fill(invitationId);
+  await panel.getByRole("button",{ name: "接受邀请" }).click();
+  await panel.getByRole("button",{ name: "查看受邀项目章节" }).click();
+  await panel.getByRole("button",{ name: "共享章节" }).click();
+  await expect(page.getByRole("heading",{ name: "共享章节" })).toBeVisible();
+  await expect(page.getByRole("region",{ name: "原文片段",exact: true }).or(page.locator(".manuscript"))).toContainText("共享原文");
+
 });
