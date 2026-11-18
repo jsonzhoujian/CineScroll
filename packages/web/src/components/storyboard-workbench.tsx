@@ -22,6 +22,8 @@ function readPending(key: string): Pending | null {
 }
 
 const auditLabels = new Map([
+  ["knowledge_confirm","确认故事知识"],["knowledge_edit","编辑故事事实"],["knowledge_decide","裁决故事事实"],
+  ["knowledge_lock","锁定故事事实"],["knowledge_unlock","解锁故事事实"],
   ["settings_edit","编辑设定"],["settings_suggest","提出设定建议"],["settings_decide","裁决设定建议"],
   ["settings_confirm","确认设定"],["settings_lock","锁定设定"],["settings_unlock","解锁设定"],
   ["settings_regenerate","局部重生设定"],["settings_reconcile","开始设定核对"],["settings_retain","原样保留设定"],

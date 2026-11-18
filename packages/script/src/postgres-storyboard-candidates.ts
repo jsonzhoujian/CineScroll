@@ -264,6 +264,31 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         from settings_review_versions v
         cross join lateral (select v.version_json->'operation' as value) operation
         where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
+        union all
+        select v.chapter_id,'knowledge-confirm:'||v.id,v.created_at,v.created_by,
+          'knowledge_confirm',null,null,null,null,null,null,null,null,confirmation.candidate_version_id,v.id,null
+        from story_knowledge_confirmation_results confirmation
+        join story_knowledge_versions v on (v.workspace_id,v.project_id,v.chapter_id,v.id)
+          =(confirmation.workspace_id,confirmation.project_id,confirmation.chapter_id,confirmation.version_id)
+        where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
+        union all
+        select v.chapter_id,'knowledge:'||v.id||':'||action.kind||':'||(fact.value->>'id'),v.created_at,v.created_by,
+          'knowledge_'||action.kind,null,null,null,null,action.reason,action.outcome,null,null,v.parent_version_id,v.id,fact.value->>'id'
+        from story_knowledge_versions v
+        join story_knowledge_versions parent on (parent.workspace_id,parent.project_id,parent.chapter_id,parent.id)
+          =(v.workspace_id,v.project_id,v.chapter_id,v.parent_version_id)
+        cross join lateral jsonb_array_elements(v.version_json->'facts') fact(value)
+        join lateral jsonb_array_elements(parent.version_json->'facts') prior(value) on prior.value->>'id'=fact.value->>'id'
+        cross join lateral (values
+          ('edit',fact.value->'lastEdit',prior.value->'lastEdit',fact.value->'lastEdit'->>'reason',null),
+          ('decide',fact.value->'decision',prior.value->'decision',fact.value->'decision'->>'reason',fact.value->'decision'->>'outcome'),
+          (fact.value->'lockHistory'->-1->>'action',fact.value->'lockHistory'->-1,prior.value->'lockHistory'->-1,fact.value->'lockHistory'->-1->>'reason',null)
+        ) action(kind,metadata,previous,reason,outcome)
+        where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
+          and action.metadata is not null and action.metadata is distinct from action.previous
+          and not exists (select 1 from story_knowledge_confirmation_results confirmation
+            where (confirmation.workspace_id,confirmation.project_id,confirmation.chapter_id,confirmation.version_id)
+              =(v.workspace_id,v.project_id,v.chapter_id,v.id))
       )
       select chapter_id as "chapterId",event_id as "eventId",to_char(recorded_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "recordedAt",
         actor_id as "actorId",kind,review_id as "reviewId",reconciliation_id as "reconciliationId",
