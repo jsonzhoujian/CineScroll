@@ -151,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   };
   try {
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
-      "../../project-import/migrations/0002_imported_documents.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
+      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
       "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
@@ -807,10 +807,21 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       for (const role of ["editor","reviewer","nonmember"] as const) {
         const memberId = `${userId}_${role}`;
         await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)",[memberId,workspaceId]);
-        if (role !== "nonmember") {
-          await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)",[projectId,workspaceId,memberId,role]);
-        }
         const memberBearer = `Bearer ${await sessions.issue(memberId,workspaceId)}`;
+        const invitations = `/projects/${projectId}/invitations`;
+        const invitationInput = { recipientUserId: memberId,role: role === "nonmember" ? "editor" : role };
+        await impactApp.http.post(invitations).set("authorization",memberBearer).send(invitationInput).expect(403);
+        const invitation = (await impactApp.http.post(invitations).set("authorization",bearer).send(invitationInput).expect(201)).body;
+        const accept = `/project-invitations/${invitation.id}/accept`;
+        await impactApp.http.post(accept).set("authorization",bearer).expect(404);
+        await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",memberBearer).expect(404);
+        if (role === "nonmember") {
+          await admin.query("update project_invitations set expires_at=clock_timestamp() where id=$1",[invitation.id]);
+          await impactApp.http.post(accept).set("authorization",memberBearer).expect(409);
+        } else {
+          await Promise.all([1,2].map(() => impactApp.http.post(accept).set("authorization",memberBearer).expect(201,{ projectId,role })));
+          await impactApp.http.post(invitations).set("authorization",memberBearer).send(invitationInput).expect(403);
+        }
         const expected = role === "editor" ? 403 : role === "reviewer" ? 200 : 404;
         await impactApp.http.get(auditPath).set("authorization",memberBearer).expect(expected);
         await impactApp.http.get(projectAuditPath).set("authorization",memberBearer).expect(expected);

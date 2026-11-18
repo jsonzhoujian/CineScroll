@@ -31,6 +31,18 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     return this.inTransaction(actor, (client) => loadProject(client, projectId, false));
   }
 
+  issueInvitation(actor: Actor,projectId: string,recipient: string,role: "editor" | "reviewer") {
+    return this.inTransaction(actor, async client => (await client.query(
+      "select issue_project_invitation($1,$2,$3) as invitation",[projectId,recipient,role],
+    )).rows[0]!.invitation as { id: string; projectId: string; role: typeof role; expiresAt: string });
+  }
+
+  acceptInvitation(actor: Actor,invitationId: string) {
+    return this.inTransaction(actor, async client => (await client.query(
+      "select accept_project_invitation($1::uuid) as membership",[invitationId],
+    )).rows[0]!.membership as { projectId: string; role: "editor" | "reviewer" });
+  }
+
   async findProjectAccess(actor: Actor, projectId: string): Promise<ProjectAccess | null> {
     return this.inTransaction(actor, async (client) => {
       const result = await client.query<MemberRow>(

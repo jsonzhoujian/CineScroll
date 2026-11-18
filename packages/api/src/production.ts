@@ -1,3 +1,4 @@
+import { ProjectInvitationsApiModule } from "./project-invitations-api.ts";
 import { StoryboardApiModule } from "./storyboard-api.ts";
 import { ConfirmedStoryboardHandoff } from "@novel-adaptation/script/storyboard-handoff";
 import { PostgresStoryboardCandidateRepository } from "@novel-adaptation/script/postgres-storyboard-candidates";
@@ -248,7 +249,8 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   let scriptWorker: StoryKnowledgeTaskWorker | undefined;
   let qualityWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
-  let apiModule: DynamicModule = projectModule;
+  const invitationsModule = ProjectInvitationsApiModule.register(sessions,projectRepository);
+  let apiModule: DynamicModule = { module: ProductionApiModule,imports: [projectModule,invitationsModule] };
   if (modelKey && config.modelSettings?.enabled === true) {
     const value = config.modelSettings;
     modelPool = new Pool({ connectionString: value.databaseUrl, max: 10,
@@ -259,7 +261,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
       probe: new NativeModelDirectoryProbe({ routes: value.routes, ...(ports.modelFetch ? { fetch: ports.modelFetch } : {}) }),
     });
     const restrictedPool = modelPool;
-    apiModule = { module: ProductionApiModule, imports: [projectModule, ModelSettingsApiModule.register({
+    apiModule = { module: ProductionApiModule, imports: [projectModule, invitationsModule, ModelSettingsApiModule.register({
       sessionVerifier: sessions, settings, rateLimiter: new PostgresModelRateLimiter(modelPool),
     })], providers: [{ provide: "MODEL_DATABASE_STARTUP_CHECK", useValue: {
       async onModuleInit() {
