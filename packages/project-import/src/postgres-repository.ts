@@ -49,6 +49,12 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     )).rows;
   }
 
+  listReceivedInvitations(actor: Actor) {
+    return this.inTransaction(actor,async client => (await client.query<{
+      id: string; projectId: string; projectTitle: string; role: "editor" | "reviewer"; expiresAt: Date;
+    }>("select * from list_received_project_invitations()")).rows);
+  }
+
   listPendingInvitations(actor: Actor,projectId: string) {
     return this.inTransaction(actor,async client => (await client.query<{
       id: string; recipientUserId: string; role: "editor" | "reviewer"; expiresAt: Date;

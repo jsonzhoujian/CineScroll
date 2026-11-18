@@ -4,7 +4,7 @@ import type { PostgresProjectImportRepository } from "@novel-adaptation/project-
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 
 const INVITATIONS = Symbol("PROJECT_INVITATIONS");
-type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces" | "listProjectMembers" | "changeProjectMember" | "listPendingInvitations" | "revokePendingInvitation">;
+type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces" | "listProjectMembers" | "changeProjectMember" | "listPendingInvitations" | "revokePendingInvitation" | "listReceivedInvitations">;
 
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n\0]/.test(value)) throw new BadRequestException();
@@ -63,6 +63,10 @@ class ProjectInvitationsController {
     return respond(async () => ({ projects: await this.invitations.listMemberProjects(req.actor) }));
   }
 
+  received(req: { actor: Actor }) {
+    return respond(async () => ({ invitations: await this.invitations.listReceivedInvitations(req.actor) }));
+  }
+
   pending(req: { actor: Actor },project: string) {
     const projectId = identifier(project);
     return respond(async () => ({ projectId,invitations: await this.invitations.listPendingInvitations(req.actor,projectId) }));
@@ -117,6 +121,7 @@ for (const [method,path,param,route] of [
   ["workspaces","workspaces",null,Get],
   ["switchWorkspace","workspaces/:workspaceId/switch","workspaceId",Post],
   ["projects","projects",null,Get],
+  ["received","project-invitations/received",null,Get],
   ["pending","projects/:projectId/invitations","projectId",Get],
   ["revoke","projects/:projectId/invitations/revoke","projectId",Post],
   ["members","projects/:projectId/members","projectId",Get],

@@ -223,6 +223,12 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   const headers = { "access-control-allow-origin": appOrigin,
     "access-control-allow-headers": "authorization,content-type",
     "access-control-allow-methods": "GET,POST,OPTIONS" };
+  await page.route(`${apiOrigin}/project-invitations/received`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: { invitations: [
+      { id: invitationId,projectId: "shared-project",projectTitle: "共享项目",role: "editor",expiresAt: "2026-11-25T00:00:00Z" },
+    ] } });
+  });
   await page.route(`${apiOrigin}/project-invitations/${invitationId}/accept`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
     expect(route.request().headers().authorization).toBe("Bearer session-token");
@@ -285,8 +291,11 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   const panel = page.getByRole("region",{ name: "项目邀请" });
   await expect(panel).toContainText("我的账号 ID user-1");
   await expect(panel.getByRole("button",{ name: "生成邀请" })).toHaveCount(0);
-  await panel.getByLabel("待接受的邀请编号").fill(invitationId);
-  await panel.getByRole("button",{ name: "接受邀请",exact: true }).click();
+  await panel.getByRole("button",{ name: "查看收到的邀请" }).click();
+  const inbox = panel.getByRole("region",{ name: "收到的邀请" });
+  await expect(inbox).toContainText("共享项目");
+  await inbox.getByRole("button",{ name: "接受此邀请" }).click();
+  await expect(inbox).toContainText("暂无收到的邀请");
   await expect(panel.getByRole("status")).toContainText("已加入项目 shared-project，角色为编辑");
   await page.getByLabel("项目名称").fill("人间剑令");
   await page.getByRole("checkbox",{ name: /拥有该作品或合法改编权/ }).check();

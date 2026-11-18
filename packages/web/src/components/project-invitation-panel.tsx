@@ -12,6 +12,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
   onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
   const [members,setMembers] = useState<Awaited<ReturnType<ApiClient["listProjectMembers"]>>["members"] | null>(null);
+  const [received,setReceived] = useState<Awaited<ReturnType<ApiClient["listReceivedProjectInvitations"]>>["invitations"] | null>(null);
   const [pending,setPending] = useState<Awaited<ReturnType<ApiClient["listPendingProjectInvitations"]>>["invitations"] | null>(null);
   const [issued,setIssued] = useState<Awaited<ReturnType<ApiClient["issueProjectInvitation"]>> | null>(null);
   const [joined,setJoined] = useState<Awaited<ReturnType<ApiClient["acceptProjectInvitation"]>> | null>(null);
@@ -50,6 +51,16 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
         ? role ? [{ ...member,role }] : [] : [member]) ?? null);
       setNotice(role ? "成员角色已更新。" : "已移除成员。");
     },"成员更新失败，请刷新名单后重试。");
+  }
+
+  function accept(invitationId: string) {
+    void run(async () => {
+      const membership = await api.acceptProjectInvitation(invitationId);
+      setJoined(membership);
+      setReceived(previous => previous?.filter(item => item.id !== invitationId) ?? null);
+      setDirectory(null);
+      setNotice(`已加入项目 ${membership.projectId}，角色为${membership.role === "editor" ? "编辑" : "审核人"}。`);
+    },"无法接受邀请，请核对登录账号、邀请编号和有效期。");
   }
 
   return <section className="panel" aria-label="项目邀请">
@@ -111,6 +122,16 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
       <label>生成的邀请编号 <input readOnly value={issued.id} onFocus={event => event.currentTarget.select()} /></label>
       <p>请将编号交给受邀账号。有效期至 <time dateTime={issued.expiresAt}>{new Date(issued.expiresAt).toLocaleString("zh-CN")}</time>。</p>
     </div>}
+    <button type="button" disabled={busy} onClick={() => void run(async () => {
+      setReceived((await api.listReceivedProjectInvitations()).invitations);
+    },"无法读取收到的邀请，请重试。")}>查看收到的邀请</button>
+    {received && <section aria-label="收到的邀请">
+      {received.length ? <ul>{received.map(invitation => <li key={invitation.id}>
+        {invitation.projectTitle} · {invitation.role === "editor" ? "编辑" : "审核人"}
+        {" · "}<time dateTime={invitation.expiresAt}>{new Date(invitation.expiresAt).toLocaleString("zh-CN")}</time>
+        <button type="button" disabled={busy} onClick={() => accept(invitation.id)}>接受此邀请</button>
+      </li>)}</ul> : <p>暂无收到的邀请。</p>}
+    </section>}
     <form onSubmit={event => {
       event.preventDefault();
       const invitationId = String(new FormData(event.currentTarget).get("invitationId")).trim();
@@ -118,12 +139,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
         setNotice("请输入有效的邀请编号。");
         return;
       }
-      void run(async () => {
-        const membership = await api.acceptProjectInvitation(invitationId);
-        setJoined(membership);
-        setDirectory(null);
-        setNotice(`已加入项目 ${membership.projectId}，角色为${membership.role === "editor" ? "编辑" : "审核人"}。`);
-      },"无法接受邀请，请核对登录账号、邀请编号和有效期。");
+      accept(invitationId);
     }}>
       <label>待接受的邀请编号 <input name="invitationId" required maxLength={64} disabled={busy} /></label>
       <button type="submit" disabled={busy}>接受邀请</button>
