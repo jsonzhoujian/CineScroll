@@ -4,7 +4,7 @@ type ApiErrorBody = { code?: string; message?: string; retryAfterSeconds?: numbe
 
 export type StoryboardRetry = { expectedActiveVersionId: string; scopeKeys: string[] };
 export type StoryboardSubmission = { configurationVersionId: string; modelId: string; requestId: string };
-export type StoryboardTask = StoryKnowledgeTask & { input: { stage: "storyboard"; resultType: "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
+export type StoryboardTask = StoryKnowledgeTask & { input: { storyboardRegeneration?: { reconciliationId: string; publicationId: string; scopeKeys: string[] }; stage: "storyboard"; resultType: "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 export type StoryboardReviewCommand = { requestId: string; expectedRevision: number; reason: string } & (
   { kind: "suggest" | "edit"; shotId: string; value: { visual: string; durationSeconds: number } }
   | { kind: "lock" | "unlock"; shotId: string }
@@ -207,6 +207,11 @@ export class ApiClient {
     return this.request<{ shotId: string }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/retains`,
       { method: "POST",body: JSON.stringify({ shotId }) },"session");
+  }
+  submitStoryboardRegeneration(p: string,c: string,publicationId: string,draftId: string,input: StoryboardSubmission & { shotIds: string[] }) {
+    return this.request<StoryboardTask>(
+      `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/regeneration-tasks`,
+      { method: "POST",body: JSON.stringify(input) },"session");
   }
   previewStoryboardRegeneration(p: string,c: string,publicationId: string,draftId: string,shotIds: string[]) {
     return this.request<{ reconciliationId: string; publicationId: string; targets: Array<{ shotId: string; scopeKey: string }> }>(

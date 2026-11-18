@@ -63,3 +63,14 @@ test("rejects stale task snapshots before model execution and late responses bef
   assert.equal(late.calls(), 1);
   assert.equal(late.saved(), null);
 });
+
+test("rejects a regeneration response containing a scope outside the persisted selection", async () => {
+  const f = setup();
+  const target = { scopeKey: "selected-shot", ordinal: 1, episodeId: "ep_s1", sceneId: "scene_s1" };
+  await assert.rejects(() => f.runner.run(actor, identity, undefined, {
+    binding: { reconciliationId: "draft", publicationId: "1", scopeKeys: [target.scopeKey] },
+    targets: [target],
+  }), { code: "INVALID_RESPONSE" });
+  assert.equal(f.calls(), 1);
+  assert.equal(f.saved(), null);
+});

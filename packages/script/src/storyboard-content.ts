@@ -82,7 +82,7 @@ function exactRecord(value: unknown, keys: readonly string[]): value is Record<s
 const identityKeys = ["jobId", "projectId", "chapterId", "sourceVersionId"] as const;
 
 /** Reject an unbound envelope before consuming any shot. Quarantine invalid shots by scope. */
-export function validateStoryboardResponse(response: unknown, expected: StoryboardResponseIdentity, context: StoryboardShotContext, scopeKeys?: readonly string[], retainedShots: readonly StoryboardShot[] = []) {
+export function validateStoryboardResponse(response: unknown, expected: StoryboardResponseIdentity, context: StoryboardShotContext, scopeKeys?: readonly string[], retainedShots: readonly StoryboardShot[] = [], requireMatchingShotId = false) {
   if (!exactRecord(response, [...identityKeys, "contractVersion", "stage", "upstreamConfirmedVersionIds", "status", "items"])
     || response.contractVersion !== "0.1.0" || response.stage !== "storyboard"
     || identityKeys.some(key => response[key] !== expected[key]) || context.sourceVersionId !== expected.sourceVersionId
@@ -111,7 +111,7 @@ export function validateStoryboardResponse(response: unknown, expected: Storyboa
       continue;
     }
     const shot = validateStoryboardShot(item.value, context);
-    if (!shot || shotIds.has(shot.id)) {
+    if (!shot || shotIds.has(shot.id) || requireMatchingShotId && shot.id !== item.scopeKey) {
       failures.push({ scopeKey: item.scopeKey, code: "INVALID_SHOT", retryable: true });
       continue;
     }

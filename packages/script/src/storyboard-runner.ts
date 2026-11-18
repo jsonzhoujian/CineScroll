@@ -1,4 +1,4 @@
-import type { StoryRetrySnapshot } from "./model-tasks.ts";
+import type { StoryRetrySnapshot, StoryboardRegeneration } from "./model-tasks.ts";
 import type { Actor } from "./index.ts";
 import type { ConfirmedStoryboardHandoff } from "./storyboard-handoff.ts";
 import { StoryboardUpstreamError } from "./storyboard-handoff.ts";
@@ -11,10 +11,12 @@ export type StoryboardRequest = StoryboardResponseIdentity & {
   input: FormalInput;
   retryOfJobId?: string;
   scopeKeys?: readonly string[];
+  regenerationTargets?: ReadonlyArray<{ scopeKey: string; ordinal: number; episodeId: string; sceneId: string }>;
 };
 export type StoryboardCandidate = StoryboardResponseIdentity & ReturnType<typeof validateStoryboardResponse> & {
   createdBy: string;
   retry?: StoryRetrySnapshot;
+  storyboardRegeneration?: StoryboardRegeneration;
 };
 
 export interface StoryboardCandidateRepository {
@@ -39,7 +41,7 @@ export class StoryboardRunner {
   constructor(options: StoryboardRunner["options"]) { this.options = options; }
 
   /** The caller supplies the persisted, authorized task snapshot. */
-  async run(actor: Actor, task: StoryboardResponseIdentity, retry?: StoryRetrySnapshot): Promise<StoryboardCandidate> {
+  async run(actor: Actor, task: StoryboardResponseIdentity, retry?: StoryRetrySnapshot, regeneration?: { binding: StoryboardRegeneration; targets: NonNullable<StoryboardRequest["regenerationTargets"]> }): Promise<StoryboardCandidate> {
     const identity = structuredClone(task);
     const { handoff, repository, model } = this.options;
     const existing = await repository.findGeneration(actor, identity);
@@ -63,9 +65,10 @@ export class StoryboardRunner {
     const response = await model.generate(structuredClone({
       ...identity, contractVersion: "0.1.0", stage: "storyboard", input: upstream,
       ...(retry ? { retryOfJobId: retry.retryOfJobId, scopeKeys: retry.scopeKeys } : {}),
+      ...(regeneration ? { scopeKeys: regeneration.binding.scopeKeys, regenerationTargets: regeneration.targets } : {}),
     }));
     await readCurrent();
-    const result = validateStoryboardResponse(response, identity, upstream.context, retry?.scopeKeys, base?.shots);
+    const result = validateStoryboardResponse(response, identity, upstream.context, regeneration?.binding.scopeKeys ?? retry?.scopeKeys, base?.shots, !!regeneration);
     const shots = [...(base?.shots ?? []), ...result.shots];
     const retainedFailures = base && retry ? base.failures.filter(failure => !retry.scopeKeys.includes(failure.scopeKey)) : [];
     const failures = [...retainedFailures, ...result.failures];
@@ -73,6 +76,7 @@ export class StoryboardRunner {
       ...identity, shots, failures, createdBy: actor.userId,
       generationStatus: failures.length === 0 ? "succeeded" : shots.length ? "partially_succeeded" : "failed",
       ...(retry ? { retry } : {}),
+      ...(regeneration ? { storyboardRegeneration: regeneration.binding } : {}),
     });
   }
 }

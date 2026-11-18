@@ -39,7 +39,7 @@ export function storyboardTaskContext(script: ModelTaskContextReader, handoff: H
         projectId, chapterId, jobId: selection.expectedActiveVersionId, sourceVersionId: current.sourceVersionId,
         upstreamConfirmedVersionIds: current.upstreamConfirmedVersionIds,
       });
-      if (!base || !selection.scopeKeys.every(key => base.failures.some(failure => failure.scopeKey === key && failure.retryable))) throw new ModelTaskError("UPSTREAM_CHANGED");
+      if (!base || base.storyboardRegeneration || !selection.scopeKeys.every(key => base.failures.some(failure => failure.scopeKey === key && failure.retryable))) throw new ModelTaskError("UPSTREAM_CHANGED");
       return { ...current, retry: { expectedActiveVersionId: base.jobId, retryOfJobId: base.jobId, scopeKeys: [...selection.scopeKeys].sort() } };
     },
   };
@@ -65,7 +65,7 @@ export class StoryboardTaskExecutor {
     tasks: ModelTaskService;
     handoff: Handoff;
     context: ModelTaskContextReader;
-    repository: StoryboardCandidateRepository;
+    repository: StoryboardCandidateRepository & Partial<Pick<import("@novel-adaptation/script/postgres-storyboard-candidates").PostgresStoryboardCandidateRepository,"previewReconciliationRegeneration">>;
     model: { generate(request: StoryboardRequest, credentials: Credentials): Promise<unknown> };
   };
 
@@ -112,11 +112,19 @@ export class StoryboardTaskExecutor {
         } },
       });
       try {
-        const candidate = await runner.run(actor, identity, task.input.retry);
+        const binding = task.input.storyboardRegeneration;
+        let regeneration;
+        if (binding) {
+          const scope = await repository.previewReconciliationRegeneration?.(actor,task.projectId,task.chapterId,binding.publicationId,binding.reconciliationId,binding.scopeKeys);
+          if (!scope || scope.sourceVersionId !== identity.sourceVersionId ||
+            JSON.stringify(scope.upstreamConfirmedVersionIds) !== JSON.stringify(identity.upstreamConfirmedVersionIds)) throw new StoryboardUpstreamError();
+          regeneration = { binding,targets: scope.targets };
+        }
+        const candidate = await runner.run(actor, identity, task.input.retry, regeneration);
         return { candidateVersionId: identity.jobId, extractionStatus: candidate.generationStatus };
       } catch (error) {
         if ((error instanceof ModelTaskError || error instanceof StoryboardStorageError) && error.code === "POLICY_RESTRICTED") throw new TaskExecutionError("POLICY_RESTRICTED");
-        if (isStale(error) || error instanceof ModelTaskError && error.code === "UPSTREAM_CHANGED") throw new TaskExecutionError("UPSTREAM_CHANGED");
+        if (isStale(error) || task.input.storyboardRegeneration && error instanceof StoryboardStorageError && ["STATE_CONFLICT","TASK_NOT_FOUND"].includes(error.code) || error instanceof ModelTaskError && error.code === "UPSTREAM_CHANGED") throw new TaskExecutionError("UPSTREAM_CHANGED");
         if (error instanceof StoryboardContentError || error instanceof StoryboardStorageError && error.code === "INVALID_CANDIDATE") throw new TaskExecutionError("INVALID_RESPONSE");
         if (invoked) throw new TaskExecutionError("EXECUTION_UNCERTAIN");
         throw error;

@@ -8,7 +8,8 @@ export type StoryRetrySelection = { expectedActiveVersionId: string; scopeKeys: 
 export type StoryRetrySnapshot = StoryRetrySelection & { retryOfJobId: string;failureOrigins?: Array<{ scopeKey: string;jobId: string }> };
 import { sameQualityBinding, type QualityBinding } from "./script-publication.ts";
 
-export type TaskInput = { regeneration?: SettingsRegenerationSelection;qualityTarget?: QualityBinding; stage: "story_knowledge" | "script" | "settings" | "storyboard"; resultType?: "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
+export type StoryboardRegeneration = { reconciliationId: string; publicationId: string; scopeKeys: string[] };
+export type TaskInput = { storyboardRegeneration?: StoryboardRegeneration; regeneration?: SettingsRegenerationSelection;qualityTarget?: QualityBinding; stage: "story_knowledge" | "script" | "settings" | "storyboard"; resultType?: "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent"; sourceVersionId: string; upstreamConfirmedVersionIds: string[]; retry?: StoryRetrySnapshot;
   generationParameters: { targetDurationSeconds: TargetDurationSeconds; aspectRatio: AspectRatio; narrativeMode: NarrativeMode } };
 export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded";
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
@@ -245,16 +246,27 @@ export class ModelTaskService {
   async submitScriptContent(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string }) { return this.#submitInitialContent(actor,input,"scriptContent"); }
   async submitSettings(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string }) { return this.#submitInitialContent(actor,input,"settingsContent"); }
   async submitStoryboard(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string }) { return this.#submitInitialContent(actor,input,"storyboardContent"); }
-  async #submitInitialContent(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string },resultType: "scriptContent" | "settingsContent" | "storyboardContent") {
+  submitStoryboardRegeneration(actor: Actor, input: Parameters<ModelTaskService["submitStoryboard"]>[1],
+    binding: StoryboardRegeneration, resolve: () => Promise<Pick<TaskInput,"sourceVersionId" | "upstreamConfirmedVersionIds">>) {
+    return this.#submitInitialContent(actor,input,"storyboardContent",{ binding,resolve });
+  }
+  async #submitInitialContent(actor: Actor, input: { projectId: string; chapterId: string; configurationVersionId: string; modelId: string; requestId: string },resultType: "scriptContent" | "settingsContent" | "storyboardContent",
+    regeneration?: { binding: StoryboardRegeneration; resolve: () => Promise<Pick<TaskInput,"sourceVersionId" | "upstreamConfirmedVersionIds">> }) {
     if (!validIdentifier(input.requestId)) throw new ModelTaskError("INVALID_CONTEXT");
     if (!await this.#options.contextReader.canRead?.(actor,input.projectId,input.chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
     const id = `${resultType === "storyboardContent" ? "storyboard" : resultType === "scriptContent" ? "script" : "settings"}_${createHash("sha256").update(JSON.stringify([actor.workspaceId, input.projectId, input.chapterId, input.requestId])).digest("hex")}`;
     const matches = (task: ModelTask) => task.projectId === input.projectId && task.chapterId === input.chapterId
-      && (resultType !== "storyboardContent" || task.createdBy === actor.userId) && task.input.resultType === resultType && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
+      && (resultType !== "storyboardContent" || task.createdBy === actor.userId) && task.input.resultType === resultType && sameStoryboardRegeneration(task.input.storyboardRegeneration,regeneration?.binding) && task.model.configurationVersionId === input.configurationVersionId && task.model.modelId === input.modelId;
     const existing = await this.#options.repository.find(actor.workspaceId, id);
     if (existing) { if (!matches(existing)) throw new ModelTaskError("STATE_CONFLICT"); return existing; }
-    const context = await this.#context(actor,input.projectId,input.chapterId);
+    const context: TaskInput = await this.#context(actor,input.projectId,input.chapterId);
     if (context.resultType !== resultType) throw new ModelTaskError("INVALID_CONTEXT");
+    if (regeneration) {
+      const scope = await regeneration.resolve();
+      if (scope.sourceVersionId !== context.sourceVersionId ||
+        JSON.stringify(scope.upstreamConfirmedVersionIds) !== JSON.stringify(context.upstreamConfirmedVersionIds)) throw new ModelTaskError("UPSTREAM_CHANGED");
+      context.storyboardRegeneration = structuredClone(regeneration.binding);
+    }
     await this.assertGenerationAllowed(actor, input.projectId, input.chapterId, context);
     this.#assertAdmission(actor, context);
     const model = await this.#options.settings.selectForTask(actor, input.configurationVersionId, input.modelId);
@@ -430,6 +442,9 @@ export class ModelTaskService {
     }
     return this.#options.repository.transition(actor.workspaceId, id, running.revision, state, reason, result);
   }
+}
+function sameStoryboardRegeneration(a?: StoryboardRegeneration,b?: StoryboardRegeneration) {
+  return !a && !b || !!a && !!b && a.publicationId === b.publicationId && a.reconciliationId === b.reconciliationId && sameScopes(a.scopeKeys,b.scopeKeys);
 }
 function sameInput(a: TaskInput, b: TaskInput) {
   return sameRegeneration(a.regeneration,b.regeneration) && (!a.qualityTarget && !b.qualityTarget || !!a.qualityTarget && !!b.qualityTarget && sameQualityBinding(a.qualityTarget,b.qualityTarget)) && a.stage === b.stage && a.resultType === b.resultType && a.sourceVersionId === b.sourceVersionId

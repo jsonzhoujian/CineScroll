@@ -9,8 +9,9 @@ export async function assertStoryboardDatabase(pool: Pool, workspaceIds: readonl
         and relrowsecurity and relforcerowsecurity and not pg_has_role(session_user,relowner,'MEMBER')
         and has_table_privilege(current_user,oid,'SELECT') and has_table_privilege(current_user,oid,'INSERT')
         and not has_table_privilege(current_user,oid,'UPDATE,DELETE'))
-      and (select count(*)=4 from pg_trigger where tgrelid=to_regclass('public.storyboard_candidate_versions')
+      and (select count(*)=5 from pg_trigger where tgrelid=to_regclass('public.storyboard_candidate_versions')
         and tgenabled in ('O','A') and tgqual is null and (tgname,tgfoid,tgtype) in (
+          ('storyboard_candidate_regeneration',to_regprocedure('public.guard_storyboard_regeneration_result()'),7),
           ('storyboard_candidate_task',to_regprocedure('public.guard_storyboard_task_write()'),7),
           ('storyboard_candidate_authority',to_regprocedure('public.guard_storyboard_candidate()'),7),
           ('storyboard_candidate_dependencies',to_regprocedure('public.register_storyboard_dependencies()'),5),
@@ -49,6 +50,9 @@ export async function assertStoryboardDatabase(pool: Pool, workspaceIds: readonl
         and tgqual is null and tgenabled in ('O','A') and (tgname,tgfoid,tgtype) in (
           ('storyboard_reconciliation_retain_guard',to_regprocedure('public.guard_storyboard_reconciliation_retain()'),7),
           ('storyboard_reconciliation_retain_immutable',to_regprocedure('public.reject_immutable_change()'),27)))
+      and exists(select 1 from pg_trigger where tgrelid=to_regclass('public.storyboard_review_submissions')
+        and tgname='storyboard_regeneration_review_guard' and tgfoid=to_regprocedure('public.reject_regeneration_review()')
+        and tgtype=7 and tgqual is null and tgenabled in ('O','A'))
       as ready`);
     if (!result.rows[0]?.ready) throw new Error();
   } catch { throw new Error("STORYBOARD_DATABASE_NOT_READY"); }

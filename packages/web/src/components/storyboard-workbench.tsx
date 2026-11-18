@@ -30,6 +30,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
   const regenerationFormId = useId();
+  const regenerationRequest = useRef<{ key: string; requestId: string } | null>(null);
   const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[] } | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
   const [pinnedPublication,setPinnedPublication] = useState<string | null>(null);
@@ -228,7 +229,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const fragments = view?.sourceFragments.filter(fragment => evidence.some(item => item.fragmentId === fragment.id)) ?? [];
   const status = task && taskPresentation(task);
   const canStartAnother = task && (task.state === "succeeded" || task.state === "failed" || task.state === "paused" && task.reason !== "EXECUTION_UNCERTAIN");
-  const retryEnabled = ready && !!view?.current && !!view.version.jobId && task?.id === view.version.jobId && !!model && !pending.current;
+  const retryEnabled = ready && !!view?.current && !!view.version.jobId && task?.id === view.version.jobId && !task.input.storyboardRegeneration && !!model && !pending.current;
 
   return <section className="mode-workspace storyboard task-panel" aria-label="分镜候选生成与追溯">
     <h2>分镜工作台</h2>
@@ -291,7 +292,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
         })}>确认正式分镜</button>
       </div>}
       {view.reviewId && <button type="button" disabled={busy} onClick={() => void act(() => loadReview(view.formalRead ? null : view.reviewId!,true,view.formalRead ? pinnedPublication : null))}>刷新当前审核候选</button>}
-      {view.version.jobId && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
+      {view.version.jobId && !task?.input.storyboardRegeneration && (submitted[view.version.jobId] ? <p>已提交审核</p> : <button className="desktop-task-action" type="button"
         disabled={busy || !!pending.current} onClick={() => void act(() => submitReview(view.version.jobId!))}>提交分镜审核</button>)}
       {view.canPreviewReconciliation && view.publicationId && <button type="button" disabled={busy} onClick={() => void act(async () => {
         const preview = await api.previewStoryboardReconciliation(projectId,chapterId,view.publicationId!);
@@ -359,7 +360,23 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
           const ids = new FormData(event.currentTarget).getAll("shotId").map(String);
           if (!ids.length) { setNotice("请选择要重生的镜头。"); return; }
           if (ids.length > 100) { setNotice("每次最多选择 100 个镜头。"); return; }
+          const submit = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "submit";
           void act(async () => {
+            if (submit && models && model) {
+              const key = JSON.stringify([projectId,chapterId,reconciliationDraft.id,ids,models.id,model]);
+              if (regenerationRequest.current?.key !== key) regenerationRequest.current = { key,requestId: crypto.randomUUID() };
+              const next = checkTask(await api.submitStoryboardRegeneration(projectId,chapterId,reconciliation.publicationId,reconciliationDraft.id,{
+                shotIds: ids,configurationVersionId: models.id,modelId: model,requestId: regenerationRequest.current.requestId,
+              }));
+              if (next.input.storyboardRegeneration?.reconciliationId !== reconciliationDraft.id) throw new Error("WRONG_RECONCILIATION");
+              regenerationRequest.current = null;
+              setTasks(old => [next,...old.filter(item => item.id !== next.id)]);
+              setTask(next);
+              setView(null);
+              setScopes([]);
+              setNotice("局部重生任务已提交。");
+              return;
+            }
             const result = await api.previewStoryboardRegeneration(projectId,chapterId,reconciliation.publicationId,reconciliationDraft.id,ids);
             if (result.reconciliationId !== reconciliationDraft.id || result.publicationId !== reconciliation.publicationId ||
               result.targets.length !== ids.length || !ids.every(id => result.targets.some(target => target.shotId === id && target.scopeKey === id))) {
@@ -369,6 +386,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
           });
         }}>
           <button disabled={busy}>检查重生范围</button>
+          <button value="submit" disabled={busy || !models || !model || !!pending.current}>提交局部重生</button>
         </form>}
         {reconciliation.upstreamChanged && reconciliation.currentUpstream && !reconciliationDraft && <button type="button"
           className="desktop-task-action" disabled={busy} onClick={() => void act(async () => {
@@ -402,11 +420,11 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
       {view.version.failures.length > 0 && <fieldset>
         <legend>失败范围</legend>
         {view.version.failures.map(failure => <label key={failure.scopeKey}>
-          {view.version.jobId && <input className="desktop-task-action" type="checkbox" checked={scopes.includes(failure.scopeKey)} disabled={busy || !retryEnabled || !failure.retryable || (scopes.length >= 100 && !scopes.includes(failure.scopeKey))}
+          {view.version.jobId && !task?.input.storyboardRegeneration && <input className="desktop-task-action" type="checkbox" checked={scopes.includes(failure.scopeKey)} disabled={busy || !retryEnabled || !failure.retryable || (scopes.length >= 100 && !scopes.includes(failure.scopeKey))}
             onChange={event => setScopes(old => event.target.checked ? [...old,failure.scopeKey] : old.filter(key => key !== failure.scopeKey))} />}
           {failure.scopeKey} · {failure.code}{!failure.retryable && " · 不可重试"}
         </label>)}
-        {view.version.jobId && <button className="desktop-task-action" type="button" disabled={busy || !retryEnabled || !scopes.length}
+        {view.version.jobId && !task?.input.storyboardRegeneration && <button className="desktop-task-action" type="button" disabled={busy || !retryEnabled || !scopes.length}
           onClick={() => void act(() => submit({ expectedActiveVersionId: view.version.jobId!,scopeKeys: scopes }))}>重试所选失败项</button>}
       </fieldset>}
     </div>}

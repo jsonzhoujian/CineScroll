@@ -203,6 +203,24 @@ class StoryboardController {
     });
   }
 
+  async submitReconciliationRegeneration(req: TaskSubmissionRequest,p: string,c: string,publication: string,body: unknown,draft: string) {
+    const projectId = id(p), chapterId = id(c), publicationId = parsePublicationId(publication), reconciliationId = reviewId(draft);
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 4) throw new BadRequestException();
+    const { shotIds,configurationVersionId,modelId,requestId } = body as Record<string,unknown>;
+    if (!Array.isArray(shotIds) || !shotIds.length || shotIds.length > 100) throw new BadRequestException();
+    const scopeKeys = shotIds.map(id).sort();
+    if (new Set(scopeKeys).size !== scopeKeys.length) throw new BadRequestException();
+    const input = { projectId,chapterId,configurationVersionId: id(configurationVersionId),modelId: id(modelId),requestId: id(requestId) };
+    await enforceTaskSubmissionRate(this.services.rateLimiter,req);
+    return respond(async () => {
+      const access = await this.services.projects.findProjectAccess(req.actor,projectId);
+      if (!access) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (access.role !== "owner" && access.role !== "reviewer") throw new StoryboardStorageError("FORBIDDEN");
+      return this.services.tasks.submitStoryboardRegeneration(req.actor,input,{ publicationId,reconciliationId,scopeKeys },
+        () => this.services.candidates.previewReconciliationRegeneration(req.actor,projectId,chapterId,publicationId,reconciliationId,scopeKeys));
+    });
+  }
+
   private saveReconciliationShot(actor: Actor,projectId: string,chapterId: string,selected: string,draftId: string,shotId: string,
     revision?: Parameters<PostgresStoryboardCandidateRepository["retainReconciliationShot"]>[6]) {
     return respond(async () => {
@@ -305,6 +323,7 @@ Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
   ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["beginReconciliation",Post("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["submitReconciliationRegeneration",Post("publications/:id/reconciliation/:draftId/regeneration-tasks"),Param("id")],
   ["previewReconciliationRegeneration",Post("publications/:id/reconciliation/:draftId/regeneration-preview"),Param("id")],
   ["reviseReconciliationShot",Post("publications/:id/reconciliation/:draftId/revisions"),Param("id")],
   ["retainReconciliationShot",Post("publications/:id/reconciliation/:draftId/retains"),Param("id")],
@@ -318,8 +337,8 @@ for (const [method,route,parameter] of [
   Param("projectId")(StoryboardController.prototype,method,1);
   Param("chapterId")(StoryboardController.prototype,method,2);
   parameter?.(StoryboardController.prototype,method,3);
-  if (method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration") Body()(StoryboardController.prototype,method,4);
-  if (method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration") Param("draftId")(StoryboardController.prototype,method,5);
+  if (method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Body()(StoryboardController.prototype,method,4);
+  if (method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Param("draftId")(StoryboardController.prototype,method,5);
 }
 export class StoryboardApiModule {
   static register(services: Services): DynamicModule {

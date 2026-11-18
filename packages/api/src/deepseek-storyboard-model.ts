@@ -9,7 +9,7 @@ const instructions = `根据已确认剧本和设定生成中文分镜。input �
 value 必须包含 id、episodeId、sceneId、ordinal、visual、characters、action、speech、durationSeconds、shotSize、cameraAngle、cameraMovement、sound、emotion、splitReason、assetIds、scriptElementIds、provenance，且无额外字段。
 shotSize 取 extreme_wide、wide、full、medium、close_up、extreme_close_up。cameraAngle 取 eye_level、high、low、overhead、dutch、pov。splitReason 是非空数组，取 visual_focus、action_change、emotion_change、information_change。
 ordinal 是正整数，durationSeconds 是正数，characters 是字符串数组。只引用 input 中当前集场、同场剧本元素、正式设定资产与原文证据，直接使用输入剧本的 provenance 格式。每镜至少引用一个剧本元素和一条证据。
-有 scopeKeys 时仅返回这些范围，每个请求范围必须恰有一项。不可用其他 scopeKey，不重新生成已有成功镜头。`;
+有 scopeKeys 时仅返回这些范围，每个请求范围必须恰有一项。不可用其他 scopeKey，不重新生成范围外镜头。若有 regenerationTargets，为每个所选镜头提供替代内容，value.id 等于对应 scopeKey，引用当前正式输入。`;
 
 export class DeepSeekStoryboardModel {
   readonly #fetch: typeof globalThis.fetch;
