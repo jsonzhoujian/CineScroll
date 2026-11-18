@@ -150,7 +150,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     } catch (error) { await production.close(); throw error; }
   };
   try {
-    for (const path of ["../../identity/migrations/0001_identity.sql", "../../project-import/migrations/0001_project_import.sql",
+    for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
       "../../project-import/migrations/0002_imported_documents.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
       "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
@@ -804,15 +804,18 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.ok(audit.events.some((event: { kind: string; shotId: string }) => event.kind === "adopt" && event.shotId === oldShot.id));
       assert.ok(audit.events.every((event: object) => !["jobId","requestId","command"].some(key => key in event)));
       const projectAuditPath = `/projects/${projectId}/storyboard-audit`;
-      try {
-        for (const role of ["editor","reviewer"] as const) {
-          await admin.query("update project_members set role=$4 where (project_id,workspace_id,user_id)=($1,$2,$3)",[projectId,workspaceId,userId,role]);
-          const expected = role === "editor" ? 403 : 200;
-          await impactApp.http.get(auditPath).set("authorization",bearer).expect(expected);
-          await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(expected);
+      for (const role of ["editor","reviewer","nonmember"] as const) {
+        const memberId = `${userId}_${role}`;
+        await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)",[memberId,workspaceId]);
+        if (role !== "nonmember") {
+          await admin.query("insert into project_members(project_id,workspace_id,user_id,role) values($1,$2,$3,$4)",[projectId,workspaceId,memberId,role]);
         }
-      } finally {
-        await admin.query("update project_members set role='owner' where (project_id,workspace_id,user_id)=($1,$2,$3)",[projectId,workspaceId,userId]);
+        const memberBearer = `Bearer ${await sessions.issue(memberId,workspaceId)}`;
+        const expected = role === "editor" ? 403 : role === "reviewer" ? 200 : 404;
+        await impactApp.http.get(auditPath).set("authorization",memberBearer).expect(expected);
+        await impactApp.http.get(projectAuditPath).set("authorization",memberBearer).expect(expected);
+        await impactApp.http.get(taskPath).set("authorization",memberBearer).expect(404);
+        await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",memberBearer).expect(role === "nonmember" ? 404 : 200);
       }
       await impactApp.http.get(projectAuditPath).expect(401);
       const projectAudit = (await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(200)).body;

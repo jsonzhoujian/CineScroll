@@ -12,6 +12,7 @@ integration("PostgreSQL 原子保存身份、一次性 challenge 和多维限流
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
   try {
     await pool.query(await readFile(new URL("../migrations/0001_identity.sql", import.meta.url), "utf8"));
+    await pool.query(await readFile(new URL("../migrations/0002_shared_workspace_accounts.sql", import.meta.url), "utf8"));
     await pool.query("truncate identity_accounts, login_challenges, login_rate_limits");
     const repository = new PostgresIdentityRepository(pool);
     let created = 0;
@@ -26,8 +27,9 @@ integration("PostgreSQL 原子保存身份、一次性 challenge 和多维限流
     assert.equal(await repository.findActorByUserId("usr_missing"), null);
 
     const second = await repository.findOrCreateByPhone("+8613900139000", () => ({
-      userId: "usr_second", workspaceId: "wsp_second", phone: "+8613900139000",
+      userId: "usr_second", workspaceId: accounts[0]!.workspaceId, phone: "+8613900139000",
     }));
+    assert.deepEqual(await repository.findActorByUserId(second.userId),{ userId: second.userId,workspaceId: accounts[0]!.workspaceId });
     await repository.bindWechat(accounts[0]!, { openId: "open-1", unionId: "union-1" });
     const reused = await repository.findOrCreateByWechat({ openId: "open-1", unionId: "union-1" }, () => ({
       userId: "usr_unused", workspaceId: "wsp_unused", wechatOpenId: "open-1",
