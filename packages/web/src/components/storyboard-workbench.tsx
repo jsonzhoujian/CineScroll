@@ -22,6 +22,7 @@ function readPending(key: string): Pending | null {
 }
 
 const auditLabels = new Map([
+  ["episode_confirm","确认分集方案"],["episode_decide","裁决重大改编提案"],
   ["knowledge_confirm","确认故事知识"],["knowledge_edit","编辑故事事实"],["knowledge_decide","裁决故事事实"],
   ["knowledge_lock","锁定故事事实"],["knowledge_unlock","解锁故事事实"],
   ["settings_edit","编辑设定"],["settings_suggest","提出设定建议"],["settings_decide","裁决设定建议"],

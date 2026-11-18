@@ -289,6 +289,27 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
           and not exists (select 1 from story_knowledge_confirmation_results confirmation
             where (confirmation.workspace_id,confirmation.project_id,confirmation.chapter_id,confirmation.version_id)
               =(v.workspace_id,v.project_id,v.chapter_id,v.id))
+        union all
+        select v.chapter_id,'episode-confirm:'||v.id,(v.version_json->>'confirmedAt')::timestamptz,v.created_by,
+          'episode_confirm',null,null,null,null,null,null,null,null,v.parent_version_id,v.id,null
+        from episode_plan_versions v
+        where $3::text is null and (v.workspace_id,v.project_id)=($1,$2) and v.status='confirmed'
+        union all
+        select v.chapter_id,'episode-decision:'||v.id||':'||(proposal.value->>'id'),
+          (decision.value->>'decidedAt')::timestamptz,v.created_by,
+          'episode_decide',null,null,null,null,decision.value->>'reason',
+          case decision.value->>'outcome' when 'approved' then 'accepted' when 'rejected' then 'rejected' end,
+          null,null,v.parent_version_id,v.id,proposal.value->>'id'
+        from episode_plan_versions v
+        join episode_plan_versions parent on (parent.workspace_id,parent.project_id,parent.chapter_id,parent.id)
+          =(v.workspace_id,v.project_id,v.chapter_id,v.parent_version_id)
+        cross join lateral jsonb_array_elements(v.version_json->'majorAdaptationProposals') proposal(value)
+        join lateral jsonb_array_elements(parent.version_json->'majorAdaptationProposals') prior(value)
+          on prior.value->>'id'=proposal.value->>'id'
+        cross join lateral (select proposal.value->'decision' as value) decision
+        where $3::text is null and (v.workspace_id,v.project_id)=($1,$2) and v.status='candidate'
+          and decision.value->>'outcome' in ('approved','rejected')
+          and decision.value is distinct from prior.value->'decision'
       )
       select chapter_id as "chapterId",event_id as "eventId",to_char(recorded_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "recordedAt",
         actor_id as "actorId",kind,review_id as "reviewId",reconciliation_id as "reconciliationId",
