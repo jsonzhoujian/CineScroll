@@ -240,10 +240,14 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
       { userId: "user-1",role: "owner" },{ userId: "editor-1",role: "editor" },
     ] } });
   });
-  await page.route(`${apiOrigin}/projects/project-1/members/audit`,route => {
+  await page.route(`${apiOrigin}/projects/project-1/members/audit**`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
-    return route.fulfill({ headers,json: { projectId: "project-1",events: [
-      { id: "1",actorId: "user-1",subjectId: "editor-1",action: "role_changed",previousRole: "editor",newRole: "reviewer",recordedAt: "2026-11-18T00:00:00Z" },
+    const cursor = new URL(route.request().url()).searchParams.get("cursor");
+    if (cursor !== null) expect(cursor).toBe("2");
+    return route.fulfill({ headers,json: { projectId: "project-1",nextCursor: cursor ? null : "2",events: cursor ? [
+      { id: "1",actorId: "user-1",subjectId: "editor-1",action: "invitation_issued",previousRole: null,newRole: "editor",recordedAt: "2026-11-17T00:00:00Z" },
+    ] : [
+      { id: "2",actorId: "user-1",subjectId: "editor-1",action: "role_changed",previousRole: "editor",newRole: "reviewer",recordedAt: "2026-11-18T00:00:00Z" },
     ] } });
   });
   const changes: unknown[] = [];
@@ -310,6 +314,10 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   const memberAudit = panel.getByRole("region",{ name: "成员审计" });
   await expect(memberAudit).toContainText("调整角色 · user-1 · editor-1");
   await expect(memberAudit).toContainText("原角色 编辑 · 新角色 审核人");
+  await memberAudit.getByRole("button",{ name: "更多成员审计" }).click();
+  await expect(memberAudit).toContainText("发出邀请 · user-1 · editor-1");
+  await expect(memberAudit).toContainText("调整角色 · user-1 · editor-1");
+  await expect(memberAudit.getByRole("button",{ name: "更多成员审计" })).toHaveCount(0);
   await panel.getByRole("button",{ name: "读取项目成员" }).click();
   const memberList = panel.getByRole("region",{ name: "项目成员" });
   const editor = memberList.getByRole("listitem").filter({ hasText: "editor-1" });

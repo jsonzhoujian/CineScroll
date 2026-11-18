@@ -68,10 +68,14 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     });
   }
 
-  listProjectMembershipAudit(actor: Actor,projectId: string) {
-    return this.inTransaction(actor,async client => (await client.query(
-      "select * from list_project_membership_audit($1)",[projectId],
-    )).rows);
+  listProjectMembershipAudit(actor: Actor,projectId: string,cursor: string | null) {
+    return this.inTransaction(actor,async client => {
+      const { rows } = await client.query<{ id: string }>(
+        "select * from list_project_membership_audit($1,$2::bigint)",[projectId,cursor],
+      );
+      const events = rows.slice(0,50);
+      return { events,nextCursor: rows.length > 50 ? events[49]!.id : null };
+    });
   }
 
   listProjectMembers(actor: Actor,projectId: string) {

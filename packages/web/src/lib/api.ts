@@ -414,10 +414,11 @@ export class ApiClient {
     return result;
   }
 
-  listProjectMembershipAudit(projectId: string) {
+  listProjectMembershipAudit(projectId: string,cursor: string | null = null) {
+    const query = cursor === null ? "" : `?${new URLSearchParams({ cursor })}`;
     return this.request<{ projectId: string; events: Array<{
       id: string; actorId: string; subjectId: string; action: string; previousRole: string | null; newRole: string | null; recordedAt: string;
-    }> }>(`/projects/${encodeURIComponent(projectId)}/members/audit`,{ method: "GET" },"session");
+    }>; nextCursor: string | null }>(`/projects/${encodeURIComponent(projectId)}/members/audit${query}`,{ method: "GET" },"session");
   }
 
   listProjectMembers(projectId: string) {

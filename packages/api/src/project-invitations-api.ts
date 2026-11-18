@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpException, Inject, Module, Param, Post, Req, UseGuards, type DynamicModule } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Header, HttpException, Inject, Module, Param, Post, Query, Req, UseGuards, type DynamicModule } from "@nestjs/common";
 import type { Actor, SessionIssuer, SessionVerifier } from "@novel-adaptation/identity";
 import type { PostgresProjectImportRepository } from "@novel-adaptation/project-import/postgres-repository";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
@@ -80,9 +80,14 @@ class ProjectInvitationsController {
     return respond(() => this.invitations.revokePendingInvitation(req.actor,projectId,invitationId));
   }
 
-  membershipAudit(req: { actor: Actor },project: string) {
-    const projectId = identifier(project);
-    return respond(async () => ({ projectId,events: await this.invitations.listProjectMembershipAudit(req.actor,projectId) }));
+  membershipAudit(req: { actor: Actor },project: string,query: Record<string,unknown>) {
+    const projectId = identifier(project), cursor = query.cursor;
+    if (Object.keys(query).some(key => key !== "cursor") ||
+      (cursor !== undefined && (typeof cursor !== "string" || !/^[1-9][0-9]{0,18}$/.test(cursor) ||
+        BigInt(cursor) > 9223372036854775807n))) throw new BadRequestException();
+    return respond(async () => ({
+      projectId,...await this.invitations.listProjectMembershipAudit(req.actor,projectId,cursor ?? null),
+    }));
   }
 
   members(req: { actor: Actor },project: string) {
@@ -141,6 +146,7 @@ for (const [method,path,param,route] of [
   Header("Cache-Control","no-store")(ProjectInvitationsController.prototype,method,descriptor);
   Req()(ProjectInvitationsController.prototype,method,0);
   if (param) Param(param)(ProjectInvitationsController.prototype,method,1);
+  if (method === "membershipAudit") Query()(ProjectInvitationsController.prototype,method,2);
   if (method === "issue" || method === "changeMember" || method === "revoke") Body()(ProjectInvitationsController.prototype,method,2);
 }
 

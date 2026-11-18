@@ -18,7 +18,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, auditProjectId, ac
   onSwitchWorkspace(workspaceId: string): Promise<void>;
   onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
-  const [audit,setAudit] = useState<Awaited<ReturnType<ApiClient["listProjectMembershipAudit"]>>["events"] | null>(null);
+  const [audit,setAudit] = useState<Awaited<ReturnType<ApiClient["listProjectMembershipAudit"]>> | null>(null);
   const [members,setMembers] = useState<Awaited<ReturnType<ApiClient["listProjectMembers"]>>["members"] | null>(null);
   const [received,setReceived] = useState<Awaited<ReturnType<ApiClient["listReceivedProjectInvitations"]>>["invitations"] | null>(null);
   const [pending,setPending] = useState<Awaited<ReturnType<ApiClient["listPendingProjectInvitations"]>>["invitations"] | null>(null);
@@ -61,6 +61,12 @@ export function ProjectInvitationPanel({ api, ownerProjectId, auditProjectId, ac
     },"成员更新失败，请刷新名单后重试。");
   }
 
+  async function loadAudit(projectId: string,cursor: string | null = null) {
+    const page = await api.listProjectMembershipAudit(projectId,cursor);
+    if (page.projectId !== projectId) throw new Error("WRONG_PROJECT");
+    setAudit(previous => cursor && previous ? { ...page,events: [...previous.events,...page.events] } : page);
+  }
+
   function accept(invitationId: string) {
     void run(async () => {
       const membership = await api.acceptProjectInvitation(invitationId);
@@ -74,18 +80,19 @@ export function ProjectInvitationPanel({ api, ownerProjectId, auditProjectId, ac
   return <section className="panel" aria-label="项目邀请">
     <h2>项目邀请</h2>
     {accountId && <p>我的账号 ID <code>{accountId}</code></p>}
-    {auditProjectId && <button type="button" disabled={busy} onClick={() => void run(async () => {
-      const result = await api.listProjectMembershipAudit(auditProjectId);
-      if (result.projectId !== auditProjectId) throw new Error("WRONG_PROJECT");
-      setAudit(result.events);
-    },"无法读取成员审计。")}>查看成员审计</button>}
+    {auditProjectId && <button type="button" disabled={busy} onClick={() => void run(
+      () => loadAudit(auditProjectId),"无法读取成员审计。",
+    )}>查看成员审计</button>}
     {auditProjectId && audit && <section aria-label="成员审计">
-      {audit.length ? <ul>{audit.map(event => <li key={event.id}>
+      {audit.events.length ? <ul>{audit.events.map(event => <li key={event.id}>
         <time dateTime={event.recordedAt}>{new Date(event.recordedAt).toLocaleString("zh-CN")}</time>
         {" · "}{membershipActions.get(event.action) ?? event.action} · {event.actorId} · {event.subjectId}
         {event.previousRole && ` · 原角色 ${roles.get(event.previousRole) ?? event.previousRole}`}
         {event.newRole && ` · 新角色 ${roles.get(event.newRole) ?? event.newRole}`}
       </li>)}</ul> : <p>暂无成员审计记录。</p>}
+      {audit.nextCursor && <button type="button" disabled={busy} onClick={() => void run(
+        () => loadAudit(auditProjectId,audit.nextCursor),"无法读取更早的成员审计。",
+      )}>更多成员审计</button>}
     </section>}
     {ownerProjectId && <>
       <button type="button" disabled={busy} onClick={() => void run(async () => {
