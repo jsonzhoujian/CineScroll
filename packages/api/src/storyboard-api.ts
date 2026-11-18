@@ -19,7 +19,7 @@ type Services = {
   rateLimiter: ModelRateLimiter;
   context: ModelTaskContextReader;
   handoff: Pick<ConfirmedStoryboardHandoff, "read">;
-  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "adoptReconciliationShot" | "beginReconciliation" | "previewReconciliationRegeneration" | "retainReconciliationShot" | "findReview" | "saveReviewOperation">;
+  candidates: Pick<PostgresStoryboardCandidateRepository, "findGeneration" | "submitReview" | "listReviews" | "listPublications" | "adoptReconciliationShot" | "beginReconciliation" | "confirmReconciliation" | "previewReconciliationRegeneration" | "retainReconciliationShot" | "findReview" | "saveReviewOperation">;
   scripts: Pick<ScriptContentRepository, "findVersion">;
   projects: Pick<ProjectImportRepository, "findChapter" | "findProjectAccess">;
 };
@@ -221,6 +221,19 @@ class StoryboardController {
     });
   }
 
+  confirmReconciliation(req: { actor: Actor },p: string,c: string,publication: string,body: unknown,draft: string) {
+    const projectId = id(p), chapterId = id(c), publicationId = parsePublicationId(publication), draftId = reviewId(draft);
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 2) throw new BadRequestException();
+    const { requestId,reason } = body as Record<string,unknown>;
+    if (typeof reason !== "string" || !reason.trim() || reason.length > 2000) throw new BadRequestException();
+    return respond(async () => {
+      const access = await this.services.projects.findProjectAccess(req.actor,projectId);
+      if (!access || !await this.services.context.canRead?.(req.actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (access.role !== "owner" && access.role !== "reviewer") throw new StoryboardStorageError("FORBIDDEN");
+      return this.services.candidates.confirmReconciliation(req.actor,projectId,chapterId,publicationId,draftId,id(requestId),reason.trim());
+    });
+  }
+
   private saveReconciliationShot(actor: Actor,projectId: string,chapterId: string,selected: string,draftId: string,shotId: string,
     revision?: Parameters<PostgresStoryboardCandidateRepository["retainReconciliationShot"]>[6]) {
     return respond(async () => {
@@ -336,6 +349,7 @@ Inject(SERVICES)(StoryboardController,undefined,0);
 for (const [method,route,parameter] of [
   ["submit",Post(""),Body()],["retry",Post("retries"),Body()],["list",Get(""),Query()],
   ["readiness",Get("readiness"),null],["reviews",Get("reviews"),Query()],["publications",Get("publications"),Query()],["publication",Get("publications/:id"),Param("id")],["reconciliation",Get("publications/:id/reconciliation"),Param("id")],["beginReconciliation",Post("publications/:id/reconciliation"),Param("id")],["confirmed",Get("reviews/confirmed"),null],["review",Get("reviews/:id"),Param("id")],
+  ["confirmReconciliation",Post("publications/:id/reconciliation/:draftId/confirm"),Param("id")],
   ["submitReconciliationRegeneration",Post("publications/:id/reconciliation/:draftId/regeneration-tasks"),Param("id")],
   ["previewReconciliationRegeneration",Post("publications/:id/reconciliation/:draftId/regeneration-preview"),Param("id")],
   ["reviseReconciliationShot",Post("publications/:id/reconciliation/:draftId/revisions"),Param("id")],
@@ -351,8 +365,8 @@ for (const [method,route,parameter] of [
   Param("projectId")(StoryboardController.prototype,method,1);
   Param("chapterId")(StoryboardController.prototype,method,2);
   parameter?.(StoryboardController.prototype,method,3);
-  if (method === "adoptReconciliationShot" || method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Body()(StoryboardController.prototype,method,4);
-  if (method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration") Param("draftId")(StoryboardController.prototype,method,5);
+  if (method === "adoptReconciliationShot" || method === "operate" || method === "beginReconciliation" || method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration" || method === "confirmReconciliation") Body()(StoryboardController.prototype,method,4);
+  if (method === "retainReconciliationShot" || method === "reviseReconciliationShot" || method === "previewReconciliationRegeneration" || method === "submitReconciliationRegeneration" || method === "confirmReconciliation") Param("draftId")(StoryboardController.prototype,method,5);
 }
 export class StoryboardApiModule {
   static register(services: Services): DynamicModule {

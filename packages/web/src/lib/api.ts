@@ -208,6 +208,11 @@ export class ApiClient {
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/retains`,
       { method: "POST",body: JSON.stringify({ shotId }) },"session");
   }
+  confirmStoryboardReconciliation(p: string,c: string,publicationId: string,draftId: string,input: { requestId: string; reason: string }) {
+    return this.request<{ publicationId: string }>(
+      `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/confirm`,
+      { method: "POST",body: JSON.stringify(input) },"session");
+  }
   adoptStoryboardRegeneratedShot(p: string,c: string,jobId: string,shotId: string) {
     return this.request<StoryboardView["version"]["shots"][number]>(
       `${storyboardPath(p,c)}/${encodeURIComponent(jobId)}/adopt-regenerated-shot`,

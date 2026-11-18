@@ -54,6 +54,7 @@ export async function assertStoryboardDatabase(pool: Pool, workspaceIds: readonl
       and exists(select 1 from pg_trigger where tgrelid=to_regclass('public.storyboard_review_submissions')
         and tgname='storyboard_regeneration_review_guard' and tgfoid=to_regprocedure('public.reject_regeneration_review()')
         and tgtype=7 and tgqual is null and tgenabled in ('O','A'))
+      and to_regprocedure('public.assemble_storyboard_reconciliation(text,text,text,uuid)') is not null
       as ready`);
     if (!result.rows[0]?.ready) throw new Error();
   } catch { throw new Error("STORYBOARD_DATABASE_NOT_READY"); }

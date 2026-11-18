@@ -156,6 +156,58 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
     });
   }
 
+  async confirmReconciliation(actor: Actor,p: string,c: string,publicationId: string,draftId: string,requestId: string,reason: string) {
+    const upstream = await this.handoff.read(actor,p,c);
+    return this.transaction(actor, async client => {
+      const scope = [actor.workspaceId,p,c];
+      await client.query("select lock_settings_review_authority($1,$2,$3)",scope);
+      const prior = (await client.query(`select o.publication_id::text as id,o.command->>'reason' as reason
+        from storyboard_review_operations o join storyboard_review_submissions r using(workspace_id,project_id,chapter_id)
+        join storyboard_reconciliations d using(workspace_id,project_id,chapter_id)
+        where (o.workspace_id,o.project_id,o.chapter_id,d.id,d.base_publication_id)=($1,$2,$3,$4,$5)
+          and o.review_id=r.id and r.job_id='reconciliation_'||d.id::text and o.actor_id=$6
+          and o.command->>'requestId'=$7 and o.publication_id is not null`,[...scope,draftId,publicationId,actor.userId,requestId])).rows[0];
+      if (prior) {
+        if (prior.reason !== reason) throw new StoryboardStorageError("STATE_CONFLICT");
+        return { publicationId: prior.id as string };
+      }
+      const row = (await client.query(`select assemble_storyboard_reconciliation(workspace_id,project_id,chapter_id,id) as candidate
+        from storyboard_reconciliations where (workspace_id,project_id,chapter_id,id,base_publication_id)=($1,$2,$3,$4,$5)`,
+      [...scope,draftId,publicationId])).rows[0];
+      if (!row) throw new StoryboardStorageError("TASK_NOT_FOUND");
+      const candidate = row.candidate as StoryboardCandidate;
+      if (candidate.sourceVersionId !== upstream.sourceVersionId ||
+        JSON.stringify(candidate.upstreamConfirmedVersionIds) !== JSON.stringify(upstream.upstreamConfirmedVersionIds)) throw new StoryboardUpstreamError();
+      if (candidate.shots.some(shot => !validateStoryboardShot(shot,upstream.context))) throw new StoryboardStorageError("INVALID_CANDIDATE");
+
+      await client.query(`insert into storyboard_candidate_versions(workspace_id,project_id,chapter_id,job_id,created_by,version_json)
+        values($1,$2,$3,$4,$5,$6)`,[...scope,candidate.jobId,actor.userId,JSON.stringify(candidate)]);
+      const review = (await client.query(`insert into storyboard_review_submissions(workspace_id,project_id,chapter_id,job_id)
+        values($1,$2,$3,$4) returning id`,[...scope,candidate.jobId])).rows[0]!;
+      const locks = (await client.query(`select shot_id from (
+        select distinct on (o.shot_id) o.shot_id,o.command->>'kind' as kind
+        from storyboard_review_operations o join storyboard_review_operations published
+          using(workspace_id,project_id,chapter_id,review_id)
+        where (o.workspace_id,o.project_id,o.chapter_id,published.publication_id)=($1,$2,$3,$4)
+          and o.command->>'kind' in ('lock','unlock') order by o.shot_id,o.revision desc
+      ) latest where kind='lock' order by shot_id`,[...scope,publicationId])).rows;
+      let revision = 0;
+      for (const lock of locks) {
+        await client.query(`insert into storyboard_review_operations(workspace_id,project_id,chapter_id,review_id,command)
+          values($1,$2,$3,$4,$5)`,[...scope,review.id,JSON.stringify({
+          kind: "lock",shotId: lock.shot_id,expectedRevision: revision,requestId: `inherited-${revision}-${review.id}`,reason: "沿用正式发布的镜头锁定",
+        })]);
+        revision++;
+      }
+      const published = (await client.query(`insert into storyboard_review_operations(workspace_id,project_id,chapter_id,review_id,command)
+        values($1,$2,$3,$4,$5) returning publication_id::text as id`,[...scope,review.id,JSON.stringify({
+        kind: "confirm",expectedRevision: revision,expectedPublicationId: publicationId,requestId,reason,
+      })])).rows[0];
+      if (!published) throw new StoryboardStorageError("STATE_CONFLICT");
+      return { publicationId: published.id as string };
+    });
+  }
+
   listPublications(actor: Actor, projectId: string, chapterId: string, cursor: string | null) {
     return this.transaction(actor, async client => {
       const rows = (await client.query(`select publication_id::text as id, revision, recorded_at as "confirmedAt"

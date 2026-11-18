@@ -159,7 +159,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
-      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../../script/migrations/0043_storyboard_reconciliation_retains.sql", "../../script/migrations/0044_storyboard_reconciliation_revisions.sql", "../../script/migrations/0045_storyboard_regeneration_tasks.sql", "../../script/migrations/0046_storyboard_regeneration_adoption.sql", "../migrations/0001_model_rate_limits.sql",
+      "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../../script/migrations/0043_storyboard_reconciliation_retains.sql", "../../script/migrations/0044_storyboard_reconciliation_revisions.sql", "../../script/migrations/0045_storyboard_regeneration_tasks.sql", "../../script/migrations/0046_storyboard_regeneration_adoption.sql", "../../script/migrations/0047_storyboard_reconciliation_confirmation.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -681,7 +681,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const retainedShots = await Promise.all([1,2].map(() => impactApp.http.post(retainPath)
         .set("authorization",bearer).send({ shotId: oldShot.id }).expect(201)));
       for (const retainedShot of retainedShots) assert.deepEqual(retainedShot.body,{ shotId: oldShot.id });
-      const revision = { shotId: oldShot.id,visual: "雨滴沿屋檐落下",durationSeconds: 4,reason: "重新核对剧本" };
+      const revision = { shotId: oldShot.id,visual: "雨滴沿屋檐落下",durationSeconds: 60,reason: "重新核对剧本" };
       const revisions = (draftId: string) => `${reconciliationPath}/${draftId}/revisions`;
       await impactApp.http.post(revisions(attempts[0]!.body.id)).set("authorization",bearer).send(revision).expect(409);
       const resumed = await impactApp.http.post(reconciliationPath!).set("authorization",bearer)
@@ -749,13 +749,45 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const revisionPreview = (await impactApp.http.get(reconciliationPath!).set("authorization",bearer).expect(200)).body;
       const revisionDraft = (await impactApp.http.post(reconciliationPath!).set("authorization",bearer)
         .send(revisionPreview.currentUpstream).expect(201)).body;
+      const confirmPath = `${reconciliationPath}/${revisionDraft.id}/confirm`;
+      const confirmation = { requestId: "tls-reconciliation-confirm",reason: "逐镜核对完成" };
+      await impactApp.http.post(confirmPath).set("authorization",bearer).send(confirmation).expect(409);
       await impactApp.http.post(revisions(revisionDraft.id)).set("authorization",bearer).send(revision).expect(201);
       await impactApp.http.post(scopes(revisionDraft.id)).set("authorization",bearer).send(selection).expect(409);
       await impactApp.http.post(revisions(revisionDraft.id)).set("authorization",bearer).send(revision).expect(201);
       await impactApp.http.post(revisions(revisionDraft.id)).set("authorization",bearer).send({ ...revision,visual: "另一版" }).expect(409);
       const reopened = (await impactApp.http.post(reconciliationPath!).set("authorization",bearer)
         .send(revisionPreview.currentUpstream).expect(201)).body;
-      assert.deepEqual(reopened.revisedShots,[{ shotId: oldShot.id,value: { visual: revision.visual,durationSeconds: 4 } }]);
+      assert.deepEqual(reopened.revisedShots,[{ shotId: oldShot.id,value: { visual: revision.visual,durationSeconds: 60 } }]);
+      const confirmations = await Promise.all([1,2].map(() => impactApp.http.post(confirmPath)
+        .set("authorization",bearer).send(confirmation).expect(201)));
+      const publishedId = confirmations[0]!.body.publicationId;
+      assert.equal(confirmations[1]!.body.publicationId,publishedId);
+      assert.notEqual(publishedId,formal.publicationId);
+      const latest = (await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",bearer).expect(200)).body;
+      assert.equal(latest.publicationId,publishedId);
+      assert.equal(latest.current,true);
+      assert.equal(latest.version.shots[0].visual,revision.visual);
+      const historical = (await impactApp.http.get(reconciliationPath!.replace(/\/reconciliation$/,"")).set("authorization",bearer).expect(200)).body;
+      assert.deepEqual(historical.version,formal.version);
+      await impactApp.http.post(`${reviewPath}/${latest.reviewId}/operations`).set("authorization",bearer)
+        .send({ kind: "lock",requestId: "tls-lock-reconciled-shot",expectedRevision: latest.revision,shotId: oldShot.id,reason: "保留锁定" }).expect(201);
+      const currentSettings = (await impactApp.http.get(`${settingsBase}/versions/confirmed`).set("authorization",bearer).expect(200)).body.version;
+      const tempLock = (await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer)
+        .send({ kind: "lock",requestId: "tls-retained-lock-settings",expectedActiveVersionId: currentSettings.id,assetId: "repair-prop",reason: "复验" }).expect(201)).body;
+      await impactApp.http.post(`${settingsBase}/review`).set("authorization",bearer)
+        .send({ kind: "unlock",requestId: "tls-retained-lock-settings-unlock",expectedActiveVersionId: tempLock.id,assetId: "repair-prop",reason: "复验完成" }).expect(201);
+      const newRoot = reviewPath.replace(/\/reviews$/,`/publications/${publishedId}/reconciliation`);
+      const retainedPreview = (await impactApp.http.get(newRoot).set("authorization",bearer).expect(200)).body;
+      assert.equal(retainedPreview.shots[0].locked,true);
+      const retainedDraft = (await impactApp.http.post(newRoot).set("authorization",bearer).send(retainedPreview.currentUpstream).expect(201)).body;
+      await impactApp.http.post(`${newRoot}/${retainedDraft.id}/retains`).set("authorization",bearer).send({ shotId: oldShot.id }).expect(201);
+      const lockedPublication = (await impactApp.http.post(`${newRoot}/${retainedDraft.id}/confirm`).set("authorization",bearer)
+        .send({ requestId: "tls-publish-with-inherited-lock",reason: "原样保留锁定镜头" }).expect(201)).body;
+      const lockedFormal = (await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",bearer).expect(200)).body;
+      assert.equal(lockedFormal.publicationId,lockedPublication.publicationId);
+      assert.deepEqual(lockedFormal.lockedShotIds,[oldShot.id]);
+      assert.deepEqual(lockedFormal.version.shots,latest.version.shots);
     } finally { await impactApp.close(); }
     const compliance = t.mock.method(globalThis,"fetch",async (url: Parameters<typeof fetch>[0]) => {
       assert.equal(String(url),config.complianceEndpoint);

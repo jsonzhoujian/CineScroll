@@ -31,6 +31,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
   const [adoptedShots,setAdoptedShots] = useState<Record<string,string[]>>({});
   const regenerationFormId = useId();
+  const reconciliationConfirmation = useRef<{ draftId: string; reason: string; requestId: string } | null>(null);
   const regenerationRequest = useRef<{ key: string; requestId: string } | null>(null);
   const [reconciliationDraft,setReconciliationDraft] = useState<{ id: string; retainedShotIds: string[]; revisedShots: StoryboardRevisedShot[]; regeneratedShots: StoryboardView["version"]["shots"] } | null>(null);
   const [reconciliation,setReconciliation] = useState<StoryboardReconciliationPreview | null>(null);
@@ -391,6 +392,27 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
           <button disabled={busy}>检查重生范围</button>
           <button value="submit" disabled={busy || !models || !model || !!pending.current}>提交局部重生</button>
         </form>}
+        {reconciliationDraft && reconciliation.shots.length > 0 &&
+          reconciliationDraft.retainedShotIds.length + reconciliationDraft.revisedShots.length + reconciliationDraft.regeneratedShots.length === reconciliation.shots.length &&
+          <form onSubmit={event => {
+            event.preventDefault();
+            const reason = String(new FormData(event.currentTarget).get("reason")).trim();
+            if (!reason) return;
+            const draftId = reconciliationDraft.id;
+            if (reconciliationConfirmation.current?.draftId !== draftId || reconciliationConfirmation.current.reason !== reason) {
+              reconciliationConfirmation.current = { draftId,reason,requestId: crypto.randomUUID() };
+            }
+            const { requestId } = reconciliationConfirmation.current;
+            void act(async () => {
+              const published = await api.confirmStoryboardReconciliation(projectId,chapterId,reconciliation.publicationId,draftId,{ requestId,reason });
+              await loadReview(null,false,published.publicationId);
+              reconciliationConfirmation.current = null;
+              setNotice("核对候选已发布为正式分镜。");
+            });
+          }}>
+            <label>重新确认原因<input name="reason" required maxLength={2000} /></label>
+            <button disabled={busy}>确认并发布核对候选</button>
+          </form>}
         {reconciliation.upstreamChanged && reconciliation.currentUpstream && !reconciliationDraft && <button type="button"
           className="desktop-task-action" disabled={busy} onClick={() => void act(async () => {
             const draft = await api.beginStoryboardReconciliation(projectId,chapterId,reconciliation.publicationId,reconciliation.currentUpstream!);
