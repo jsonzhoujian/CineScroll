@@ -858,6 +858,26 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const formalAfterEdits = (await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",bearer).expect(200)).body;
       assert.equal(formalAfterEdits.publicationId,lockedFormal.publicationId);
       assert.deepEqual(formalAfterEdits.version.shots,lockedFormal.version.shots);
+      const editorBearer = `Bearer ${await sessions.issue(`${userId}_editor`,workspaceId)}`;
+      const editorSuggestion = { kind: "suggest",shotId: oldShot.id,expectedRevision: sharedReview.revision,
+        requestId: "tls-editor-suggestion",reason: "与正式剧本对齐",
+        value: { visual: "庭院前景雨水落下",durationSeconds: sharedReview.version.shots[0].durationSeconds } };
+      await impactApp.http.post(`${collaborativeReview}/operations`).set("authorization",editorBearer)
+        .send({ ...editorSuggestion,kind: "edit",requestId: "tls-editor-direct-edit" }).expect(403);
+      const suggested = (await impactApp.http.post(`${collaborativeReview}/operations`).set("authorization",editorBearer)
+        .send(editorSuggestion).expect(201)).body;
+      assert.equal(suggested.version.shots[0].visual,winner.visual);
+      assert.equal(suggested.suggestions.at(-1).actorId,`${userId}_editor`);
+      const decision = { kind: "decide",suggestionRevision: suggested.suggestions.at(-1).revision,
+        expectedRevision: suggested.revision,requestId: "tls-reviewer-accept-editor",reason: "核对后接受",decision: "accepted" };
+      await impactApp.http.post(`${collaborativeReview}/operations`).set("authorization",editorBearer).send(decision).expect(403);
+      const accepted = (await impactApp.http.post(`${collaborativeReview}/operations`).set("authorization",collaboratorBearer)
+        .send(decision).expect(201)).body;
+      assert.equal(accepted.version.shots[0].visual,editorSuggestion.value.visual);
+      assert.deepEqual(accepted.suggestions.at(-1).decision,{ actorId: `${userId}_reviewer`,status: "accepted",reason: decision.reason });
+      const publishedAfterDecision = (await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",editorBearer).expect(200)).body;
+      assert.equal(publishedAfterDecision.publicationId,lockedFormal.publicationId);
+      assert.deepEqual(publishedAfterDecision.version.shots,lockedFormal.version.shots);
       const guest = `${userId}_guest`, guestHome = `${workspaceId}_guest`;
       await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)",[guest,guestHome]);
       const guestBearer = `Bearer ${await sessions.issue(guest,guestHome)}`;
