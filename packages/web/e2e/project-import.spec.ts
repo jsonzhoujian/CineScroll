@@ -234,6 +234,10 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
     expect(route.request().postDataJSON()).toEqual({ recipientUserId: "reviewer-1",role: "reviewer" });
     return route.fulfill({ status: 201,headers,json: { id: invitationId,projectId: "project-1",role: "reviewer",expiresAt: "2026-11-25T00:00:00Z" } });
   });
+  await page.route(`${apiOrigin}/projects`,route => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({ headers,json: { projects: [{ id: "shared-project",title: "共享项目",role: "editor" }] } });
+  });
   await page.route(`${apiOrigin}/projects/shared-project/chapter-directory`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
     return route.fulfill({ headers,json: { projectId: "shared-project",chapters: [{ id: "shared-chapter",title: "共享章节" }] } });
@@ -275,5 +279,15 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await panel.getByRole("button",{ name: "共享章节" }).click();
   await expect(page.getByRole("heading",{ name: "共享章节" })).toBeVisible();
   await expect(page.getByRole("region",{ name: "原文片段",exact: true }).or(page.locator(".manuscript"))).toContainText("共享原文");
+
+  await page.reload();
+  await page.getByRole("button",{ name: "获取验证码" }).click();
+  await page.getByLabel("验证码").fill("123456");
+  await page.getByRole("button",{ name: "验证并进入" }).click();
+  await page.getByRole("button",{ name: "我的项目",exact: true }).click();
+  const projects = page.getByRole("region",{ name: "我的项目",exact: true });
+  await projects.getByRole("button",{ name: "共享项目",exact: true }).click();
+  await projects.getByRole("button",{ name: "共享章节",exact: true }).click();
+  await expect(page.getByRole("heading",{ name: "共享章节" })).toBeVisible();
 
 });

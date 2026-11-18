@@ -30,6 +30,8 @@ const initialProject: ProjectDraft = {
 };
 
 export function ImportWorkbench() {
+  const [memberProjects,setMemberProjects] = useState<Awaited<ReturnType<ApiClient["listMemberProjects"]>>["projects"] | null>(null);
+  const [projectDirectory,setProjectDirectory] = useState<Awaited<ReturnType<ApiClient["listProjectChapters"]>> | null>(null);
   const [invitationOpen,setInvitationOpen] = useState(false);
   const [accountId,setAccountId] = useState<string | null>(null);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
@@ -193,7 +195,7 @@ export function ImportWorkbench() {
     setDiff(null);
   });
 
-  async function openInvitedChapter(projectId: string,chapterId: string) {
+  async function openProjectChapter(projectId: string,chapterId: string) {
     if (workflowBusy.current) throw new Error("WORKFLOW_BUSY");
     workflowBusy.current = true;
     try {
@@ -207,7 +209,7 @@ export function ImportWorkbench() {
       setConfirmedStoryKnowledgeChapterId(null); setReviewCursor({ filter: "all",selectedId: null });
       setImportedDocument(null); setDocument(null); setChapters([]); setSelectedChapter(null);
       setSourceText(""); setFile(null); setDiff(null); setReimportText(target.chapter.versions.at(-1)?.text ?? "");
-      setInvitationOpen(false); setNotice(null);
+      setInvitationOpen(false); setMemberProjects(null); setProjectDirectory(null); setNotice(null);
       setNavigation({ step: "version",mode: "trace" });
     } finally {
       workflowBusy.current = false;
@@ -263,10 +265,35 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
+        {step !== "login" && <button type="button" className="text-button" disabled={busy} aria-expanded={memberProjects !== null}
+          onClick={() => {
+            if (memberProjects !== null) { setMemberProjects(null); setProjectDirectory(null); return; }
+            void run(async () => setMemberProjects((await api.listMemberProjects()).projects));
+          }}>我的项目</button>}
+        {memberProjects !== null && <section className="panel" aria-label="我的项目">
+          {memberProjects.length ? <ul>{memberProjects.map(item => <li key={item.id}>
+            <button type="button" disabled={busy} aria-pressed={projectDirectory?.projectId === item.id} onClick={() => void run(async () => {
+              const directory = await api.listProjectChapters(item.id);
+              if (directory.projectId !== item.id) throw new Error("无法读取该项目的章节。");
+              setProjectDirectory(directory);
+            })}>{item.title}</button>
+            {" · "}{item.role === "owner" ? "负责人" : item.role === "editor" ? "编辑" : "审核人"}
+          </li>)}</ul> : <p>暂无已加入的项目。</p>}
+          {projectDirectory && <section aria-label="项目章节">
+            {projectDirectory.chapters.length ? <ul>{projectDirectory.chapters.map(item => <li key={item.id}>
+              <button type="button" disabled={busy} onClick={() => {
+                if (workflowBusy.current) return;
+                setBusy(true);
+                void openProjectChapter(projectDirectory.projectId,item.id).catch(() => setNotice("无法打开该章节，请重试。"))
+                  .finally(() => setBusy(false));
+              }}>{item.title}</button>
+            </li>)}</ul> : <p>该项目暂无已导入的章节。</p>}
+          </section>}
+        </section>}
         {step !== "login" && <button type="button" className="text-button" aria-expanded={invitationOpen}
           onClick={() => setInvitationOpen(open => !open)}>项目邀请</button>}
         {step !== "login" && invitationOpen && <ProjectInvitationPanel key={project?.id ?? "no-project"} api={api}
-          ownerProjectId={project?.role === "owner" ? project.id : null} accountId={accountId} onOpenChapter={openInvitedChapter} />}
+          ownerProjectId={project?.role === "owner" ? project.id : null} accountId={accountId} onOpenChapter={openProjectChapter} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">

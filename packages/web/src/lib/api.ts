@@ -314,6 +314,11 @@ export class ApiClient {
   confirmEpisodePlan(projectId: string, chapterId: string, expectedActiveVersionId: string) {
     return this.request<EpisodePlanView["plan"]>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/episode-plan/confirm`, { method: "POST", body: JSON.stringify({ expectedActiveVersionId }) }, "session");
   }
+  listMemberProjects() {
+    return this.request<{ projects: Array<{ id: string; title: string; role: "owner" | "editor" | "reviewer" }> }>(
+      "/projects",{ method: "GET" },"session");
+  }
+
   listProjectChapters(projectId: string) {
     return this.request<{ projectId: string; chapters: Array<{ id: string; title: string }> }>(
       `/projects/${encodeURIComponent(projectId)}/chapter-directory`,{ method: "GET" },"session");

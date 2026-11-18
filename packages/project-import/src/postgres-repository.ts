@@ -43,6 +43,14 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     )).rows[0]!.membership as { projectId: string; role: "editor" | "reviewer" });
   }
 
+  listMemberProjects(actor: Actor) {
+    return this.inTransaction(actor, async client => (await client.query<{
+      id: string; title: string; role: "owner" | "editor" | "reviewer";
+    }>(`select p.id,p.title,m.role from project_members m
+      join projects p on (p.id,p.workspace_id)=(m.project_id,m.workspace_id)
+      where (m.workspace_id,m.user_id)=($1,$2) order by p.title,p.id`,[actor.workspaceId,actor.userId])).rows);
+  }
+
   listProjectChapters(actor: Actor, projectId: string) {
     return this.inTransaction(actor, async client => {
       const result = await client.query<{ id: string | null; title: string | null }>(`select c.id,c.title

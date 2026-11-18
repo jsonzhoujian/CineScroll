@@ -4,7 +4,7 @@ import type { PostgresProjectImportRepository } from "@novel-adaptation/project-
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 
 const INVITATIONS = Symbol("PROJECT_INVITATIONS");
-type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters">;
+type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects">;
 
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n\0]/.test(value)) throw new BadRequestException();
@@ -37,6 +37,10 @@ class ProjectInvitationsController {
     return respond(() => this.invitations.issueInvitation(req.actor,projectId,recipient,role));
   }
 
+  projects(req: { actor: Actor }) {
+    return respond(async () => ({ projects: await this.invitations.listMemberProjects(req.actor) }));
+  }
+
   chapters(req: { actor: Actor },project: string) {
     const projectId = identifier(project);
     return respond(async () => {
@@ -55,6 +59,7 @@ Controller()(ProjectInvitationsController);
 UseGuards(SessionGuard)(ProjectInvitationsController);
 Inject(INVITATIONS)(ProjectInvitationsController,undefined,0);
 for (const [method,path,param,route] of [
+  ["projects","projects",null,Get],
   ["chapters","projects/:projectId/chapter-directory","projectId",Get],
   ["issue","projects/:projectId/invitations","projectId",Post],
   ["accept","project-invitations/:invitationId/accept","invitationId",Post],
@@ -63,7 +68,7 @@ for (const [method,path,param,route] of [
   route(path)(ProjectInvitationsController.prototype,method,descriptor);
   Header("Cache-Control","no-store")(ProjectInvitationsController.prototype,method,descriptor);
   Req()(ProjectInvitationsController.prototype,method,0);
-  Param(param)(ProjectInvitationsController.prototype,method,1);
+  if (param) Param(param)(ProjectInvitationsController.prototype,method,1);
   if (method === "issue") Body()(ProjectInvitationsController.prototype,method,2);
 }
 
