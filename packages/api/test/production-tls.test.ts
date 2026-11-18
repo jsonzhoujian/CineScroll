@@ -151,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   };
   try {
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
-      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
+      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
       "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
@@ -854,7 +854,18 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       await impactApp.http.get(taskPath).set("authorization",scopedBearer).expect(404);
       await impactApp.http.post("/projects").set("authorization",scopedBearer)
         .send({ title:"不得创建",rightsDeclared:true,aspectRatio:"9:16",targetDurationSeconds:60,narrativeMode:"narration" }).expect(403);
-      await admin.query("delete from project_members where project_id=$1 and user_id=$2",[projectId,guest]);
+      const membersPath = `/projects/${projectId}/members`;
+      await impactApp.http.get(membersPath).set("authorization",scopedBearer).expect(403);
+      const members = (await impactApp.http.get(membersPath).set("authorization",bearer).expect(200)).body.members;
+      assert.ok(members.some((member: { userId: string; role: string }) => member.userId === guest && member.role === "reviewer"));
+      const change = `${membersPath}/change`;
+      const downgrade = { userId: guest,expectedRole: "reviewer",role: "editor" };
+      await impactApp.http.post(change).set("authorization",scopedBearer).send(downgrade).expect(403);
+      await impactApp.http.post(change).set("authorization",bearer).send(downgrade).expect(201);
+      await impactApp.http.get(projectAuditPath).set("authorization",scopedBearer).expect(403);
+      await impactApp.http.post(change).set("authorization",bearer).send({ ...downgrade,role: null }).expect(409);
+      await impactApp.http.post(change).set("authorization",bearer).send({ ...downgrade,expectedRole: "editor",role: null }).expect(201);
+      await impactApp.http.post(`/project-invitations/${guestInvitation.id}/accept`).set("authorization",guestBearer).expect(409);
       await impactApp.http.get("/projects").set("authorization",scopedBearer).expect(401);
       await impactApp.http.get("/projects").set("authorization",guestBearer).expect(200,{ projects: [] });
       await impactApp.http.get(projectAuditPath).expect(401);

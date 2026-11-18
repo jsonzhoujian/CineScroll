@@ -11,6 +11,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
   onSwitchWorkspace(workspaceId: string): Promise<void>;
   onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
+  const [members,setMembers] = useState<Awaited<ReturnType<ApiClient["listProjectMembers"]>>["members"] | null>(null);
   const [issued,setIssued] = useState<Awaited<ReturnType<ApiClient["issueProjectInvitation"]>> | null>(null);
   const [joined,setJoined] = useState<Awaited<ReturnType<ApiClient["acceptProjectInvitation"]>> | null>(null);
   const switchRequired = !!joined?.workspaceId && joined.workspaceId !== activeWorkspaceId;
@@ -34,9 +35,41 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
     }
   }
 
+  async function loadMembers(projectId: string) {
+    const result = await api.listProjectMembers(projectId);
+    if (result.projectId !== projectId) throw new Error("WRONG_PROJECT");
+    setMembers(result.members);
+  }
+
+  function changeMember(projectId: string,userId: string,expectedRole: "editor" | "reviewer",role: "editor" | "reviewer" | null) {
+    void run(async () => {
+      const result = await api.changeProjectMember(projectId,userId,expectedRole,role);
+      if (result.userId !== userId || result.role !== role) throw new Error("WRONG_MEMBER");
+      setMembers(previous => previous?.flatMap(member => member.userId === userId
+        ? role ? [{ ...member,role }] : [] : [member]) ?? null);
+      setNotice(role ? "成员角色已更新。" : "已移除成员。");
+    },"成员更新失败，请刷新名单后重试。");
+  }
+
   return <section className="panel" aria-label="项目邀请">
     <h2>项目邀请</h2>
     {accountId && <p>我的账号 ID <code>{accountId}</code></p>}
+    {ownerProjectId && <>
+      <button type="button" disabled={busy} onClick={() => void run(() => loadMembers(ownerProjectId),"无法读取项目成员，请重试。")}>读取项目成员</button>
+      {members && <section aria-label="项目成员"><ul>{members.map(member => {
+        const { role,userId } = member;
+        return <li key={userId}><code>{userId}</code> · {role === "owner" ? "负责人" : role === "editor" ? "编辑" : "审核人"}
+          {role !== "owner" && <>
+            <button type="button" disabled={busy} onClick={() => changeMember(ownerProjectId,userId,role,role === "editor" ? "reviewer" : "editor")}>
+              改为{role === "editor" ? "审核人" : "编辑"}
+            </button>
+            <button type="button" disabled={busy} onClick={() => {
+              if (window.confirm(`移除成员 ${userId}？`)) changeMember(ownerProjectId,userId,role,null);
+            }}>移除成员</button>
+          </>}
+        </li>;
+      })}</ul></section>}
+    </>}
     {ownerProjectId && <form onSubmit={event => {
       event.preventDefault();
       const fields = new FormData(event.currentTarget);

@@ -228,6 +228,19 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
     expect(route.request().headers().authorization).toBe("Bearer session-token");
     return route.fulfill({ status: 201,headers,json: { projectId: "shared-project",role: "editor",workspaceId: "studio-1" } });
   });
+  await page.route(`${apiOrigin}/projects/project-1/members`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: { projectId: "project-1",members: [
+      { userId: "user-1",role: "owner" },{ userId: "editor-1",role: "editor" },
+    ] } });
+  });
+  const changes: unknown[] = [];
+  await page.route(`${apiOrigin}/projects/project-1/members/change`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    const body = route.request().postDataJSON();
+    changes.push(body);
+    return route.fulfill({ headers,json: { userId: body.userId,role: body.role } });
+  });
   await page.route(`${apiOrigin}/projects/project-1/invitations`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
     expect(route.request().headers().authorization).toBe("Bearer session-token");
@@ -269,6 +282,18 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await page.getByLabel("项目名称").fill("人间剑令");
   await page.getByRole("checkbox",{ name: /拥有该作品或合法改编权/ }).check();
   await page.getByRole("button",{ name: /创建项目/ }).click();
+  await panel.getByRole("button",{ name: "读取项目成员" }).click();
+  const memberList = panel.getByRole("region",{ name: "项目成员" });
+  const editor = memberList.getByRole("listitem").filter({ hasText: "editor-1" });
+  await editor.getByRole("button",{ name: "改为审核人" }).click();
+  await expect(editor.getByRole("button",{ name: "改为编辑" })).toBeVisible();
+  page.once("dialog",dialog => dialog.accept());
+  await editor.getByRole("button",{ name: "移除成员" }).click();
+  await expect(editor).toHaveCount(0);
+  expect(changes).toEqual([
+    { userId: "editor-1",expectedRole: "editor",role: "reviewer" },
+    { userId: "editor-1",expectedRole: "reviewer",role: null },
+  ]);
   await panel.getByLabel("受邀账号 ID").fill("reviewer-1");
   await panel.getByLabel("邀请角色").selectOption("reviewer");
   await panel.getByRole("button",{ name: "生成邀请" }).click();

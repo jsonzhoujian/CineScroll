@@ -4,7 +4,7 @@ import type { PostgresProjectImportRepository } from "@novel-adaptation/project-
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 
 const INVITATIONS = Symbol("PROJECT_INVITATIONS");
-type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces">;
+type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces" | "listProjectMembers" | "changeProjectMember">;
 
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n\0]/.test(value)) throw new BadRequestException();
@@ -63,6 +63,25 @@ class ProjectInvitationsController {
     return respond(async () => ({ projects: await this.invitations.listMemberProjects(req.actor) }));
   }
 
+  members(req: { actor: Actor },project: string) {
+    const projectId = identifier(project);
+    return respond(async () => {
+      const members = await this.invitations.listProjectMembers(req.actor,projectId);
+      if (!members.length) throw new HttpException({ code: "FORBIDDEN" },403);
+      return { projectId,members };
+    });
+  }
+
+  changeMember(req: { actor: Actor },project: string,input: unknown) {
+    const projectId = identifier(project);
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 3) throw new BadRequestException();
+    const { userId,expectedRole,role } = input as Record<string,unknown>;
+    if ((expectedRole !== "editor" && expectedRole !== "reviewer") ||
+      (role !== null && role !== "editor" && role !== "reviewer")) throw new BadRequestException();
+    const recipient = identifier(userId);
+    return respond(() => this.invitations.changeProjectMember(req.actor,projectId,recipient,expectedRole,role));
+  }
+
   chapters(req: { actor: Actor },project: string) {
     const projectId = identifier(project);
     return respond(async () => {
@@ -85,6 +104,8 @@ for (const [method,path,param,route] of [
   ["workspaces","workspaces",null,Get],
   ["switchWorkspace","workspaces/:workspaceId/switch","workspaceId",Post],
   ["projects","projects",null,Get],
+  ["members","projects/:projectId/members","projectId",Get],
+  ["changeMember","projects/:projectId/members/change","projectId",Post],
   ["chapters","projects/:projectId/chapter-directory","projectId",Get],
   ["issue","projects/:projectId/invitations","projectId",Post],
   ["accept","project-invitations/:invitationId/accept","invitationId",Post],
@@ -94,7 +115,7 @@ for (const [method,path,param,route] of [
   Header("Cache-Control","no-store")(ProjectInvitationsController.prototype,method,descriptor);
   Req()(ProjectInvitationsController.prototype,method,0);
   if (param) Param(param)(ProjectInvitationsController.prototype,method,1);
-  if (method === "issue") Body()(ProjectInvitationsController.prototype,method,2);
+  if (method === "issue" || method === "changeMember") Body()(ProjectInvitationsController.prototype,method,2);
 }
 
 export class ProjectInvitationsApiModule {

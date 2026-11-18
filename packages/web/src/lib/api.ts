@@ -414,6 +414,17 @@ export class ApiClient {
     return result;
   }
 
+  listProjectMembers(projectId: string) {
+    return this.request<{ projectId: string; members: Array<{ userId: string; role: "owner" | "editor" | "reviewer" }> }>(
+      `/projects/${encodeURIComponent(projectId)}/members`,{ method: "GET" },"session");
+  }
+
+  changeProjectMember(projectId: string,userId: string,expectedRole: "editor" | "reviewer",role: "editor" | "reviewer" | null) {
+    return this.request<{ userId: string; role: "editor" | "reviewer" | null }>(
+      `/projects/${encodeURIComponent(projectId)}/members/change`,
+      { method: "POST",body: JSON.stringify({ userId,expectedRole,role }) },"session");
+  }
+
   issueProjectInvitation(projectId: string,recipientUserId: string,role: "editor" | "reviewer") {
     return this.request<{ id: string; projectId: string; role: "editor" | "reviewer"; expiresAt: string }>(
       `/projects/${encodeURIComponent(projectId)}/invitations`,
