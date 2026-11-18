@@ -3,14 +3,17 @@
 import { useRef, useState } from "react";
 import { ApiClientError, type ApiClient } from "../lib/api";
 
-export function ProjectInvitationPanel({ api, ownerProjectId, accountId, onOpenChapter }: {
+export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeWorkspaceId, onSwitchWorkspace, onOpenChapter }: {
   api: ApiClient;
   ownerProjectId: string | null;
   accountId: string | null;
+  activeWorkspaceId: string | null;
+  onSwitchWorkspace(workspaceId: string): Promise<void>;
   onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
   const [issued,setIssued] = useState<Awaited<ReturnType<ApiClient["issueProjectInvitation"]>> | null>(null);
-  const [joinedProject,setJoinedProject] = useState<string | null>(null);
+  const [joined,setJoined] = useState<Awaited<ReturnType<ApiClient["acceptProjectInvitation"]>> | null>(null);
+  const switchRequired = !!joined?.workspaceId && joined.workspaceId !== activeWorkspaceId;
   const [directory,setDirectory] = useState<Awaited<ReturnType<ApiClient["listProjectChapters"]>> | null>(null);
   const [notice,setNotice] = useState("");
   const [busy,setBusy] = useState(false);
@@ -43,7 +46,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, onOpenC
       void run(async () => {
         setIssued(null);
         setIssued(await api.issueProjectInvitation(ownerProjectId,recipient,role));
-      },"生成邀请失败，请核对同工作室账号 ID 或现有成员关系。");
+      },"生成邀请失败，请核对账号 ID 或现有成员关系。");
     }}>
       <label>受邀账号 ID <input name="recipient" required maxLength={256} disabled={busy} /></label>
       <label>邀请角色 <select name="role" disabled={busy}><option value="editor">编辑</option><option value="reviewer">审核人</option></select></label>
@@ -62,7 +65,7 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, onOpenC
       }
       void run(async () => {
         const membership = await api.acceptProjectInvitation(invitationId);
-        setJoinedProject(membership.projectId);
+        setJoined(membership);
         setDirectory(null);
         setNotice(`已加入项目 ${membership.projectId}，角色为${membership.role === "editor" ? "编辑" : "审核人"}。`);
       },"无法接受邀请，请核对登录账号、邀请编号和有效期。");
@@ -70,9 +73,12 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, onOpenC
       <label>待接受的邀请编号 <input name="invitationId" required maxLength={64} disabled={busy} /></label>
       <button type="submit" disabled={busy}>接受邀请</button>
     </form>
-    {joinedProject && <button type="button" disabled={busy} onClick={() => void run(async () => {
-      const result = await api.listProjectChapters(joinedProject);
-      if (result.projectId !== joinedProject) throw new Error("WRONG_PROJECT");
+    {switchRequired && joined && <button type="button" disabled={busy} onClick={() => void run(
+      () => onSwitchWorkspace(joined.workspaceId),"无法切换工作室，请重试。",
+    )}>切换到受邀工作室</button>}
+    {joined && !switchRequired && <button type="button" disabled={busy} onClick={() => void run(async () => {
+      const result = await api.listProjectChapters(joined.projectId);
+      if (result.projectId !== joined.projectId) throw new Error("WRONG_PROJECT");
       setDirectory(result);
     },"无法读取项目章节，请重试。")}>查看受邀项目章节</button>}
     {directory && <section aria-label="受邀项目章节">

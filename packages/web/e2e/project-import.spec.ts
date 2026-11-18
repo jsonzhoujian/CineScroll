@@ -226,7 +226,7 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await page.route(`${apiOrigin}/project-invitations/${invitationId}/accept`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
     expect(route.request().headers().authorization).toBe("Bearer session-token");
-    return route.fulfill({ status: 201,headers,json: { projectId: "shared-project",role: "editor" } });
+    return route.fulfill({ status: 201,headers,json: { projectId: "shared-project",role: "editor",workspaceId: "studio-1" } });
   });
   await page.route(`${apiOrigin}/projects/project-1/invitations`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
@@ -289,5 +289,28 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await projects.getByRole("button",{ name: "共享项目",exact: true }).click();
   await projects.getByRole("button",{ name: "共享章节",exact: true }).click();
   await expect(page.getByRole("heading",{ name: "共享章节" })).toBeVisible();
+
+  await page.route(`${apiOrigin}/workspaces`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: { activeWorkspaceId: "studio-1",workspaces: [
+      { workspaceId: "studio-1",home: true },{ workspaceId: "studio-2",home: false },
+    ] } });
+  });
+  await page.route(`${apiOrigin}/workspaces/studio-2/switch`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    expect(route.request().headers().authorization).toBe("Bearer session-token");
+    return route.fulfill({ status: 201,headers,json: { actor: { userId: "user-1",workspaceId: "studio-2" },home: false,sessionToken: "scoped-token" } });
+  });
+  await page.getByRole("button",{ name: "切换工作室" }).click();
+  await page.getByRole("region",{ name: "工作室列表" }).getByRole("button",{ name: "studio-2" }).click();
+  await expect(page.getByRole("heading",{ name: "共享章节" })).toHaveCount(0);
+  await expect(page.getByRole("button",{ name: /创建项目/ })).toHaveCount(0);
+  await page.route(`${apiOrigin}/projects`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    expect(route.request().headers().authorization).toBe("Bearer scoped-token");
+    return route.fulfill({ headers,json: { projects: [] } });
+  });
+  await page.getByRole("button",{ name: "我的项目",exact: true }).click();
+  await expect(projects).toContainText("暂无已加入的项目。");
 
 });

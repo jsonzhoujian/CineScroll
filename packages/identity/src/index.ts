@@ -33,11 +33,11 @@ export class HmacSessionManager implements SessionIssuer, SessionVerifier {
   readonly #secret: string;
   readonly #clock: () => Date;
   readonly #ttlMs: number;
-  readonly #resolveActor: (userId: string) => Promise<Actor | null>;
+  readonly #resolveActor: (userId: string, workspaceId?: string) => Promise<Actor | null>;
 
   constructor(options: {
     secret: string;
-    resolveActor: (userId: string) => Promise<Actor | null>;
+    resolveActor: (userId: string, workspaceId?: string) => Promise<Actor | null>;
     clock?: () => Date;
     ttlMs?: number;
   }) {
@@ -48,8 +48,8 @@ export class HmacSessionManager implements SessionIssuer, SessionVerifier {
     this.#resolveActor = options.resolveActor;
   }
 
-  async issue(userId: string, _workspaceId: string): Promise<string> {
-    const payload = Buffer.from(JSON.stringify({ userId, exp: this.#clock().getTime() + this.#ttlMs })).toString("base64url");
+  async issue(userId: string, workspaceId: string): Promise<string> {
+    const payload = Buffer.from(JSON.stringify({ userId, workspaceId, exp: this.#clock().getTime() + this.#ttlMs })).toString("base64url");
     return `v1.${payload}.${this.sign(payload)}`;
   }
 
@@ -62,8 +62,8 @@ export class HmacSessionManager implements SessionIssuer, SessionVerifier {
       if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new SessionError();
       const value: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
       if (!isSessionPayload(value) || value.exp <= this.#clock().getTime()) throw new SessionError();
-      const actor = await this.#resolveActor(value.userId);
-      if (!actor || actor.userId !== value.userId) throw new SessionError();
+      const actor = await this.#resolveActor(value.userId,value.workspaceId);
+      if (!actor || actor.userId !== value.userId || (value.workspaceId !== undefined && actor.workspaceId !== value.workspaceId)) throw new SessionError();
       return actor;
     } catch (error) {
       if (error instanceof SessionError) throw error;
@@ -76,9 +76,10 @@ export class HmacSessionManager implements SessionIssuer, SessionVerifier {
   }
 }
 
-function isSessionPayload(value: unknown): value is { userId: string; exp: number } {
+function isSessionPayload(value: unknown): value is { userId: string; workspaceId?: string; exp: number } {
   return typeof value === "object" && value !== null
     && typeof (value as Record<string, unknown>).userId === "string"
+    && ((value as Record<string, unknown>).workspaceId === undefined || typeof (value as Record<string, unknown>).workspaceId === "string")
     && typeof (value as Record<string, unknown>).exp === "number";
 }
 

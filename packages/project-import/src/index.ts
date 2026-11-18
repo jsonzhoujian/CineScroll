@@ -263,6 +263,7 @@ export class InMemoryProjectImportRepository implements ProjectImportRepository 
 }
 
 interface ProjectImportServiceDependencies {
+  canCreateProject?: (actor: Actor) => Promise<boolean>;
   repository: ProjectImportRepository;
   idGenerator: (prefix: string) => string;
   clock: () => Date;
@@ -278,6 +279,9 @@ export class ProjectImportService {
   }
 
   async createProject(actor: Actor, input: CreateProjectInput): Promise<Project> {
+    if (this.dependencies.canCreateProject && !await this.dependencies.canCreateProject(actor)) {
+      throw new ProjectImportError("PROJECT_WRITE_FORBIDDEN", "请切换到默认工作室后创建项目");
+    }
     if (!input.rightsDeclared) {
       throw new ProjectImportError("RIGHTS_DECLARATION_REQUIRED", "导入作品前必须确认拥有作品或合法改编权");
     }

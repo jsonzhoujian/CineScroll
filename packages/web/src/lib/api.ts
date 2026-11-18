@@ -401,6 +401,19 @@ export class ApiClient {
     this.#sessionToken = sessionToken;
   }
 
+  listWorkspaces() {
+    return this.request<{ activeWorkspaceId: string; workspaces: Array<{ workspaceId: string; home: boolean }> }>(
+      "/workspaces",{ method: "GET" },"session");
+  }
+
+  async switchWorkspace(workspaceId: string) {
+    const result = await this.request<{ actor: { userId: string; workspaceId: string }; home: boolean; sessionToken: string }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/switch`,{ method: "POST" },"session");
+    if (result.actor.workspaceId !== workspaceId) throw new Error("无法切换到该工作室。");
+    this.acceptSession(result.sessionToken);
+    return result;
+  }
+
   issueProjectInvitation(projectId: string,recipientUserId: string,role: "editor" | "reviewer") {
     return this.request<{ id: string; projectId: string; role: "editor" | "reviewer"; expiresAt: string }>(
       `/projects/${encodeURIComponent(projectId)}/invitations`,
@@ -408,7 +421,7 @@ export class ApiClient {
   }
 
   acceptProjectInvitation(invitationId: string) {
-    return this.request<{ projectId: string; role: "editor" | "reviewer" }>(
+    return this.request<{ projectId: string; workspaceId: string; role: "editor" | "reviewer" }>(
       `/project-invitations/${encodeURIComponent(invitationId)}/accept`,{ method: "POST" },"session");
   }
 

@@ -40,7 +40,13 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
   acceptInvitation(actor: Actor,invitationId: string) {
     return this.inTransaction(actor, async client => (await client.query(
       "select accept_project_invitation($1::uuid) as membership",[invitationId],
-    )).rows[0]!.membership as { projectId: string; role: "editor" | "reviewer" });
+    )).rows[0]!.membership as { projectId: string; workspaceId: string; role: "editor" | "reviewer" });
+  }
+
+  async listAccountWorkspaces(userId: string) {
+    return (await this.pool.query<{ workspaceId: string; home: boolean }>(
+      'select workspace_id as "workspaceId",is_home as home from account_project_workspaces($1) order by is_home desc,workspace_id',[userId],
+    )).rows;
   }
 
   listMemberProjects(actor: Actor) {

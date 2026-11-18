@@ -189,9 +189,15 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
     ssl: { ca: config.databaseTlsCa, rejectUnauthorized: true },
   });
   const identityRepository = new PostgresIdentityRepository(pool);
+  const projectRepository = new PostgresProjectImportRepository(pool);
   const sessions = new HmacSessionManager({
     secret: config.sessionSecret,
-    resolveActor: (userId) => identityRepository.findActorByUserId(userId),
+    async resolveActor(userId,workspaceId) {
+      const home = await identityRepository.findActorByUserId(userId);
+      if (!home || !workspaceId || workspaceId === home.workspaceId) return home;
+      const spaces = await projectRepository.listAccountWorkspaces(userId);
+      return spaces.some(space => space.workspaceId === workspaceId) ? { userId,workspaceId } : null;
+    },
   });
   const identity = new IdentityService({
     repository: identityRepository,
@@ -208,9 +214,9 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
     clock: () => new Date(),
     wechatRedirectUri: config.wechatRedirectUri,
   });
-  const projectRepository = new PostgresProjectImportRepository(pool);
   const projectImport = new ProjectImportService({
     repository: projectRepository,
+    canCreateProject: async actor => (await identityRepository.findActorByUserId(actor.userId))?.workspaceId === actor.workspaceId,
     complianceScanner: new HttpComplianceScanner({
       endpoint: config.complianceEndpoint,
       apiKey: config.complianceApiKey,

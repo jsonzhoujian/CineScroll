@@ -5,6 +5,7 @@ export type WechatLoginMessage = {
   state: string;
   sessionToken: string;
   userId?: string;
+  workspaceId?: string;
 };
 
 export function isWechatLoginMessage(value: unknown): value is WechatLoginMessage {
@@ -15,7 +16,8 @@ export function isWechatLoginMessage(value: unknown): value is WechatLoginMessag
     && candidate.state.length > 0
     && typeof candidate.sessionToken === "string"
     && candidate.sessionToken.length > 0
-    && (candidate.userId === undefined || typeof candidate.userId === "string");
+    && (candidate.userId === undefined || typeof candidate.userId === "string")
+    && (candidate.workspaceId === undefined || typeof candidate.workspaceId === "string");
 }
 
 export function expectedWechatLoginMessage(

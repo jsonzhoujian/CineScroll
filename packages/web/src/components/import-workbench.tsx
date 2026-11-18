@@ -29,14 +29,26 @@ const initialProject: ProjectDraft = {
   targetDurationSeconds: 180, narrativeMode: "narration",
 };
 
+type SwitchedWorkspace = Awaited<ReturnType<ApiClient["switchWorkspace"]>>;
+
 export function ImportWorkbench() {
+  const api = useMemo(() => new ApiClient(), []);
+  const [workspace,setWorkspace] = useState<SwitchedWorkspace | null>(null);
+  return <WorkspaceWorkbench key={workspace?.actor.workspaceId ?? "default"} api={api}
+    workspace={workspace} onWorkspaceChange={setWorkspace} />;
+}
+
+function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
+  api: ApiClient; workspace: SwitchedWorkspace | null; onWorkspaceChange(workspace: SwitchedWorkspace): void;
+}) {
+  const [workspaces,setWorkspaces] = useState<Awaited<ReturnType<ApiClient["listWorkspaces"]>> | null>(null);
   const [memberProjects,setMemberProjects] = useState<Awaited<ReturnType<ApiClient["listMemberProjects"]>>["projects"] | null>(null);
   const [projectDirectory,setProjectDirectory] = useState<Awaited<ReturnType<ApiClient["listProjectChapters"]>> | null>(null);
   const [invitationOpen,setInvitationOpen] = useState(false);
-  const [accountId,setAccountId] = useState<string | null>(null);
+  const [activeWorkspaceId,setActiveWorkspaceId] = useState(workspace?.actor.workspaceId ?? null);
+  const [accountId,setAccountId] = useState<string | null>(workspace?.actor.userId ?? null);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
-  const api = useMemo(() => new ApiClient(), []);
-  const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: "login", mode: "trace" });
+  const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: workspace ? "project" : "login", mode: "trace" });
   const { step, mode } = navigation;
   const setStep = (nextStep: Step) => setNavigation((current) => ({ ...current, step: nextStep }));
   const [traceFragment,setTraceFragment] = useState<{ projectId: string; chapterId: string; sourceVersionId: string; fragmentId: string } | null>(null);
@@ -104,6 +116,7 @@ export function ImportWorkbench() {
       wechatPopup.current = null;
       api.acceptSession(message.sessionToken);
       setAccountId(message.userId ?? null);
+      setActiveWorkspaceId(message.workspaceId ?? null);
       setStep("project");
       setNotice("微信登录成功");
     };
@@ -137,6 +150,7 @@ export function ImportWorkbench() {
     if (!challengeId) throw new Error("请先获取验证码");
     const result = await api.verifyPhoneCode({ challengeId, phone, code });
     setAccountId(result.actor.userId);
+    setActiveWorkspaceId(result.actor.workspaceId);
     setStep("project"); setNotice(null);
   });
   const startWechatLogin = () => {
@@ -265,6 +279,17 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
+        {step !== "login" && <button type="button" className="text-button" disabled={busy} aria-expanded={workspaces !== null}
+          onClick={() => workspaces ? setWorkspaces(null) : void run(async () => setWorkspaces(await api.listWorkspaces()))}>切换工作室</button>}
+        {workspaces && <section className="panel" aria-label="工作室列表"><ul>
+          {workspaces.workspaces.map(item => <li key={item.workspaceId}>
+            <button type="button" disabled={busy || item.workspaceId === workspaces.activeWorkspaceId}
+              onClick={() => void run(async () => onWorkspaceChange(await api.switchWorkspace(item.workspaceId)))}>
+              {item.home ? "默认工作室" : item.workspaceId}
+            </button>
+            {item.workspaceId === workspaces.activeWorkspaceId && " · 当前"}
+          </li>)}
+        </ul></section>}
         {step !== "login" && <button type="button" className="text-button" disabled={busy} aria-expanded={memberProjects !== null}
           onClick={() => {
             if (memberProjects !== null) { setMemberProjects(null); setProjectDirectory(null); return; }
@@ -293,7 +318,8 @@ export function ImportWorkbench() {
         {step !== "login" && <button type="button" className="text-button" aria-expanded={invitationOpen}
           onClick={() => setInvitationOpen(open => !open)}>项目邀请</button>}
         {step !== "login" && invitationOpen && <ProjectInvitationPanel key={project?.id ?? "no-project"} api={api}
-          ownerProjectId={project?.role === "owner" ? project.id : null} accountId={accountId} onOpenChapter={openProjectChapter} />}
+          ownerProjectId={project?.role === "owner" ? project.id : null} accountId={accountId} activeWorkspaceId={activeWorkspaceId}
+          onSwitchWorkspace={id => api.switchWorkspace(id).then(onWorkspaceChange)} onOpenChapter={openProjectChapter} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
@@ -304,7 +330,7 @@ export function ImportWorkbench() {
           <div className="divider"><span>或</span></div><button className="wechat-button" onClick={startWechatLogin} disabled={busy}>微信扫码登录 <small>在新窗口打开微信官方二维码</small></button>
         </Panel>}
 
-        {mode === "trace" && step === "project" && <Panel eyebrow="项目立项" title="定义这一卷如何被改编" description="这些约束会跟随章节进入后续故事知识、剧本、设定和分镜。">
+        {mode === "trace" && step === "project" && workspace?.home !== false && <Panel eyebrow="项目立项" title="定义这一卷如何被改编" description="这些约束会跟随章节进入后续故事知识、剧本、设定和分镜。">
           <div className="form-grid"><Field label="项目名称" wide><input value={projectDraft.title} onChange={(event) => setProjectDraft({ ...projectDraft, title: event.target.value })} placeholder="例如：人间剑令" /></Field>
             <Choice label="画面比例" value={projectDraft.aspectRatio} options={[['9:16','竖屏'],['16:9','横屏']]} onChange={(value) => setProjectDraft({ ...projectDraft, aspectRatio: value as ProjectDraft['aspectRatio'] })} />
             <Choice label="单集时长" value={String(projectDraft.targetDurationSeconds)} options={[['60','1 分钟'],['180','3 分钟'],['300','5 分钟']]} onChange={(value) => setProjectDraft({ ...projectDraft, targetDurationSeconds: Number(value) as ProjectDraft['targetDurationSeconds'] })} />

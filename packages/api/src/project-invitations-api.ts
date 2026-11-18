@@ -1,10 +1,10 @@
 import { BadRequestException, Body, Controller, Get, Header, HttpException, Inject, Module, Param, Post, Req, UseGuards, type DynamicModule } from "@nestjs/common";
-import type { Actor, SessionVerifier } from "@novel-adaptation/identity";
+import type { Actor, SessionIssuer, SessionVerifier } from "@novel-adaptation/identity";
 import type { PostgresProjectImportRepository } from "@novel-adaptation/project-import/postgres-repository";
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 
 const INVITATIONS = Symbol("PROJECT_INVITATIONS");
-type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects">;
+type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces">;
 
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n\0]/.test(value)) throw new BadRequestException();
@@ -24,9 +24,31 @@ async function respond<T>(operation: () => Promise<T>) {
   }
 }
 
+const SESSION_ISSUER = Symbol("WORKSPACE_SESSION_ISSUER");
+
 class ProjectInvitationsController {
   private readonly invitations: Invitations;
-  constructor(invitations: Invitations) { this.invitations = invitations; }
+  private readonly sessions: SessionIssuer;
+  constructor(invitations: Invitations,sessions: SessionIssuer) {
+    this.invitations = invitations;
+    this.sessions = sessions;
+  }
+
+  workspaces(req: { actor: Actor }) {
+    return respond(async () => ({
+      activeWorkspaceId: req.actor.workspaceId,workspaces: await this.invitations.listAccountWorkspaces(req.actor.userId),
+    }));
+  }
+
+  switchWorkspace(req: { actor: Actor },workspace: string) {
+    const workspaceId = identifier(workspace);
+    return respond(async () => {
+      const membership = (await this.invitations.listAccountWorkspaces(req.actor.userId)).find(item => item.workspaceId === workspaceId);
+      if (!membership) throw new HttpException({ code: "NOT_FOUND" },404);
+      const actor = { userId: req.actor.userId,workspaceId };
+      return { actor,home: membership.home,sessionToken: await this.sessions.issue(actor.userId,workspaceId) };
+    });
+  }
 
   issue(req: { actor: Actor }, project: string, input: unknown) {
     const projectId = identifier(project);
@@ -58,7 +80,10 @@ class ProjectInvitationsController {
 Controller()(ProjectInvitationsController);
 UseGuards(SessionGuard)(ProjectInvitationsController);
 Inject(INVITATIONS)(ProjectInvitationsController,undefined,0);
+Inject(SESSION_ISSUER)(ProjectInvitationsController,undefined,1);
 for (const [method,path,param,route] of [
+  ["workspaces","workspaces",null,Get],
+  ["switchWorkspace","workspaces/:workspaceId/switch","workspaceId",Post],
   ["projects","projects",null,Get],
   ["chapters","projects/:projectId/chapter-directory","projectId",Get],
   ["issue","projects/:projectId/invitations","projectId",Post],
@@ -73,9 +98,9 @@ for (const [method,path,param,route] of [
 }
 
 export class ProjectInvitationsApiModule {
-  static register(sessionVerifier: SessionVerifier,invitations: Invitations): DynamicModule {
+  static register(sessionVerifier: SessionVerifier & SessionIssuer,invitations: Invitations): DynamicModule {
     return { module: ProjectInvitationsApiModule,providers: [
-      { provide: SESSION_VERIFIER,useValue: sessionVerifier },{ provide: INVITATIONS,useValue: invitations },
+      { provide: SESSION_VERIFIER,useValue: sessionVerifier },{ provide: SESSION_ISSUER,useValue: sessionVerifier },{ provide: INVITATIONS,useValue: invitations },
     ] };
   }
 }

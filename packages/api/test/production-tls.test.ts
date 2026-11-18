@@ -151,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   };
   try {
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
-      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
+      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
       "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
@@ -819,7 +819,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
           await admin.query("update project_invitations set expires_at=clock_timestamp() where id=$1",[invitation.id]);
           await impactApp.http.post(accept).set("authorization",memberBearer).expect(409);
         } else {
-          await Promise.all([1,2].map(() => impactApp.http.post(accept).set("authorization",memberBearer).expect(201,{ projectId,role })));
+          await Promise.all([1,2].map(() => impactApp.http.post(accept).set("authorization",memberBearer).expect(201,{ projectId,role,workspaceId })));
           await impactApp.http.post(invitations).set("authorization",memberBearer).send(invitationInput).expect(403);
         }
         const memberProjects = await impactApp.http.get("/projects").set("authorization",memberBearer).expect(200);
@@ -833,6 +833,30 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         await impactApp.http.get(taskPath).set("authorization",memberBearer).expect(404);
         await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",memberBearer).expect(role === "nonmember" ? 404 : 200);
       }
+      const guest = `${userId}_guest`, guestHome = `${workspaceId}_guest`;
+      await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)",[guest,guestHome]);
+      const guestBearer = `Bearer ${await sessions.issue(guest,guestHome)}`;
+      const switchPath = `/workspaces/${workspaceId}/switch`;
+      await impactApp.http.post(switchPath).set("authorization",guestBearer).expect(404);
+      const guestInvitation = (await impactApp.http.post(`/projects/${projectId}/invitations`).set("authorization",bearer)
+        .send({ recipientUserId: guest,role: "reviewer" }).expect(201)).body;
+      await impactApp.http.post(`/project-invitations/${guestInvitation.id}/accept`).set("authorization",guestBearer)
+        .expect(201,{ projectId,role: "reviewer",workspaceId });
+      await impactApp.http.get(projectAuditPath).set("authorization",guestBearer).expect(404);
+      const guestWorkspaces = (await impactApp.http.get("/workspaces").set("authorization",guestBearer).expect(200)).body;
+      assert.deepEqual(guestWorkspaces,{ activeWorkspaceId: guestHome,workspaces: [
+        { workspaceId: guestHome,home: true },{ workspaceId,home: false },
+      ] });
+      const switched = (await impactApp.http.post(switchPath).set("authorization",guestBearer).expect(201)).body;
+      const scopedBearer = `Bearer ${switched.sessionToken}`;
+      assert.deepEqual(switched.actor,{ userId: guest,workspaceId });
+      await impactApp.http.get(projectAuditPath).set("authorization",scopedBearer).expect(200);
+      await impactApp.http.get(taskPath).set("authorization",scopedBearer).expect(404);
+      await impactApp.http.post("/projects").set("authorization",scopedBearer)
+        .send({ title:"不得创建",rightsDeclared:true,aspectRatio:"9:16",targetDurationSeconds:60,narrativeMode:"narration" }).expect(403);
+      await admin.query("delete from project_members where project_id=$1 and user_id=$2",[projectId,guest]);
+      await impactApp.http.get("/projects").set("authorization",scopedBearer).expect(401);
+      await impactApp.http.get("/projects").set("authorization",guestBearer).expect(200,{ projects: [] });
       await impactApp.http.get(projectAuditPath).expect(401);
       const projectAudit = (await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(200)).body;
       assert.ok(projectAudit.events.some((event: { chapterId: string; publicationId: string }) =>
