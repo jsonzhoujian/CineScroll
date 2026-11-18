@@ -13,9 +13,9 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 | T04 | Project creation and chapter import tracer bullet | done | T03 completed |
 | T05 | Story-knowledge extraction and confirmation | done | T04 completed |
 | T06 | Script generation and source traceability | done | T05 completed |
-| T07 | Settings and storyboard workflow | in_progress | T06 completed |
-| T08 | Versions, impact analysis, and collaboration | blocked | T07 |
-| T09 | Background AI jobs, model routing, and credits | blocked | T07 |
+| T07 | Settings and storyboard workflow | done | T06 completed |
+| T08 | Versions, impact analysis, and collaboration | in_progress | T07 completed |
+| T09 | Background AI jobs, model routing, and credits | ready | T07 completed |
 | T10 | Export, compliance, operations, and closed beta | blocked | T01b, T08, T09 |
 
 2026-10-29：依据详细任务和代码入口同步，未重新验收。T04/T05 的 done 为历史交付记录，新增权限规则的实现对齐仍须追踪。用户已确认 T06 的[拆分方案](../../../docs/plans/2026-10-29-t06-ticket-draft.md)，独立任务如下。父项 T06 保持 in_progress，完成须核对原始验收条件。
@@ -33,7 +33,7 @@ The dependency graph and delivery checkpoints are documented in `docs/plans/2026
 
 T06-01 已完成，见[候选生成记录](../../../docs/plans/2026-10-29-script-candidate-delivery.md)；T06-02 已完成，见[候选审核记录](../../../docs/plans/2026-10-29-script-review-delivery.md)；T06-03 已完成，见[局部重试记录](../../../docs/plans/2026-10-30-script-retry-delivery.md)。T06-04 已完成，见[质量确认交付记录](../../../docs/plans/2026-11-02-script-publication-delivery.md)。T06-05 已完成[正式修订验收](../../../docs/plans/2026-11-02-script-revision-plan.md)。T06-06与父项T06已完成功能验收，当前可领取T07；见[最终验收](../../../docs/plans/2026-11-03-t06-final-acceptance.md)。
 
-T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁见[独立状态页](./T09-infrastructure-status.md)。
+T09 整体验收待开展；已交付基础设施与剩余门禁见[独立状态页](./T09-infrastructure-status.md)。
 
 ## T07 tickets — 2026-11-03
 
@@ -41,11 +41,11 @@ T09 的 blocked 表示整体验收受阻；已交付基础设施与剩余门禁�
 | --- | --- | --- | --- |
 | T07-01 | [生成并追溯文字设定候选](./t07/01-generate-settings.md) | done | T06 completed |
 | T07-02 | [审核确认与局部重生设定](./t07/02-review-settings.md) | done | T07-01 completed |
-| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | in_progress | T07-02 completed |
-| T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | blocked | T07-03 |
-| T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | blocked | T07-04 |
+| T07-03 | [生成并追溯分镜候选](./t07/03-generate-storyboard.md) | done | T07-02 completed |
+| T07-04 | [审核分镜与逐集时长门禁](./t07/04-review-storyboard.md) | done | T07-03 completed |
+| T07-05 | [验收T07并交接T08/T09](./t07/05-acceptance-handoff.md) | done | T07-04 completed |
 
-交付顺序见[T07 交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07-01、T07-02 已完成，T07-03 正在实现，父项 T07 保持进行中。
+交付顺序见[T07 交付计划](../../../docs/plans/2026-11-03-t07-delivery-plan.md)。T07 已完成技术验收，见 [T07-05 交接](./t07/05-acceptance-handoff.md)。
 
 T07-02跨上游处理的[规则及四项拆分](../../../docs/plans/2026-11-04-t07-upstream-settings-decisions.md)均已确认：受限锁沿用、相同片段依据迁移、分批核对及旧建议留在旧版本。
 

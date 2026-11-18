@@ -804,6 +804,16 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.ok(audit.events.some((event: { kind: string; shotId: string }) => event.kind === "adopt" && event.shotId === oldShot.id));
       assert.ok(audit.events.every((event: object) => !["jobId","requestId","command"].some(key => key in event)));
       const projectAuditPath = `/projects/${projectId}/storyboard-audit`;
+      try {
+        for (const role of ["editor","reviewer"] as const) {
+          await admin.query("update project_members set role=$4 where (project_id,workspace_id,user_id)=($1,$2,$3)",[projectId,workspaceId,userId,role]);
+          const expected = role === "editor" ? 403 : 200;
+          await impactApp.http.get(auditPath).set("authorization",bearer).expect(expected);
+          await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(expected);
+        }
+      } finally {
+        await admin.query("update project_members set role='owner' where (project_id,workspace_id,user_id)=($1,$2,$3)",[projectId,workspaceId,userId]);
+      }
       await impactApp.http.get(projectAuditPath).expect(401);
       const projectAudit = (await impactApp.http.get(projectAuditPath).set("authorization",bearer).expect(200)).body;
       assert.ok(projectAudit.events.some((event: { chapterId: string; publicationId: string }) =>

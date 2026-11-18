@@ -124,6 +124,9 @@ class StoryboardController {
     const cursor = auditCursor(query,chapterId);
     return respond(async () => {
       if (!await this.services.context.canRead?.(req.actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      const access = await this.services.projects.findProjectAccess(req.actor,projectId);
+      if (!access) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (access.role === "editor") throw new StoryboardStorageError("FORBIDDEN");
       return this.services.candidates.listAudit(req.actor,projectId,chapterId,cursor);
     });
   }
@@ -394,7 +397,9 @@ class ProjectStoryboardAuditController {
   audit(req: { actor: Actor },p: string,query: Record<string,unknown>) {
     const projectId = id(p), cursor = auditCursor(query,null);
     return respond(async () => {
-      if (!await this.services.projects.findProjectAccess(req.actor,projectId)) throw new ModelTaskError("TASK_NOT_FOUND");
+      const access = await this.services.projects.findProjectAccess(req.actor,projectId);
+      if (!access) throw new ModelTaskError("TASK_NOT_FOUND");
+      if (access.role === "editor") throw new StoryboardStorageError("FORBIDDEN");
       return this.services.candidates.listAudit(req.actor,projectId,null,cursor);
     });
   }

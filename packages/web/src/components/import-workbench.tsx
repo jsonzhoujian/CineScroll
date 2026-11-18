@@ -278,7 +278,7 @@ export function ImportWorkbench() {
               onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
           : mode !== "trace" && !(mode === "storyboard" && project && chapter) && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
         {project && chapter && <div hidden={mode !== "storyboard"}>
-          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} impactTarget={impactTarget} onImpactHandled={setImpactTarget}
+          <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} canReadAudit={project.role === "owner" || project.role === "reviewer"} impactTarget={impactTarget} onImpactHandled={setImpactTarget}
             initialPublication={auditPublication?.version.projectId === project.id && auditPublication.version.chapterId === chapter.id ? auditPublication : null}
             onPublicationOpened={() => setAuditPublication(null)} onOpenAuditPublication={openAuditPublication} />
         </div>}

@@ -27,7 +27,7 @@ const auditLabels = new Map([
   ["revise","核对修订"],["adopt","采用重生"],
 ]);
 
-export function StoryboardWorkbench({ api, projectId, chapterId, active, impactTarget, onImpactHandled, initialPublication, onPublicationOpened, onOpenAuditPublication }: { api: ApiClient; projectId: string; chapterId: string; active: boolean; impactTarget: StoryboardImpactTarget | null; onImpactHandled(target: null): void; initialPublication: StoryboardView | null; onPublicationOpened(): void; onOpenAuditPublication(chapterId: string,publicationId: string): Promise<void> }) {
+export function StoryboardWorkbench({ api, projectId, chapterId, active, canReadAudit, impactTarget, onImpactHandled, initialPublication, onPublicationOpened, onOpenAuditPublication }: { api: ApiClient; projectId: string; chapterId: string; active: boolean; canReadAudit: boolean; impactTarget: StoryboardImpactTarget | null; onImpactHandled(target: null): void; initialPublication: StoryboardView | null; onPublicationOpened(): void; onOpenAuditPublication(chapterId: string,publicationId: string): Promise<void> }) {
   const [ready,setReady] = useState(false);
   const [models,setModels] = useState<ModelConfiguration | null>(null);
   const [model,setModel] = useState("");
@@ -36,7 +36,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
   const [publications,setPublications] = useState<StoryboardPublication[] | null>(null);
   const [audit,setAudit] = useState<{ scope: string; projectWide: boolean; events: StoryboardAuditEvent[]; nextCursor: StoryboardAuditCursor | null } | null>(null);
   const auditScope = JSON.stringify([projectId,chapterId]);
-  const chapterAudit = audit?.scope === auditScope ? audit : null;
+  const chapterAudit = canReadAudit && audit?.scope === auditScope ? audit : null;
   const [publicationCursor,setPublicationCursor] = useState<string | null>(null);
   const [adoptedShots,setAdoptedShots] = useState<Record<string,string[]>>({});
   const regenerationFormId = useId();
@@ -278,8 +278,10 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, impactT
     {cursor && <button type="button" disabled={busy} onClick={() => void act(() => refresh(true))}>更多分镜任务</button>}
     <button type="button" disabled={busy} onClick={() => void act(() => readReviews())}>读取项目审核候选</button>
     <button type="button" disabled={busy} onClick={() => void act(() => loadReview(null))}>读取正式分镜</button>
-    <button type="button" disabled={busy} onClick={() => void act(() => readAudit())}>查看分镜审计</button>
-    <button type="button" disabled={busy} onClick={() => void act(() => readAudit(true))}>查看项目分镜审计</button>
+    {canReadAudit && <>
+      <button type="button" disabled={busy} onClick={() => void act(() => readAudit())}>查看分镜审计</button>
+      <button type="button" disabled={busy} onClick={() => void act(() => readAudit(true))}>查看项目分镜审计</button>
+    </>}
     {chapterAudit && <section aria-label={chapterAudit.projectWide ? "项目分镜审计" : "分镜审计"}>
       {chapterAudit.events.length === 0 ? <p>暂无分镜审核记录。</p> : <ol>
         {chapterAudit.events.map(event => <li key={JSON.stringify([event.chapterId,event.eventId])}>
