@@ -35,7 +35,7 @@ export type StoryboardView = {
   lockedShotIds?: string[];
   episodeDurations?: Array<{ id: string;title: string;seconds: number | null;targetSeconds: number }>;
   permissions?: { canSuggest: boolean; canEdit: boolean; canDecide: boolean; canConfirm?: boolean; canLock?: boolean; canUnlock?: boolean };
-  suggestions?: Array<{ revision: number;shotId: string;actorId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted" | "rejected" }>;
+  suggestions?: Array<{ revision: number;shotId: string;actorId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted" | "rejected"; decision: { status: "accepted" | "rejected"; actorId: string; reason: string } | null }>;
   scriptElements: Array<{ id: string; text: string; sceneId: string; provenance: ScriptContentView["version"]["elements"][number]["provenance"] }>;
   sourceFragments: Array<{ id: string; text: string }>;
   version: {

@@ -51,7 +51,8 @@ export function StoryboardShotReview({ view, shot, busy, onSave }: {
     {suggestions.length > 0 && <ul aria-label="镜头建议">
       {suggestions.map(suggestion => <li key={suggestion.revision}>
         <p>{suggestion.value.visual} · {suggestion.value.durationSeconds} 秒</p>
-        <p>{suggestion.reason} · {suggestion.status === "pending" ? "待裁决" : suggestion.status === "accepted" ? "已接受" : "已拒绝"}</p>
+        <p>建议人 {suggestion.actorId} · {suggestion.reason} · {suggestion.status === "pending" ? "待裁决" : suggestion.status === "accepted" ? "已接受" : "已拒绝"}</p>
+        {suggestion.decision && <p>裁决人 {suggestion.decision.actorId} · {suggestion.decision.reason}</p>}
         {permissions?.canDecide && suggestion.status === "pending" && <div className="desktop-task-action">
           <button type="button" disabled={!canWrite || locked} onClick={() => save({ kind: "decide",suggestionRevision: suggestion.revision,decision: "accepted" })}>接受建议 {suggestion.revision}</button>
           <button type="button" disabled={!canWrite} onClick={() => save({ kind: "decide",suggestionRevision: suggestion.revision,decision: "rejected" })}>拒绝建议 {suggestion.revision}</button>

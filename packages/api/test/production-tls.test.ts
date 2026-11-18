@@ -561,6 +561,14 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         .send({ kind: "confirm",requestId: "incomplete-storyboard",expectedRevision: 1,expectedPublicationId: null,reason: "尚缺镜头" })
         .expect(409,{ code: "REVIEW_INCOMPLETE",message: "REVIEW_INCOMPLETE" });
       assert.equal(modelCalls,before+2);
+      const proposed = (await storyboardApp.http.post(operation).set("authorization",bearer)
+        .send({ ...command,kind: "suggest",requestId: "tls-shot-suggest",expectedRevision: 1 }).expect(201)).body;
+      assert.equal(proposed.suggestions[0].actorId,userId);
+      assert.equal(proposed.suggestions[0].decision,null);
+      const decided = (await storyboardApp.http.post(operation).set("authorization",bearer)
+        .send({ kind: "decide",requestId: "tls-shot-decide",expectedRevision: 2,suggestionRevision: 2,
+          decision: "rejected",reason: "保留已编辑画面" }).expect(201)).body;
+      assert.deepEqual(decided.suggestions[0].decision,{ status: "rejected",actorId: userId,reason: "保留已编辑画面" });
       completeStoryboardResponse = true;
       const full = (await storyboardApp.http.post(root).set("authorization",bearer)
         .send({ ...selection,requestId: "tls-storyboard-complete" }).expect(201)).body;

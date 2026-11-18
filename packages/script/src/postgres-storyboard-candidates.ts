@@ -270,7 +270,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         order by revision`,key)).rows as ReviewOperation[];
       const operations = reviewId === null ? log.filter(operation => operation.revision <= formal!.revision) : log;
       const changes = new Map<string,ReviewOperation["change"]>();
-      const decisions = new Map<number,"accepted" | "rejected">();
+      const decisions = new Map<number,{ status: "accepted" | "rejected"; actorId: string; reason: string }>();
       const locks = new Set<string>();
       let lastChange = 0;
       for (const operation of publicationId === null ? log : operations) {
@@ -280,10 +280,13 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       for (const operation of operations) {
         if (operation.change) lastChange = operation.revision;
         if (operation.change) changes.set(operation.shotId,operation.change);
-        if (operation.command.kind === "decide") decisions.set(operation.command.suggestionRevision,operation.command.decision);
+        if (operation.command.kind === "decide") decisions.set(operation.command.suggestionRevision,{
+          status: operation.command.decision,actorId: operation.actorId,reason: operation.command.reason,
+        });
       }
       const suggestions = operations.flatMap(({ command,revision,shotId,actorId }) => command.kind === "suggest" ? [{
-        revision,shotId,actorId,value: command.value,reason: command.reason,status: decisions.get(revision) ?? "pending" as const,
+        revision,shotId,actorId,value: command.value,reason: command.reason,
+        status: decisions.get(revision)?.status ?? "pending" as const,decision: decisions.get(revision) ?? null,
       }] : []);
       const shots = candidate.shots.map(shot => ({ ...shot,...changes.get(shot.id) }));
       const plan = (await client.query(`select version_json from episode_plan_versions

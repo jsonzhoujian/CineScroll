@@ -1144,7 +1144,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   const reviewId = "dff888fb-5ec9-41bd-a297-bc2aa682512e";
   let shared = false;
   let reviewRevision = 0;
-  let suggestions: Array<{ revision: number;shotId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted" }> = [];
+  let suggestions: Array<{ revision: number;shotId: string;actorId: string;reason: string;value: { visual: string;durationSeconds: number };status: "pending" | "accepted";decision: { actorId: string;reason: string;status: "accepted" } | null }> = [];
   let reviewedShot = { ...shot,id: "two",visual: "积水倒影" };
   function reviewView() {
     return { current: true,reviewId,revision: reviewRevision,suggestions,
@@ -1217,11 +1217,12 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
       if (command.kind === "suggest") {
         expect(command.shotId).toBe("two");
         expect(command.value).toEqual({ visual: "雨水映出屋檐",durationSeconds: 6 });
-        suggestions = [{ revision: reviewRevision,shotId: command.shotId,value: command.value,reason: command.reason,status: "pending" }];
+        suggestions = [{ revision: reviewRevision,shotId: command.shotId,value: command.value,actorId: "editor",reason: command.reason,status: "pending",decision: null }];
       } else {
         expect(command).toMatchObject({ kind: "decide",decision: "accepted",suggestionRevision: 1 });
         reviewedShot = { ...reviewedShot,...suggestions[0]!.value };
         suggestions[0]!.status = "accepted";
+        suggestions[0]!.decision = { actorId: "reviewer",reason: command.reason,status: "accepted" };
       }
       return route.fulfill({ headers,json: reviewView() });
     }
@@ -1329,7 +1330,8 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByRole("button",{ name: "积水倒影",exact: true })).toBeVisible();
   await audit.getByLabel("审核理由").fill("已核对正式剧本");
   await audit.getByRole("button",{ name: "接受建议 1" }).click();
-  await expect(audit.getByText(/已接受/)).toBeVisible();
+  await expect(audit.getByText(/已接受/)).toContainText("建议人 editor");
+  await expect(audit.getByText("裁决人 reviewer · 已核对正式剧本")).toBeVisible();
   await expect(panel.getByRole("button",{ name: "雨水映出屋檐",exact: true })).toBeVisible();
   await panel.getByLabel("分镜确认理由").fill("尝试确认");
   await panel.getByRole("button",{ name: "确认正式分镜" }).click();
