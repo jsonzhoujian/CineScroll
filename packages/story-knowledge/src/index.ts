@@ -97,6 +97,7 @@ export interface StoryKnowledgeRepository {
     version: StoryKnowledgeVersion,
     expectedActiveVersionId?: string | null,
     requireCurrentSource?: boolean,
+    operation?: "candidate" | "review",
   ): Promise<StoryKnowledgeVersion>;
   findActive(actor: Actor, projectId: string, chapterId: string): Promise<StoryKnowledgeVersion | null>;
   findVersion(
@@ -488,6 +489,13 @@ export class StoryKnowledgeService {
     return result ? this.getVersion(actor, projectId, chapterId, result.version.id) : null;
   }
 
+  async #assertFactReviewer(actor: Actor, projectId: string): Promise<void> {
+    const access = await this.#projectAccessReader?.findProjectAccess(actor, projectId);
+    if (!access || (access.role !== "owner" && access.role !== "reviewer")) {
+      throw new StoryKnowledgeError("FORBIDDEN", "只有负责人或审核人可以修改或裁决故事事实");
+    }
+  }
+
   async resolveFact(
     actor: Actor,
     projectId: string,
@@ -495,6 +503,7 @@ export class StoryKnowledgeService {
     input: unknown,
   ): Promise<StoryKnowledgeVersion> {
     const decision = parseDecision(input);
+    await this.#assertFactReviewer(actor, projectId);
     const { expectedActiveVersionId, factId, alternativeFactIds, statement, reason, conflictClassification } = decision;
     if (new Set([factId, ...alternativeFactIds]).size !== alternativeFactIds.length + 1) {
       throw new StoryKnowledgeError("INVALID_DECISION", "同一事实不能同时作为确认项和被否决项");
@@ -577,7 +586,7 @@ export class StoryKnowledgeService {
       createdBy: actor.userId,
       status: facts.some(({ resolutionStatus }) => resolutionStatus !== "resolved") ? "needs_resolution" : "candidate",
       facts,
-    }, current.id);
+    }, current.id, false, "review");
   }
 
   async editFact(
@@ -587,6 +596,7 @@ export class StoryKnowledgeService {
     input: unknown,
   ): Promise<StoryKnowledgeVersion> {
     const edit = parseFactEdit(input);
+    await this.#assertFactReviewer(actor, projectId);
     const current = await this.#repository.findActive(actor, projectId, chapterId);
     if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
     const source = await this.#sourceReader.findSourceVersion(
@@ -618,7 +628,7 @@ export class StoryKnowledgeService {
       createdAt: editedAt,
       createdBy: actor.userId,
       facts,
-    }, current.id);
+    }, current.id, false, "review");
   }
 
   async reviewFact(
@@ -628,6 +638,7 @@ export class StoryKnowledgeService {
     input: unknown,
   ): Promise<StoryKnowledgeVersion> {
     const review = parseFactReview(input);
+    await this.#assertFactReviewer(actor, projectId);
     const current = await this.#repository.findActive(actor, projectId, chapterId);
     if (!current) throw new StoryKnowledgeError("STAGE_RESULT_NOT_FOUND", "故事知识阶段结果不存在");
     const source = await this.#sourceReader.findSourceVersion(
@@ -664,7 +675,7 @@ export class StoryKnowledgeService {
       createdAt: decidedAt,
       createdBy: actor.userId,
       facts,
-    }, current.id);
+    }, current.id, false, "review");
   }
 
   async recordRetry(

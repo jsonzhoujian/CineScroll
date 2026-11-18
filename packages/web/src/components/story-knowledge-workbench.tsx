@@ -76,8 +76,7 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
   const selected = selectVisibleFact(rows, selectedId);
   const evidence = version && selected ? selectFactEvidence(version, chapter, selected.id) : [];
   const resolutionCandidates = version && selected ? resolutionGroupCandidates(version, chapter, selected.id) : [];
-  const actions = selected && version ? availableFactActions(selected, version.status)
-    .filter((action) => canManageStage || (action !== "lock" && action !== "unlock")) : [];
+  const actions = canManageStage && selected && version ? availableFactActions(selected, version.status) : [];
 
   useEffect(() => {
     if (!selected) return;
@@ -167,7 +166,7 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
       </section> : <section className="fact-inspector empty">请选择一条故事事实。</section>}
       <aside className="evidence-column"><span className="eyebrow">原文证据</span><h3>每个判断都有出处</h3>{evidence.map((fragment) => <article key={fragment.id}><small>片段 {String(fragment.ordinal + 1).padStart(2, "0")}</small><p>{fragment.text}</p></article>)}{evidence.length === 0 && <p className="no-evidence">当前事实没有可显示的原文证据。</p>}</aside>
     </div>
-    <footer className="knowledge-footer"><p>{canManageStage ? confirmation.reason ?? "确认后生成故事圣经；后续修改会创建新版本，不覆盖当前记录。" : "仅负责人或审核人可以确认阶段与锁定事实。"}</p>{canManageStage && version.status !== "confirmed" && <button type="button" className="button primary" disabled={busy || !confirmation.allowed} onClick={confirm}>确认故事知识阶段</button>}</footer>
+    <footer className="knowledge-footer"><p>{canManageStage ? confirmation.reason ?? "确认后生成故事圣经；后续修改会创建新版本，不覆盖当前记录。" : "仅负责人或审核人可以修改、裁决或锁定事实，以及确认阶段。"}</p>{canManageStage && version.status !== "confirmed" && <button type="button" className="button primary" disabled={busy || !confirmation.allowed} onClick={confirm}>确认故事知识阶段</button>}</footer>
   </div>;
 }
 

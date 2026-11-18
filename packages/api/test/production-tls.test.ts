@@ -153,7 +153,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
       "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../project-import/migrations/0006_manage_pending_invitations.sql", "../../project-import/migrations/0007_received_project_invitations.sql", "../../project-import/migrations/0008_project_membership_audit.sql", "../../project-import/migrations/0009_project_membership_audit_pagination.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
-      "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
+      "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../story-knowledge/migrations/0005_fact_review_permissions.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
       "../../script/migrations/0004_model_task_results.sql", "../../script/migrations/0005_model_task_recovery.sql",
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",

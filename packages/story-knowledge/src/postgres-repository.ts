@@ -29,9 +29,9 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
     });
   }
 
-  async saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null, requireCurrentSource = false): Promise<StoryKnowledgeVersion> {
+  async saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null, requireCurrentSource = false, operation: "candidate" | "review" = "candidate"): Promise<StoryKnowledgeVersion> {
     return this.inTransaction(actor, async (client) => {
-      await setOperation(client, "candidate");
+      await setOperation(client, operation);
       if (requireCurrentSource) await assertCurrentGeneration(client, actor, version);
       await lockHead(client, actor, version.projectId, version.chapterId);
       if (expectedActiveVersionId !== undefined) await assertActive(client, actor, version.projectId, version.chapterId, expectedActiveVersionId);
@@ -72,7 +72,7 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
     });
   }
 
-  async saveRetryCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId: string, idempotencyKey: string, fingerprint: string, requireCurrentSource = false): Promise<StoryKnowledgeVersion> {
+  async saveRetryCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId: string, idempotencyKey: string, fingerprint: string, requireCurrentSource = false, operation: "candidate" | "review" = "candidate"): Promise<StoryKnowledgeVersion> {
     return this.inTransaction(actor, async (client) => {
       await setOperation(client, "retry");
       if (requireCurrentSource) await assertCurrentGeneration(client, actor, version);
@@ -173,7 +173,7 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
   }
 }
 
-async function setOperation(client: PoolClient, operation: "candidate" | "retry" | "confirm"): Promise<void> {
+async function setOperation(client: PoolClient, operation: "candidate" | "retry" | "confirm" | "review"): Promise<void> {
   await client.query("select set_config('app.story_knowledge_operation', $1, true)", [operation]);
 }
 async function assertCurrentGeneration(client: PoolClient, actor: Actor, version: StoryKnowledgeVersion): Promise<void> {

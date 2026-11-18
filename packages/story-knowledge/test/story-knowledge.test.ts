@@ -5,6 +5,12 @@ import { type Actor, InMemoryStoryKnowledgeRepository, StoryKnowledgeService } f
 
 const actor = { userId: "usr_owner", workspaceId: "wsp_studio" } as const;
 
+const ownerAccess = {
+  async findProjectAccess(requester: Actor) {
+    return { role: requester.userId === "usr_editor" ? "editor" as const : "owner" as const };
+  },
+};
+
 test("部分成功保留有效故事事实，并只允许重试可重试的失败项", async () => {
   const repository = new InMemoryStoryKnowledgeRepository();
   const service = new StoryKnowledgeService({
@@ -131,6 +137,7 @@ test("用户确认隐藏身份候选时派生新版本并完整保留候选证�
   const repository = new InMemoryStoryKnowledgeRepository();
   const ids = ["skv_candidate", "skv_resolved"];
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository,
     sourceReader: {
       async findSourceVersion() {
@@ -189,6 +196,7 @@ test("用户确认隐藏身份候选时派生新版本并完整保留候选证�
 test("解决冲突事实时保留胜出项与被否决项的全部证据", async () => {
   const ids = ["skv_conflict", "skv_decided"];
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository: new InMemoryStoryKnowledgeRepository(),
     sourceReader: {
       async findSourceVersion() {
@@ -246,6 +254,7 @@ test("解决冲突事实时保留胜出项与被否决项的全部证据", async
 test("冲突决定拒绝跨候选组事实，并在并发修改时只接受一个后继版本", async () => {
   const ids = ["skv_base", "skv_a", "skv_b"];
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository: new InMemoryStoryKnowledgeRepository(),
     sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_a", "frag_b"] }; } },
     idGenerator: () => ids.shift() ?? "unexpected",
@@ -276,6 +285,7 @@ test("冲突决定拒绝跨候选组事实，并在并发修改时只接受一�
 
 test("畸形决定命令返回稳定业务错误", async () => {
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository: new InMemoryStoryKnowledgeRepository(),
     sourceReader: { async findSourceVersion() { return null; } },
     idGenerator: () => "unused",
@@ -290,6 +300,7 @@ test("畸形决定命令返回稳定业务错误", async () => {
 test("迟到的提取结果不能覆盖已经完成的人工决定", async () => {
   const ids = ["skv_base", "skv_decided", "skv_late"];
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository: new InMemoryStoryKnowledgeRepository(),
     sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_1"] }; } },
     idGenerator: () => ids.shift() ?? "unexpected",
@@ -310,6 +321,7 @@ test("迟到的提取结果不能覆盖已经完成的人工决定", async () =>
 test("编辑候选事实时保留证据并派生可审计的新版本", async () => {
   const ids = ["skv_base", "skv_edited"];
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository: new InMemoryStoryKnowledgeRepository(),
     sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_1"] }; } },
     idGenerator: () => ids.shift() ?? "unexpected",
@@ -319,6 +331,12 @@ test("编辑候选事实时保留证据并派生可审计的新版本", async ()
     contractVersion: "0.1.0", jobId: "job_base", stage: "storyKnowledge", projectId: "prj_1", chapterId: "chp_1", sourceVersionId: "srcv_1", status: "succeeded",
     items: [{ scopeKey: "fact:event", status: "succeeded", value: { id: "fact_event", factType: "event", statement: "少年灵纹觉醒", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "srcv_1", fragmentId: "frag_1" }] } }],
   });
+
+  const editor = { ...actor, userId: "usr_editor" };
+  const command = { expectedActiveVersionId: "skv_base", factId: "fact_event", statement: "新事实", reason: "核对原文" };
+  await assert.rejects(() => service.editFact(editor, "prj_1", "chp_1", command), { code: "FORBIDDEN" });
+  await assert.rejects(() => service.resolveFact(editor, "prj_1", "chp_1", command), { code: "FORBIDDEN" });
+  await assert.rejects(() => service.reviewFact(editor, "prj_1", "chp_1", { expectedActiveVersionId: command.expectedActiveVersionId, factId: command.factId, reason: command.reason, outcome: "accepted" }), { code: "FORBIDDEN" });
 
   const edited = await service.editFact(actor, "prj_1", "chp_1", {
     expectedActiveVersionId: "skv_base",
@@ -345,6 +363,7 @@ test("编辑候选事实时保留证据并派生可审计的新版本", async ()
 test("接受或拒绝候选事实均保留条目和证据并逐次派生版本", async () => {
   const ids = ["skv_base", "skv_accepted", "skv_rejected"];
   const service = new StoryKnowledgeService({
+    projectAccessReader: ownerAccess,
     repository: new InMemoryStoryKnowledgeRepository(),
     sourceReader: { async findSourceVersion() { return { id: "srcv_1", fragmentIds: ["frag_1", "frag_2"] }; } },
     idGenerator: () => ids.shift() ?? "unexpected",

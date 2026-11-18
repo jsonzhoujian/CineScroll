@@ -23,7 +23,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
       "../migrations/0003_generation_policy.sql",
-      "../migrations/0004_generation_policy_audit.sql",
+      "../migrations/0004_generation_policy_audit.sql", "../migrations/0005_fact_review_permissions.sql",
     ]) {
       await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -38,7 +38,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
     const dbActor = (await adminPool.query("select session_user,current_user")).rows[0];
     assert.equal(audit.rows[0].session_actor, dbActor.session_user); assert.equal(audit.rows[0].effective_actor, dbActor.current_user);
     await adminPool.query(
-      "insert into project_members (project_id, workspace_id, user_id, role) values ('prj_story',$1,'usr_story_reviewer','reviewer')",
+      "insert into project_members (project_id, workspace_id, user_id, role) values ('prj_story',$1,'usr_story_reviewer','reviewer'), ('prj_story',$1,'usr_story_editor','editor')",
       [actor.workspaceId],
     );
 
@@ -205,6 +205,17 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
     );
     await repository.saveCandidate(actor, version("skv_ambiguous_initial"), confirmed.id);
     await assert.rejects(() => repository.findInitialExtraction(actor, "prj_story", "chp_story", "job_story"), { code: "VERSION_CONFLICT" });
+    const editor = { ...actor, userId: "usr_story_editor" };
+    const reviewer = { ...actor, userId: "usr_story_reviewer" };
+    const revision = { ...version("skv_review", "skv_ambiguous_initial"), createdBy: reviewer.userId };
+    await assert.rejects(
+      () => repository.saveCandidate(editor, { ...revision, createdBy: editor.userId }, revision.parentVersionId, false, "review"),
+      { code: "FORBIDDEN" },
+    );
+    assert.equal((await repository.findActive(actor, "prj_story", "chp_story"))?.id, revision.parentVersionId);
+    await repository.saveCandidate(reviewer, revision, revision.parentVersionId, false, "review");
+    assert.deepEqual(await repository.findActive(actor, "prj_story", "chp_story"), revision);
+    assert.deepEqual(await repository.findConfirmedStoryBible(actor, "prj_story", "chp_story"), bible);
   } finally {
     await applicationPool?.end();
     await adminPool.end();
@@ -220,7 +231,7 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
       "../migrations/0003_generation_policy.sql",
-      "../migrations/0004_generation_policy_audit.sql",
+      "../migrations/0004_generation_policy_audit.sql", "../migrations/0005_fact_review_permissions.sql",
     ]) await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await resetFixture(adminPool);
     await adminPool.query("drop role if exists novel_story_test");
