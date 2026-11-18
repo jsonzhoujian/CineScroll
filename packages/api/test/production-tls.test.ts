@@ -835,6 +835,29 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         await impactApp.http.get(taskPath).set("authorization",memberBearer).expect(404);
         await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",memberBearer).expect(role === "nonmember" ? 404 : 200);
       }
+      const collaborativeReview = `${reviewPath}/${lockedFormal.reviewId}`;
+      const collaboratorBearer = `Bearer ${await sessions.issue(`${userId}_reviewer`,workspaceId)}`;
+      const unlockedForReview = (await impactApp.http.post(`${collaborativeReview}/operations`).set("authorization",bearer)
+        .send({ kind: "unlock",shotId: oldShot.id,expectedRevision: lockedFormal.revision,
+          requestId: "tls-collaborative-unlock",reason: "按要求解锁后编辑" }).expect(201)).body;
+      const proposals = [
+        { authorization: bearer,visual: "负责人修订",requestId: "tls-owner-concurrent-edit" },
+        { authorization: collaboratorBearer,visual: "审核人修订",requestId: "tls-reviewer-concurrent-edit" },
+      ];
+      const edits = await Promise.all(proposals.map(({ authorization,visual,requestId }) =>
+        impactApp.http.post(`${collaborativeReview}/operations`).set("authorization",authorization).send({
+          kind: "edit",shotId: oldShot.id,expectedRevision: unlockedForReview.revision,requestId,reason: "并发校验",
+          value: { visual,durationSeconds: lockedFormal.version.shots[0].durationSeconds },
+        })));
+      assert.deepEqual(edits.map(response => response.status).sort(),[201,409]);
+      const winner = proposals[edits.findIndex(response => response.status === 201)]!;
+      assert.equal(edits.find(response => response.status === 409)?.body.code,"STATE_CONFLICT");
+      const sharedReview = (await impactApp.http.get(collaborativeReview).set("authorization",collaboratorBearer).expect(200)).body;
+      assert.equal(sharedReview.revision,unlockedForReview.revision+1);
+      assert.equal(sharedReview.version.shots[0].visual,winner.visual);
+      const formalAfterEdits = (await impactApp.http.get(`${reviewPath}/confirmed`).set("authorization",bearer).expect(200)).body;
+      assert.equal(formalAfterEdits.publicationId,lockedFormal.publicationId);
+      assert.deepEqual(formalAfterEdits.version.shots,lockedFormal.version.shots);
       const guest = `${userId}_guest`, guestHome = `${workspaceId}_guest`;
       await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)",[guest,guestHome]);
       const guestBearer = `Bearer ${await sessions.issue(guest,guestHome)}`;
