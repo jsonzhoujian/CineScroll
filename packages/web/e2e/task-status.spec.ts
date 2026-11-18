@@ -1339,7 +1339,8 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await page.route("**/projects/p/storyboard-audit",route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
     return route.fulfill({ headers,json: {
-      events: [{ eventId: "episode-confirm:plan-new",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:05.000000Z",
+      events: [{ eventId: "reconciliation-begin:draft-43",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:06.000000Z",
+        actorId: "reviewer",kind: "reconciliation_begin",reconciliationId: "draft-43" },{ eventId: "episode-confirm:plan-new",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:05.000000Z",
         actorId: "reviewer",kind: "episode_confirm",previousVersionId: "plan-old",versionId: "plan-new" },{ eventId: "knowledge:k2:decide:rain",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:04.000000Z",
         actorId: "reviewer",kind: "knowledge_decide",decision: "accepted",previousVersionId: "k1",versionId: "k2",targetId: "rain" },{ eventId: "settings:st2",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:03.000000Z",
         actorId: "reviewer",kind: "settings_confirm",previousVersionId: "st1",versionId: "st2" },{ eventId: "script:s3",chapterId: "other-chapter",recordedAt: "2026-11-17T00:00:02.000000Z",
@@ -1359,6 +1360,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(projectAuditPanel).toContainText("确认设定");
   await expect(projectAuditPanel).toContainText("裁决故事事实");
   await expect(projectAuditPanel).toContainText("确认分集方案");
+  await expect(projectAuditPanel).toContainText("核对候选 draft-43");
   await expect(projectAuditPanel).toContainText("原版本 st1 · 新版本 st2");
   await expect(projectAuditPanel).toContainText("原版本 script-old · 新版本 script-new");
   await panel.getByRole("button",{ name: "查看分镜审计" }).click();

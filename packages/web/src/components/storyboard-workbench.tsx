@@ -34,7 +34,7 @@ const auditLabels = new Map([
   ["script_confirm","确认剧本"],["script_lock","锁定剧本"],["script_unlock","解锁剧本"],
   ["source_import","导入原文"],["source_reimport","重新导入原文"],["submit","提交审核"],["suggest","提出建议"],["edit","编辑镜头"],["decide","处理建议"],
   ["lock","锁定镜头"],["unlock","解锁镜头"],["confirm","确认发布"],["retain","原样保留"],
-  ["revise","核对修订"],["adopt","采用重生"],
+  ["reconciliation_begin","创建分镜核对候选"],["revise","核对修订"],["adopt","采用重生"],
 ]);
 
 export function StoryboardWorkbench({ api, projectId, chapterId, active, canReadAudit, impactTarget, onImpactHandled, initialPublication, onPublicationOpened, onOpenAuditPublication }: { api: ApiClient; projectId: string; chapterId: string; active: boolean; canReadAudit: boolean; impactTarget: StoryboardImpactTarget | null; onImpactHandled(target: null): void; initialPublication: StoryboardView | null; onPublicationOpened(): void; onOpenAuditPublication(chapterId: string,publicationId: string): Promise<void> }) {
@@ -303,6 +303,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
           {event.previousVersionId && ` · 原版本 ${event.previousVersionId}`}
           {event.versionId && ` · 新版本 ${event.versionId}`}
           {event.targetId && ` · 审核对象 ${event.targetId}`}
+          {event.reconciliationId && ` · 核对候选 ${event.reconciliationId}`}
           {event.shotId && ` · 镜头 ${event.shotId}`}
           {event.decision && (event.decision === "accepted" ? " · 已采纳" : " · 已驳回")}
           {event.reason && <p>{event.reason}</p>}

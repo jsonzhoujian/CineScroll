@@ -226,6 +226,11 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
           null,reconciliation_id,shot_id,null,revision_reason,null,null,null
         from storyboard_reconciliation_retains where (workspace_id,project_id)=($1,$2) and ($3::text is null or chapter_id=$3)
         union all
+        select chapter_id,'reconciliation-begin:'||id::text,created_at,created_by,
+          'reconciliation_begin',null,id,null,base_publication_id::text,null,null,null,null
+        from storyboard_reconciliations
+        where $3::text is null and (workspace_id,project_id)=($1,$2) and created_at is not null
+        union all
         select source.chapter_id,'source:'||source.id,source.created_at,source.created_by,
           case when source.ordinal=1 then 'source_import' else 'source_reimport' end,
           null,null,null,null,null,null,previous.id,source.id
