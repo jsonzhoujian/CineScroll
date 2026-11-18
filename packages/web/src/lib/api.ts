@@ -391,6 +391,17 @@ export class ApiClient {
     this.#sessionToken = sessionToken;
   }
 
+  issueProjectInvitation(projectId: string,recipientUserId: string,role: "editor" | "reviewer") {
+    return this.request<{ id: string; projectId: string; role: "editor" | "reviewer"; expiresAt: string }>(
+      `/projects/${encodeURIComponent(projectId)}/invitations`,
+      { method: "POST",body: JSON.stringify({ recipientUserId,role }) },"session");
+  }
+
+  acceptProjectInvitation(invitationId: string) {
+    return this.request<{ projectId: string; role: "editor" | "reviewer" }>(
+      `/project-invitations/${encodeURIComponent(invitationId)}/accept`,{ method: "POST" },"session");
+  }
+
   createProject(input: ProjectDraft) {
     return this.request<{ id: string; title: string }>("/projects", {
       method: "POST", body: JSON.stringify(input),

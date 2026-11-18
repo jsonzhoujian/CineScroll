@@ -10,6 +10,7 @@ import type { ReviewFilter } from "../lib/story-knowledge-review";
 import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
 import { OpenStoryboardImpact, type StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
 import { StoryboardWorkbench } from "./storyboard-workbench";
+import { ProjectInvitationPanel } from "./project-invitation-panel";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { TaskStatusPanel, type TaskReviewTarget } from "./task-status-panel";
 
@@ -29,6 +30,8 @@ const initialProject: ProjectDraft = {
 };
 
 export function ImportWorkbench() {
+  const [invitationOpen,setInvitationOpen] = useState(false);
+  const [accountId,setAccountId] = useState<string | null>(null);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const api = useMemo(() => new ApiClient(), []);
   const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: "login", mode: "trace" });
@@ -98,6 +101,7 @@ export function ImportWorkbench() {
       expectedWechatState.current = null;
       wechatPopup.current = null;
       api.acceptSession(message.sessionToken);
+      setAccountId(message.userId ?? null);
       setStep("project");
       setNotice("微信登录成功");
     };
@@ -129,7 +133,8 @@ export function ImportWorkbench() {
   });
   const login = () => run(async () => {
     if (!challengeId) throw new Error("请先获取验证码");
-    await api.verifyPhoneCode({ challengeId, phone, code });
+    const result = await api.verifyPhoneCode({ challengeId, phone, code });
+    setAccountId(result.actor.userId);
     setStep("project"); setNotice(null);
   });
   const startWechatLogin = () => {
@@ -237,6 +242,10 @@ export function ImportWorkbench() {
 
       <section className="work-area">
         <div className="ambient-mark" aria-hidden="true">卷</div>
+        {step !== "login" && <button type="button" className="text-button" aria-expanded={invitationOpen}
+          onClick={() => setInvitationOpen(open => !open)}>项目邀请</button>}
+        {step !== "login" && invitationOpen && <ProjectInvitationPanel key={project?.id ?? "no-project"} api={api}
+          ownerProjectId={project?.role === "owner" ? project.id : null} accountId={accountId} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">

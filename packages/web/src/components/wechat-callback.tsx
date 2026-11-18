@@ -23,6 +23,7 @@ export function WechatCallback({ code, state }: { code?: string; state?: string 
         type: WECHAT_LOGIN_MESSAGE,
         state,
         sessionToken: login.sessionToken,
+        userId: login.actor.userId,
       }, window.location.origin);
       setStatus("登录成功，正在返回工作台……");
       window.setTimeout(() => window.close(), 250);
