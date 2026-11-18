@@ -240,6 +240,12 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
       { userId: "user-1",role: "owner" },{ userId: "editor-1",role: "editor" },
     ] } });
   });
+  await page.route(`${apiOrigin}/projects/project-1/members/audit`,route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
+    return route.fulfill({ headers,json: { projectId: "project-1",events: [
+      { id: "1",actorId: "user-1",subjectId: "editor-1",action: "role_changed",previousRole: "editor",newRole: "reviewer",recordedAt: "2026-11-18T00:00:00Z" },
+    ] } });
+  });
   const changes: unknown[] = [];
   await page.route(`${apiOrigin}/projects/project-1/members/change`,route => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204,headers });
@@ -300,6 +306,10 @@ test("工作台可接受邀请，项目负责人可生成邀请编号", async ({
   await page.getByLabel("项目名称").fill("人间剑令");
   await page.getByRole("checkbox",{ name: /拥有该作品或合法改编权/ }).check();
   await page.getByRole("button",{ name: /创建项目/ }).click();
+  await panel.getByRole("button",{ name: "查看成员审计" }).click();
+  const memberAudit = panel.getByRole("region",{ name: "成员审计" });
+  await expect(memberAudit).toContainText("调整角色 · user-1 · editor-1");
+  await expect(memberAudit).toContainText("原角色 编辑 · 新角色 审核人");
   await panel.getByRole("button",{ name: "读取项目成员" }).click();
   const memberList = panel.getByRole("region",{ name: "项目成员" });
   const editor = memberList.getByRole("listitem").filter({ hasText: "editor-1" });

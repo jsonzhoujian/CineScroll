@@ -414,6 +414,12 @@ export class ApiClient {
     return result;
   }
 
+  listProjectMembershipAudit(projectId: string) {
+    return this.request<{ projectId: string; events: Array<{
+      id: string; actorId: string; subjectId: string; action: string; previousRole: string | null; newRole: string | null; recordedAt: string;
+    }> }>(`/projects/${encodeURIComponent(projectId)}/members/audit`,{ method: "GET" },"session");
+  }
+
   listProjectMembers(projectId: string) {
     return this.request<{ projectId: string; members: Array<{ userId: string; role: "owner" | "editor" | "reviewer" }> }>(
       `/projects/${encodeURIComponent(projectId)}/members`,{ method: "GET" },"session");

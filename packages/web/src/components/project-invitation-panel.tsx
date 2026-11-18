@@ -3,14 +3,22 @@
 import { useRef, useState } from "react";
 import { ApiClientError, type ApiClient } from "../lib/api";
 
-export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeWorkspaceId, onSwitchWorkspace, onOpenChapter }: {
+const membershipActions = new Map([
+  ["invitation_issued","发出邀请"],["invitation_accepted","接受邀请"],["invitation_revoked","撤回邀请"],
+  ["member_added","加入项目"],["role_changed","调整角色"],["member_removed","移除成员"],
+]);
+const roles = new Map([["owner","负责人"],["editor","编辑"],["reviewer","审核人"]]);
+
+export function ProjectInvitationPanel({ api, ownerProjectId, auditProjectId, accountId, activeWorkspaceId, onSwitchWorkspace, onOpenChapter }: {
   api: ApiClient;
   ownerProjectId: string | null;
+  auditProjectId: string | null;
   accountId: string | null;
   activeWorkspaceId: string | null;
   onSwitchWorkspace(workspaceId: string): Promise<void>;
   onOpenChapter(projectId: string,chapterId: string): Promise<void>;
 }) {
+  const [audit,setAudit] = useState<Awaited<ReturnType<ApiClient["listProjectMembershipAudit"]>>["events"] | null>(null);
   const [members,setMembers] = useState<Awaited<ReturnType<ApiClient["listProjectMembers"]>>["members"] | null>(null);
   const [received,setReceived] = useState<Awaited<ReturnType<ApiClient["listReceivedProjectInvitations"]>>["invitations"] | null>(null);
   const [pending,setPending] = useState<Awaited<ReturnType<ApiClient["listPendingProjectInvitations"]>>["invitations"] | null>(null);
@@ -66,6 +74,19 @@ export function ProjectInvitationPanel({ api, ownerProjectId, accountId, activeW
   return <section className="panel" aria-label="项目邀请">
     <h2>项目邀请</h2>
     {accountId && <p>我的账号 ID <code>{accountId}</code></p>}
+    {auditProjectId && <button type="button" disabled={busy} onClick={() => void run(async () => {
+      const result = await api.listProjectMembershipAudit(auditProjectId);
+      if (result.projectId !== auditProjectId) throw new Error("WRONG_PROJECT");
+      setAudit(result.events);
+    },"无法读取成员审计。")}>查看成员审计</button>}
+    {auditProjectId && audit && <section aria-label="成员审计">
+      {audit.length ? <ul>{audit.map(event => <li key={event.id}>
+        <time dateTime={event.recordedAt}>{new Date(event.recordedAt).toLocaleString("zh-CN")}</time>
+        {" · "}{membershipActions.get(event.action) ?? event.action} · {event.actorId} · {event.subjectId}
+        {event.previousRole && ` · 原角色 ${roles.get(event.previousRole) ?? event.previousRole}`}
+        {event.newRole && ` · 新角色 ${roles.get(event.newRole) ?? event.newRole}`}
+      </li>)}</ul> : <p>暂无成员审计记录。</p>}
+    </section>}
     {ownerProjectId && <>
       <button type="button" disabled={busy} onClick={() => void run(async () => {
         const page = await api.listPendingProjectInvitations(ownerProjectId);

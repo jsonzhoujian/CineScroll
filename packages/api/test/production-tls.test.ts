@@ -151,7 +151,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   };
   try {
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
-      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../project-import/migrations/0006_manage_pending_invitations.sql", "../../project-import/migrations/0007_received_project_invitations.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
+      "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../project-import/migrations/0006_manage_pending_invitations.sql", "../../project-import/migrations/0007_received_project_invitations.sql", "../../project-import/migrations/0008_project_membership_audit.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
       "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
@@ -828,6 +828,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
           .set("authorization",memberBearer).expect(role === "nonmember" ? 404 : 200);
         if (role !== "nonmember") assert.deepEqual(directory.body,{ projectId,chapters: [{ id: chapterId,title: "chapter" }] });
         const expected = role === "editor" ? 403 : role === "reviewer" ? 200 : 404;
+        await impactApp.http.get(`/projects/${projectId}/members/audit`).set("authorization",memberBearer)
+          .expect(role === "reviewer" ? 200 : 403);
         await impactApp.http.get(auditPath).set("authorization",memberBearer).expect(expected);
         await impactApp.http.get(projectAuditPath).set("authorization",memberBearer).expect(expected);
         await impactApp.http.get(taskPath).set("authorization",memberBearer).expect(404);
@@ -885,6 +887,11 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       await impactApp.http.post(change).set("authorization",bearer).send({ ...downgrade,role: null }).expect(409);
       await impactApp.http.post(change).set("authorization",bearer).send({ ...downgrade,expectedRole: "editor",role: null }).expect(201);
       await impactApp.http.post(`/project-invitations/${guestInvitation.id}/accept`).set("authorization",guestBearer).expect(409);
+      const membershipAudit = (await impactApp.http.get(`${membersPath}/audit`).set("authorization",bearer).expect(200)).body;
+      assert.ok(membershipAudit.events.some((event: { action: string; actorId: string; subjectId: string }) =>
+        event.action === "invitation_accepted" && event.actorId === guest && event.subjectId === guest));
+      assert.ok(membershipAudit.events.some((event: { action: string; actorId: string; subjectId: string }) =>
+        event.action === "member_removed" && event.actorId === userId && event.subjectId === guest));
       await impactApp.http.get("/projects").set("authorization",scopedBearer).expect(401);
       await impactApp.http.get("/projects").set("authorization",guestBearer).expect(200,{ projects: [] });
       await impactApp.http.get(projectAuditPath).expect(401);

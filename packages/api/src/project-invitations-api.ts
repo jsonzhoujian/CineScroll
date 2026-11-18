@@ -4,7 +4,7 @@ import type { PostgresProjectImportRepository } from "@novel-adaptation/project-
 import { SESSION_VERIFIER, SessionGuard } from "./index.ts";
 
 const INVITATIONS = Symbol("PROJECT_INVITATIONS");
-type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces" | "listProjectMembers" | "changeProjectMember" | "listPendingInvitations" | "revokePendingInvitation" | "listReceivedInvitations">;
+type Invitations = Pick<PostgresProjectImportRepository,"issueInvitation" | "acceptInvitation" | "listProjectChapters" | "listMemberProjects" | "listAccountWorkspaces" | "listProjectMembers" | "changeProjectMember" | "listPendingInvitations" | "revokePendingInvitation" | "listReceivedInvitations" | "listProjectMembershipAudit">;
 
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\r\n\0]/.test(value)) throw new BadRequestException();
@@ -80,6 +80,11 @@ class ProjectInvitationsController {
     return respond(() => this.invitations.revokePendingInvitation(req.actor,projectId,invitationId));
   }
 
+  membershipAudit(req: { actor: Actor },project: string) {
+    const projectId = identifier(project);
+    return respond(async () => ({ projectId,events: await this.invitations.listProjectMembershipAudit(req.actor,projectId) }));
+  }
+
   members(req: { actor: Actor },project: string) {
     const projectId = identifier(project);
     return respond(async () => {
@@ -124,6 +129,7 @@ for (const [method,path,param,route] of [
   ["received","project-invitations/received",null,Get],
   ["pending","projects/:projectId/invitations","projectId",Get],
   ["revoke","projects/:projectId/invitations/revoke","projectId",Post],
+  ["membershipAudit","projects/:projectId/members/audit","projectId",Get],
   ["members","projects/:projectId/members","projectId",Get],
   ["changeMember","projects/:projectId/members/change","projectId",Post],
   ["chapters","projects/:projectId/chapter-directory","projectId",Get],

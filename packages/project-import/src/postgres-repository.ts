@@ -68,6 +68,12 @@ export class PostgresProjectImportRepository implements ProjectImportRepository 
     });
   }
 
+  listProjectMembershipAudit(actor: Actor,projectId: string) {
+    return this.inTransaction(actor,async client => (await client.query(
+      "select * from list_project_membership_audit($1)",[projectId],
+    )).rows);
+  }
+
   listProjectMembers(actor: Actor,projectId: string) {
     return this.inTransaction(actor, async client => (await client.query<{
       userId: string; role: "owner" | "editor" | "reviewer";

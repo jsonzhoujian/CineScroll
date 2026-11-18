@@ -318,7 +318,8 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
         {step !== "login" && <button type="button" className="text-button" aria-expanded={invitationOpen}
           onClick={() => setInvitationOpen(open => !open)}>项目邀请</button>}
         {step !== "login" && invitationOpen && <ProjectInvitationPanel key={project?.id ?? "no-project"} api={api}
-          ownerProjectId={project?.role === "owner" ? project.id : null} accountId={accountId} activeWorkspaceId={activeWorkspaceId}
+          ownerProjectId={project?.role === "owner" ? project.id : null}
+          auditProjectId={project?.role === "owner" || project?.role === "reviewer" ? project.id : null} accountId={accountId} activeWorkspaceId={activeWorkspaceId}
           onSwitchWorkspace={id => api.switchWorkspace(id).then(onWorkspaceChange)} onOpenChapter={openProjectChapter} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
