@@ -75,7 +75,33 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       const row = inserted ?? (await client.query(`select id from storyboard_reconciliations
         where (workspace_id,project_id,chapter_id,base_publication_id,source_version_id,upstream_ids)=($1,$2,$3,$4,$5,$6)`,key)).rows[0];
       if (!row) throw new StoryboardStorageError("STORAGE_UNAVAILABLE");
-      return { id: row.id as string,publicationId,sourceVersionId,upstreamConfirmedVersionIds: upstreamIds };
+      const retained = (await client.query(`select shot_id from storyboard_reconciliation_retains
+        where (workspace_id,project_id,chapter_id,reconciliation_id)=($1,$2,$3,$4) order by shot_id`,
+      [actor.workspaceId,p,c,row.id])).rows;
+      return { id: row.id as string,publicationId,sourceVersionId,upstreamConfirmedVersionIds: upstreamIds,
+        retainedShotIds: retained.map(entry => entry.shot_id as string) };
+    });
+  }
+
+  async retainReconciliationShot(actor: Actor,p: string,c: string,publicationId: string,draftId: string,shotId: string) {
+    const baseline = await this.findReview(actor,p,c,null,publicationId);
+    const shot = baseline?.candidate.shots.find(item => item.id === shotId);
+    if (!shot) throw new StoryboardStorageError("TASK_NOT_FOUND");
+    const upstream = await this.handoff.read(actor,p,c);
+
+    return this.transaction(actor, async client => {
+      const key = [actor.workspaceId,p,c,draftId,publicationId];
+      const draft = (await client.query(`select source_version_id,upstream_ids from storyboard_reconciliations
+        where (workspace_id,project_id,chapter_id,id,base_publication_id)=($1,$2,$3,$4,$5)`,key)).rows[0];
+      if (!draft) throw new StoryboardStorageError("TASK_NOT_FOUND");
+      if (draft.source_version_id !== upstream.sourceVersionId
+        || JSON.stringify(draft.upstream_ids) !== JSON.stringify(upstream.upstreamConfirmedVersionIds)) {
+        throw new StoryboardUpstreamError();
+      }
+      if (!validateStoryboardShot(shot,upstream.context)) throw new StoryboardStorageError("INVALID_CANDIDATE");
+      await client.query(`insert into storyboard_reconciliation_retains(workspace_id,project_id,chapter_id,reconciliation_id,shot_id)
+        values($1,$2,$3,$4,$5) on conflict do nothing`,[actor.workspaceId,p,c,draftId,shotId]);
+      return { shotId };
     });
   }
 
@@ -189,7 +215,7 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
       return result;
     } catch (error) {
       try { await client?.query("rollback"); } catch { /* Preserve the original error. */ }
-      if (error instanceof StoryboardStorageError) throw error;
+      if (error instanceof StoryboardStorageError || error instanceof StoryboardUpstreamError) throw error;
       const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
       if (code === "P7001") throw new StoryboardUpstreamError();
       throw new StoryboardStorageError(code === "42501" ? "FORBIDDEN" : code === "P7002" ? "INVALID_CANDIDATE" : code === "P7003" ? "POLICY_RESTRICTED" : code === "P7004" ? "STATE_CONFLICT" : code === "P7005" ? "TASK_NOT_FOUND" : code === "P7006" ? "REVIEW_INCOMPLETE" : code === "P7007" ? "DURATION_OUT_OF_RANGE" : "STORAGE_UNAVAILABLE");

@@ -198,9 +198,14 @@ export class ApiClient {
     return this.request<StoryboardView>(`${storyboardPath(p,c)}/publications/${encodeURIComponent(id)}`,{ method: "GET" },"session");
   }
   beginStoryboardReconciliation(p: string,c: string,publicationId: string,upstream: NonNullable<StoryboardReconciliationPreview["currentUpstream"]>) {
-    return this.request<{ id: string; publicationId: string }>(
+    return this.request<{ id: string; publicationId: string; retainedShotIds: string[] }>(
       `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation`,
       { method: "POST",body: JSON.stringify(upstream) },"session");
+  }
+  retainStoryboardReconciliationShot(p: string,c: string,publicationId: string,draftId: string,shotId: string) {
+    return this.request<{ shotId: string }>(
+      `${storyboardPath(p,c)}/publications/${encodeURIComponent(publicationId)}/reconciliation/${encodeURIComponent(draftId)}/retains`,
+      { method: "POST",body: JSON.stringify({ shotId }) },"session");
   }
   previewStoryboardReconciliation(p: string,c: string,publicationId: string) {
     return this.request<StoryboardReconciliationPreview>(

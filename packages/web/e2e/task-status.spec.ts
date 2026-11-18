@@ -1153,6 +1153,7 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
       version: { ...input,projectId: "p",chapterId: "c",shots: [shot,reviewedShot],failures: failures.slice(1) },
     };
   }
+  let retainedShotIds: string[] = [];
   await page.route(`${root}**`,route => {
     const request = route.request(), suffix = request.url().slice(root.length);
     if (request.method() === "OPTIONS") return route.fulfill({ headers,status: 204 });
@@ -1162,11 +1163,17 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
     } });
     if (suffix === "/publications/42/reconciliation" && request.method() === "POST") {
       expect(request.postDataJSON()).toEqual({ sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] });
-      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42" } });
+      return route.fulfill({ headers,status: 201,json: { id: "reconcile-42",publicationId: "42",retainedShotIds } });
+    }
+    if (suffix === "/publications/42/reconciliation/reconcile-42/retains" && request.method() === "POST") {
+      expect(request.postDataJSON()).toEqual({ shotId: "two" });
+      retainedShotIds = ["two"];
+      return route.fulfill({ headers,status: 201,json: { shotId: "two" } });
     }
     if (suffix === "/publications/42/reconciliation") return route.fulfill({ headers,json: {
       publicationId: "42",upstreamChanged: true,currentUpstream: { sourceVersionId: "s",upstreamConfirmedVersionIds: ["new-script","new-settings","plan","candidate"] },
-      shots: [{ id: "one",visual: "雨打空庭",locked: true,referencesMatch: false }],
+      shots: [{ id: "one",visual: "雨打空庭",locked: true,referencesMatch: false },
+        { id: "two",visual: "积水倒影",locked: true,referencesMatch: true }],
     } });
     if (suffix === "/publications/42") return route.fulfill({ headers,json: {
       ...reviewView(),publicationId: "42",revision: 1,formalRead: true,canPreviewReconciliation: true,
@@ -1319,6 +1326,13 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(preview).toContainText("引用须重新核对");
   await preview.getByRole("button",{ name: "创建分镜核对候选" }).click();
   await expect(preview).toContainText("核对候选 reconcile-42 · 待逐镜核对");
+  const retain = preview.getByRole("button",{ name: "核对无误，原样保留" });
+  await expect(retain).toHaveCount(1);
+  await retain.click();
+  await expect(preview).toContainText("已保留");
+  await panel.getByRole("button",{ name: "预览分镜跨上游核对" }).click();
+  await preview.getByRole("button",{ name: "创建分镜核对候选" }).click();
+  await expect(preview).toContainText("已保留");
   await expect(panel.getByRole("heading",{ name: "正式分镜 · 发布 42" })).toBeVisible();
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
