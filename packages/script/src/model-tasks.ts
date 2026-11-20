@@ -15,7 +15,8 @@ export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded"
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
 export type TaskResult = { candidateVersionId: string; extractionStatus: "succeeded" | "partially_succeeded" | "failed" };
 export type TaskPage = { tasks: ModelTask[]; nextCursor: string | null };
-export type EpisodeNotification = {
+export type NotificationTaskKind = "episodePlan" | "scriptContent";
+export type TaskNotification = {
   taskId: string; projectId: string; chapterId: string; outcome: "succeeded" | "execution_unknown";
 };
 export type TaskPageRequest = { limit: number; cursor: string | null };
@@ -47,7 +48,7 @@ export interface ModelTaskRepository {
   scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
-  listEpisodeNotificationTasks(actor: Actor, page: TaskPageRequest): Promise<TaskPage>;
+  listNotificationTasks(actor: Actor, page: TaskPageRequest, kind: NotificationTaskKind): Promise<TaskPage>;
   find(workspaceId: string, id: string): Promise<ModelTask | null>;
   insert(task: ModelTask): Promise<ModelTask>;
   transition(workspaceId: string, id: string, expectedRevision: number, state: TaskState, reason: TaskReason | null, result?: TaskResult | null): Promise<ModelTask>;
@@ -123,10 +124,10 @@ export class ModelTaskService {
     } else await this.#context(actor,projectId,chapterId);
     return this.#options.repository.listEpisodePlans(actor.workspaceId,projectId,chapterId,page);
   }
-  async listEpisodeNotifications(actor: Actor, page: TaskPageRequest) {
+  async listTaskNotifications(actor: Actor, page: TaskPageRequest, kind: NotificationTaskKind) {
     validateTaskPage(page);
-    const { tasks, nextCursor } = await this.#options.repository.listEpisodeNotificationTasks(actor,page);
-    const notifications: EpisodeNotification[] = [];
+    const { tasks, nextCursor } = await this.#options.repository.listNotificationTasks(actor,page,kind);
+    const notifications: TaskNotification[] = [];
     for (const task of tasks) {
       if (task.workspaceId !== actor.workspaceId || task.createdBy !== actor.userId) continue;
       if (!await this.#options.contextReader.canRead?.(actor,task.projectId,task.chapterId)) continue;
@@ -525,10 +526,10 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
-  async listEpisodeNotificationTasks(actor: Actor, page: TaskPageRequest): Promise<TaskPage> {
+  async listNotificationTasks(actor: Actor, page: TaskPageRequest, kind: NotificationTaskKind): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === actor.workspaceId
-      && task.createdBy === actor.userId && task.input.stage === "script" && task.input.resultType === "episodePlan"
+      && task.createdBy === actor.userId && task.input.stage === "script" && task.input.resultType === kind
       && (task.state === "succeeded" && task.result !== null || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN")
       && (page.cursor === null || compareTaskIds(notificationCursor(task.id),page.cursor) > 0))
       .sort((a,b) => compareTaskIds(notificationCursor(a.id),notificationCursor(b.id))).slice(0,page.limit+1);

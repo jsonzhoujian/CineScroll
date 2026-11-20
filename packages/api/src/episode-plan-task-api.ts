@@ -49,7 +49,7 @@ class EpisodePlanTaskController {
   }
   notifications(request: { actor: Actor }, query: Record<string,unknown>) {
     const page = pagination(query);
-    return safely(() => this.#tasks.listEpisodeNotifications(request.actor,page));
+    return safely(() => this.#tasks.listTaskNotifications(request.actor,page,"episodePlan"));
   }
   get(request: { actor: Actor }, id: string) {
     const taskId = identifier(id);

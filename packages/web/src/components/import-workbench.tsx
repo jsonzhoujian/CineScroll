@@ -11,7 +11,7 @@ import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
 import { OpenStoryboardImpact, type StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
 import { StoryboardWorkbench } from "./storyboard-workbench";
 import { ProjectInvitationPanel } from "./project-invitation-panel";
-import { EpisodeNotifications } from "./episode-notifications";
+import { TaskNotifications } from "./task-notifications";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { TaskStatusPanel, type TaskReviewTarget } from "./task-status-panel";
 
@@ -325,7 +325,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
           auditProjectId={project?.role === "owner" || project?.role === "reviewer" ? project.id : null} accountId={accountId} activeWorkspaceId={activeWorkspaceId}
           onSwitchWorkspace={id => api.switchWorkspace(id).then(onWorkspaceChange)} onOpenChapter={openProjectChapter} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
-        {step !== "login" && notificationsOpen && <div className="desktop-notifications"><EpisodeNotifications api={api} /></div>}
+        {step !== "login" && notificationsOpen && <div className="desktop-notifications"><TaskNotifications api={api} /></div>}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} api={api} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>
@@ -420,7 +420,7 @@ function MobileCompanion({ tab, onTabChange, step, project, chapter, api }: { ap
     </div>}
     {tab === "review" && <MobileEmpty mark="审" title="暂无待审核内容" note={chapter ? "原文已就绪；故事知识生成后，将在这里逐项审核。" : "完成原文入卷后，审核任务会出现在这里。"} />}
     {tab === "decisions" && <MobileEmpty mark="议" title="暂无修改建议" note="成员提交建议后，可在此查看理由并接受或拒绝；移动端不直接编辑正文。" />}
-    {tab === "notifications" && step !== "login" && <EpisodeNotifications api={api} />}
+    {tab === "notifications" && step !== "login" && <TaskNotifications api={api} />}
     <footer><i />移动端为审阅席，不提供立项、导入或重新生成</footer>
   </section>;
 }

@@ -514,10 +514,45 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         await new Promise(resolve => setTimeout(resolve,20));
       }
       assert.equal(status!.body.state,"succeeded",JSON.stringify(status!.body));
+      const scriptNotificationPath = "/script-content-notifications";
+      await scriptApp.http.get(scriptNotificationPath).expect(401);
+      await scriptApp.http.get(scriptNotificationPath).set("authorization",bearer).query({ limit: 51 }).expect(400);
+      const notices = await scriptApp.http.get(scriptNotificationPath).set("authorization",bearer).expect(200);
+      assert.equal(notices.headers["cache-control"],"no-store");
+      assert.deepEqual(notices.body,{ notifications: [
+        { taskId: scriptTaskId,projectId,chapterId,outcome: "succeeded" },
+      ],nextCursor: null });
+      const unknownScriptTaskId = `interrupted_${suffix}`;
+      const interrupted = await admin.connect();
+      try {
+        await interrupted.query("begin");
+        await interrupted.query(`insert into model_tasks(workspace_id,id,parent_task_id,payload,state,revision,reason)
+          select workspace_id,$3,null,jsonb_set(payload,'{id}',to_jsonb($3::text)),'queued',0,null
+          from model_tasks where workspace_id=$1 and id=$2`,[workspaceId,scriptTaskId,unknownScriptTaskId]);
+        await interrupted.query(`update model_tasks set state='running',revision=revision+1,
+          lease_expires_at=clock_timestamp()-interval '1 second' where workspace_id=$1 and id=$2`,[workspaceId,unknownScriptTaskId]);
+        await interrupted.query("commit");
+      } catch (error) {
+        await interrupted.query("rollback");
+        throw error;
+      } finally {
+        interrupted.release();
+      }
+      let unknownScript;
+      for (let attempt=0;attempt<100;attempt++) {
+        unknownScript = await scriptApp.http.get(`/script-content-tasks/${unknownScriptTaskId}`).set("authorization",bearer).expect(200);
+        if (unknownScript.body.state === "paused") break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(unknownScript!.body.reason,"EXECUTION_UNCERTAIN");
+      const scriptNotices = await scriptApp.http.get(scriptNotificationPath).set("authorization",bearer).expect(200);
+      assert.deepEqual(new Map(scriptNotices.body.notifications.map((item: { taskId: string;outcome: string }) => [item.taskId,item.outcome])),
+        new Map([[scriptTaskId,"succeeded"],[unknownScriptTaskId,"execution_unknown"]]));
       const view = await scriptApp.http.get(`/projects/${projectId}/chapters/${chapterId}/script-content`).set("authorization",bearer).expect(200);
       assert.equal(view.body.version.id,status!.body.result.candidateVersionId);
       assert.equal(view.body.current,true); assert.equal(modelCalls,3);
       assert.equal(view.body.permissions.canEdit,true);
+      await admin.query("delete from model_tasks where workspace_id=$1 and id=$2",[workspaceId,unknownScriptTaskId]);
       const command = { kind: "edit",requestId: "tls-edit",expectedActiveVersionId: view.body.version.id,elementId: "action",text: "雨打庭院",reason: "镜头表达" };
       const edited = await scriptApp.http.post(`/projects/${projectId}/chapters/${chapterId}/script-content/review`).set("authorization",bearer).send(command).expect(201);
       scriptReviewedId = edited.body.id;

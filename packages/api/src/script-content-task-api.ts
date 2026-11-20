@@ -18,6 +18,12 @@ function selection(body: unknown, submission = false) {
   const value = body as Record<string,unknown>;
   return { configurationVersionId: identifier(value.configurationVersionId),modelId: identifier(value.modelId),...(submission ? { requestId: identifier(value.requestId) } : {}) };
 }
+function pagination(query: Record<string,unknown>) {
+  if (Object.keys(query).some(key => !["limit","cursor"].includes(key))) throw new BadRequestException("分页参数无效");
+  const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new BadRequestException("分页参数无效");
+  return { limit,cursor: query.cursor === undefined ? null : identifier(query.cursor) };
+}
 async function safely<T>(action: () => Promise<T>) {
   try { return await action(); } catch (error) {
     if (error instanceof ModelTaskError || error instanceof ModelSettingsError) throw error;
@@ -48,11 +54,12 @@ class ScriptContentTaskController {
     return safely(() => this.#tasks.availability(request.actor,projectId,chapterId,chosen,"scriptContent"));
   }
   list(request: { actor: Actor }, p: string, c: string, query: Record<string,unknown>) {
-    if (Object.keys(query).some(key => !["limit","cursor"].includes(key))) throw new BadRequestException("分页参数无效");
-    const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new BadRequestException("分页参数无效");
-    const cursor = query.cursor === undefined ? null : identifier(query.cursor),projectId = identifier(p),chapterId = identifier(c);
-    return safely(() => this.#tasks.listScriptContent(request.actor,projectId,chapterId,{ limit,cursor }));
+    const page = pagination(query), projectId = identifier(p), chapterId = identifier(c);
+    return safely(() => this.#tasks.listScriptContent(request.actor,projectId,chapterId,page));
+  }
+  notifications(request: { actor: Actor }, query: Record<string,unknown>) {
+    const page = pagination(query);
+    return safely(() => this.#tasks.listTaskNotifications(request.actor,page,"scriptContent"));
   }
   get(request: { actor: Actor }, id: string) {
     const taskId = identifier(id);
@@ -75,10 +82,11 @@ class ScriptTaskFilter implements ExceptionFilter<ModelTaskError | ModelSettings
 Catch(ModelTaskError,ModelSettingsError)(ScriptTaskFilter);
 Controller()(ScriptContentTaskController); UseGuards(SessionGuard)(ScriptContentTaskController); Inject(TASKS)(ScriptContentTaskController,undefined,0);
 Inject(RATE)(ScriptContentTaskController,undefined,1);
-for (const [method,decorator] of [["retry",Post("projects/:projectId/chapters/:chapterId/script-content-tasks/retries")], ["submit",Post("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/script-content-tasks/availability")], ["get",Get("script-content-tasks/:id")]] as const) {
+for (const [method,decorator] of [["retry",Post("projects/:projectId/chapters/:chapterId/script-content-tasks/retries")], ["submit",Post("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/script-content-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/script-content-tasks/availability")], ["get",Get("script-content-tasks/:id")], ["notifications",Get("script-content-notifications")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(ScriptContentTaskController.prototype,method)!;
   decorator(ScriptContentTaskController.prototype,method,descriptor); Header("Cache-Control","no-store")(ScriptContentTaskController.prototype,method,descriptor); Req()(ScriptContentTaskController.prototype,method,0);
   if (method === "get") Param("id")(ScriptContentTaskController.prototype,method,1);
+  else if (method === "notifications") Query()(ScriptContentTaskController.prototype,method,1);
   else {
     Param("projectId")(ScriptContentTaskController.prototype,method,1); Param("chapterId")(ScriptContentTaskController.prototype,method,2);
     if (method === "submit" || method === "retry") Body()(ScriptContentTaskController.prototype,method,3); else Query()(ScriptContentTaskController.prototype,method,3);
