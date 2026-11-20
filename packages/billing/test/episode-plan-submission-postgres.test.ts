@@ -1,4 +1,5 @@
 import { createEpisodeFeishuAlertDelivery } from "../../api/src/episode-feishu-alert-delivery.ts";
+import { createEpisodeFeishuAlertWorker } from "../../api/src/episode-feishu-alert-worker.ts";
 import { createEpisodeReconciliationAlertReader } from "../../api/src/episode-reconciliation-alerts.ts";
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
@@ -323,7 +324,30 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       assert.deepEqual((await deliveryPool.query('select task_id from episode_alert_deliveries')).rows,[]);
       await assert.rejects(deliveryPool.query('delete from episode_alert_deliveries'),{code:'42501'});
     } finally { await deliveryPool.end(); }
-    await admin.query("delete from episode_reconciliation_alerts where workspace_id='other'");
+    let workerSendCount=0;
+    for (const phase of ['initial start','restart']) {
+      const workerPool=new Pool({connectionString:url.href,max:1});
+      const worker=createEpisodeFeishuAlertWorker({
+        pool:workerPool,workspaceIds:['other'],enabled:true,
+        send:async ()=>{
+          workerSendCount++;
+          return 'delivered';
+        },
+      });
+      const running=worker.start();
+      try {
+        for (let attempt=0; attempt<100 && worker.status().backoffMs===0; attempt++) await delay(20);
+        assert.ok(worker.status().lastScanAt,phase);
+        assert.equal(worker.status().lastError,null,phase);
+        assert.equal(workerSendCount,1,phase);
+        const {rows}=await admin.query("select status,attempts from episode_alert_deliveries where workspace_id='other' and task_id='hidden'");
+        assert.deepEqual(rows,[{status:'delivered',attempts:1}],phase);
+      } finally {
+        try { await worker.stop(); await running; }
+        finally { await workerPool.end(); }
+      }
+    }
+    await admin.query("delete from episode_alert_deliveries where workspace_id='other'; delete from episode_reconciliation_alerts where workspace_id='other'");
 
     assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
     await restarted.tick('studio');
