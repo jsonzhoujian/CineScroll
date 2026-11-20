@@ -26,13 +26,14 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   const ca = await readFile(process.env.TEST_TLS_CA_PATH!, "utf8");
   const admin = new Pool({ connectionString: databaseUrl, ssl: { ca, rejectUnauthorized: true } });
   const suffix = randomUUID().replaceAll("-", "");
-  const login = `model_${suffix}`, outboxLogin = `outbox_${suffix}`, reconciliationLogin = `reconcile_${suffix}`, evidenceLogin = `evidence_${suffix}`, opsLogin = `ops_${suffix}`, extraRole = `extra_${suffix}`;
+  const login = `model_${suffix}`, outboxLogin = `outbox_${suffix}`, reconciliationLogin = `reconcile_${suffix}`, evidenceLogin = `evidence_${suffix}`, opsLogin = `ops_${suffix}`, deliveryLogin = `delivery_${suffix}`, extraRole = `extra_${suffix}`;
   const workspaceId = `w_${suffix}`, userId = `u_${suffix}`;
   const sessionSecret = "0123456789abcdef0123456789abcdef";
   const restrictedUrl = new URL(databaseUrl); restrictedUrl.username = login; restrictedUrl.password = "";
   const outboxUrl = new URL(restrictedUrl); outboxUrl.username = outboxLogin;
   const reconciliationUrl = new URL(restrictedUrl); reconciliationUrl.username = reconciliationLogin;
   const evidenceUrl = new URL(restrictedUrl); evidenceUrl.username = evidenceLogin;
+  const deliveryUrl = new URL(restrictedUrl); deliveryUrl.username = deliveryLogin;
   const config = {
     databaseUrl, databaseTlsCa: ca, sessionSecret, deviceTokenSecret: "abcdef0123456789abcdef0123456789",
     trustedProxyHops: 0, smsEndpoint: "https://sms.example/verify", smsApiKey: "fixture",
@@ -132,7 +133,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         evidence: [{ sourceVersionId: input.sourceVersionId, fragmentId: input.input.sourceFragments[0].id }] } }] };
     return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
   };
-  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false, outboxEnabled = false, reconciliationEnabled = false) => {
+  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false, outboxEnabled = false, reconciliationEnabled = false, feishuFetch?:typeof fetch) => {
     const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa },
       ...(storyboardEnabled ? { storyboardTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(settingsEnabled ? { settingsTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
@@ -141,7 +142,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       ...(episodesEnabled ? { episodeTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100,
         ...(outboxEnabled ? {outbox:{enabled:true,databaseUrl:outboxUrl.href}} : {}),
         ...(reconciliationEnabled ? {reconciliation:{enabled:true,databaseUrl:reconciliationUrl.href,
-          evidenceDatabaseUrl:evidenceUrl.href,pageSize:1,intervalMs:60000}} : {}) } } : {}) }, { modelFetch });
+          evidenceDatabaseUrl:evidenceUrl.href,pageSize:1,intervalMs:60000,
+          ...(feishuFetch ? {feishu:{enabled:true,databaseUrl:deliveryUrl.href}} : {})}} : {}) } } : {}) },
+      {modelFetch,...(feishuFetch ? {feishuFetch} : {})});
     try {
       const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
       const app = ref.createNestApplication();
@@ -170,7 +173,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../../script/migrations/0043_storyboard_reconciliation_retains.sql", "../../script/migrations/0044_storyboard_reconciliation_revisions.sql", "../../script/migrations/0045_storyboard_regeneration_tasks.sql", "../../script/migrations/0046_storyboard_regeneration_adoption.sql", "../../script/migrations/0047_storyboard_reconciliation_confirmation.sql", "../../script/migrations/0048_storyboard_reconciliation_created_at.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql", "../../billing/migrations/0001_credit_ledger.sql",
       "../../billing/migrations/0003_episode_submission_outbox.sql", "../../billing/migrations/0004_episode_outbox_consumer.sql", "../../billing/migrations/0005_episode_execution_events.sql", "../../billing/migrations/0002_evidence_material.sql",
-      "../../billing/migrations/0006_episode_reconciliation.sql", "../../billing/migrations/0007_episode_reconciliation_alert_reader.sql"]) {
+      "../../billing/migrations/0006_episode_reconciliation.sql", "../../billing/migrations/0007_episode_reconciliation_alert_reader.sql",
+      "../../billing/migrations/0008_episode_alert_delivery.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
     // Identifiers are generated locally from hex UUIDs, not supplied by users.
@@ -411,6 +415,39 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.deepEqual(balance.rows[0]?.entries,[]);
       assert.equal(modelCalls,2);
     } finally { await secondReconciliation.close(); }
+    assert.equal((await admin.query("select count(*)::int n from episode_alert_deliveries")).rows[0].n,0);
+    await admin.query(`create role ${deliveryLogin} login nosuperuser nocreatedb nocreaterole nobypassrls;
+      grant novel_episode_alert_delivery to ${deliveryLogin}`);
+    const previousWebhook=process.env.EPISODE_FEISHU_WEBHOOK;
+    process.env.EPISODE_FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000";
+    let deliveries=0;
+    const feishuFetch:typeof fetch=async (_url,init)=>{
+      deliveries++;
+      assert.match(JSON.parse(String(init?.body)).content.text,/EXECUTION_UNKNOWN/);
+      return Response.json({code:0});
+    };
+    try {
+      await admin.query(`grant novel_billing to ${deliveryLogin}`);
+      try {
+        await assert.rejects(()=>start(ca,false,true,false,false,false,true,true,feishuFetch),
+          {message:"EPISODE_FEISHU_DATABASE_NOT_READY"});
+      } finally { await admin.query(`revoke novel_billing from ${deliveryLogin}`); }
+      assert.equal(deliveries,0);
+      const deliveryApp=await start(ca,false,true,false,false,false,true,true,feishuFetch);
+      try {
+        for(let attempt=0;attempt<100;attempt++) {
+          if ((await admin.query("select status from episode_alert_deliveries")).rows[0]?.status==="delivered") break;
+          await new Promise(resolve=>setTimeout(resolve,20));
+        }
+        assert.deepEqual((await admin.query("select task_id,status,attempts from episode_alert_deliveries")).rows,
+          [{task_id:interruptedEpisodeId,status:"delivered",attempts:1}]);
+        assert.equal(deliveries,1);
+      } finally { await deliveryApp.close(); }
+    } finally {
+      if (previousWebhook===undefined) delete process.env.EPISODE_FEISHU_WEBHOOK;
+      else process.env.EPISODE_FEISHU_WEBHOOK=previousWebhook;
+    }
+
     await admin.query(`create role ${opsLogin} login nosuperuser nocreatedb nocreaterole nobypassrls;
       grant novel_episode_alert_reader to ${opsLogin}`);
     const opsUrl=new URL(restrictedUrl); opsUrl.username=opsLogin;
@@ -1373,7 +1410,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     try { await assert.rejects(start, { message: "MODEL_DATABASE_NOT_READY" }); }
     finally { await admin.query("grant insert on model_settings_audit to novel_app"); }
   } finally {
-    try { await admin.query(`drop role if exists ${login}; drop role if exists ${outboxLogin}; drop role if exists ${reconciliationLogin}; drop role if exists ${evidenceLogin}; drop role if exists ${opsLogin}`); }
+    try { await admin.query(`drop role if exists ${login}; drop role if exists ${outboxLogin}; drop role if exists ${reconciliationLogin}; drop role if exists ${evidenceLogin}; drop role if exists ${opsLogin}; drop role if exists ${deliveryLogin}`); }
     finally {
       try { await admin.query(`drop role if exists ${extraRole}`); }
       finally { await admin.end(); }

@@ -71,6 +71,8 @@ import { CreditLedgerService } from "../../billing/src/index.ts";
 import { PostgresCreditLedgerRepository } from "../../billing/src/postgres-ledger.ts";
 import { createInternalBillingAccess } from "../../billing/src/internal-access.ts";
 import { assertEpisodeOutboxDatabase } from "./episode-outbox-database-readiness.ts";
+import { createEpisodeFeishuAlertSender } from "./episode-feishu-alert.ts";
+import { createEpisodeFeishuAlertWorker,assertEpisodeFeishuAlertDatabase } from "./episode-feishu-alert-worker.ts";
 import { createEpisodeReconciliationWorker } from "./episode-reconciliation-worker.ts";
 import { assertEpisodeReconciliationDatabase } from "./episode-reconciliation-database-readiness.ts";
 import { assertEvidenceMaterialDatabase } from "../../billing/src/evidence-database-readiness.ts";
@@ -104,7 +106,7 @@ export interface ProductionApiConfig {
   episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number;
     outbox?: { enabled: false } | { enabled: true; databaseUrl: string };
     reconciliation?: {enabled:false} | {enabled:true;databaseUrl:string;evidenceDatabaseUrl:string;
-      intervalMs?:number;pageSize?:number} };
+      intervalMs?:number;pageSize?:number;feishu?:{enabled:false}|{enabled:true;databaseUrl:string}} };
   databaseUrl: string;
   databaseTlsCa: string;
   sessionSecret: string;
@@ -145,10 +147,11 @@ function validateModelConfig(config: ProductionApiConfig): Uint8Array | null {
   } catch { throw new Error("INVALID_MODEL_SETTINGS_CONFIG"); }
 }
 
-export function createProductionApi(config: ProductionApiConfig, ports: { modelFetch?: typeof globalThis.fetch } = {}) {
+export function createProductionApi(config: ProductionApiConfig, ports: { modelFetch?: typeof globalThis.fetch; feishuFetch?:typeof globalThis.fetch } = {}) {
   config = structuredClone(config);
   assertProductionConfig(config);
   const modelKey = validateModelConfig(config);
+  let feishuSend: ReturnType<typeof createEpisodeFeishuAlertSender> | undefined;
   if (config.episodeTasks !== undefined && config.episodeTasks.enabled !== false) {
     try {
       const tasks = config.episodeTasks, models = config.modelSettings;
@@ -175,7 +178,14 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
           || (reconciliation.pageSize !== undefined && (!Number.isInteger(reconciliation.pageSize)
             || reconciliation.pageSize<1 || reconciliation.pageSize>50))) throw new Error();
         const logins = new Set([main.username,model.username,new URL(tasks.outbox.databaseUrl).username].map(decodeURIComponent));
-        for (const databaseUrl of [reconciliation.databaseUrl,reconciliation.evidenceDatabaseUrl]) {
+        const feishu=reconciliation.feishu;
+        if (feishu!==undefined && feishu.enabled!==true && feishu.enabled!==false) throw new Error();
+        const urls=[reconciliation.databaseUrl,reconciliation.evidenceDatabaseUrl];
+        if (feishu?.enabled===true) {
+          urls.push(feishu.databaseUrl);
+          feishuSend=createEpisodeFeishuAlertSender(process.env.EPISODE_FEISHU_WEBHOOK ?? "",ports.feishuFetch);
+        }
+        for (const databaseUrl of urls) {
           assertDatabaseUrl(databaseUrl);
           const url = new URL(databaseUrl);
           const login = decodeURIComponent(url.username);
@@ -297,6 +307,8 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   let episodeOutboxPool: Pool | undefined;
   let episodeReconciliationPool: Pool | undefined;
   let episodeEvidencePool: Pool | undefined;
+  let episodeFeishuPool: Pool | undefined;
+  let episodeFeishuWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeReconciliationWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
   const invitationsModule = ProjectInvitationsApiModule.register(sessions,projectRepository);
@@ -422,6 +434,18 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
           ...(reconciliation.intervalMs === undefined ? {} : {intervalMs:reconciliation.intervalMs}),
         });
         episodeReconciliationWorker = reconciliationWorker;
+        if (reconciliation.feishu?.enabled===true && feishuSend) {
+          const deliveryPool=episodeFeishuPool=new Pool({connectionString:reconciliation.feishu.databaseUrl,max:2,
+            ssl,options:"-c role=novel_episode_alert_delivery",connectionTimeoutMillis:5000});
+          const deliveryWorker=episodeFeishuWorker=createEpisodeFeishuAlertWorker({
+            pool:deliveryPool,workspaceIds:taskConfig.workspaceIds,enabled:true,send:feishuSend,
+          });
+          apiModule.providers!.push({provide:"EPISODE_FEISHU_ALERT_WORKER_LIFECYCLE",useValue:{
+            onModuleInit:()=>assertEpisodeFeishuAlertDatabase(deliveryPool),
+            onApplicationBootstrap() { void deliveryWorker.start().catch(()=>{}); },
+            onApplicationShutdown() { return deliveryWorker.stop(); },
+          }});
+        }
         apiModule.providers!.push({provide:"EPISODE_RECONCILIATION_WORKER_LIFECYCLE",useValue:{
           async onModuleInit() {
             await assertEpisodeReconciliationDatabase(statePool);
@@ -553,8 +577,8 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),episodeReconciliationWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop(),settingsRegenerationWorker?.stop(),storyboardWorker?.stop()]); }
-      finally { await Promise.all([pool.end(), modelPool?.end(), episodeOutboxPool?.end(),episodeReconciliationPool?.end(),episodeEvidencePool?.end()]); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),episodeReconciliationWorker?.stop(),episodeFeishuWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop(),settingsRegenerationWorker?.stop(),storyboardWorker?.stop()]); }
+      finally { await Promise.all([pool.end(), modelPool?.end(), episodeOutboxPool?.end(),episodeReconciliationPool?.end(),episodeEvidencePool?.end(),episodeFeishuPool?.end()]); }
     })(),
   };
 }
