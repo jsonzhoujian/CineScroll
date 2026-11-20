@@ -1,3 +1,4 @@
+import { createEpisodeFeishuAlertDelivery } from "../../api/src/episode-feishu-alert-delivery.ts";
 import { createEpisodeReconciliationAlertReader } from "../../api/src/episode-reconciliation-alerts.ts";
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
@@ -37,7 +38,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login; create role episode_reconciliation_worker login');
     for (const file of ['../migrations/0001_credit_ledger.sql','../migrations/0002_evidence_material.sql','../../script/migrations/0003_model_tasks.sql',
       '../../script/migrations/0004_model_task_results.sql','../../script/migrations/0005_model_task_recovery.sql',
-      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql','../migrations/0006_episode_reconciliation.sql','../migrations/0007_episode_reconciliation_alert_reader.sql']) {
+      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql','../migrations/0006_episode_reconciliation.sql','../migrations/0007_episode_reconciliation_alert_reader.sql','../migrations/0008_episode_alert_delivery.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
     await admin.query('grant novel_app,novel_billing,novel_evidence,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
@@ -300,6 +301,28 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       await assert.rejects(readerPool.query('delete from episode_reconciliation_alerts'),{code:'42501'});
       await assert.rejects(readerPool.query('select * from episode_reconciliation_checkpoints'),{code:'42501'});
     } finally { await readerPool.end(); }
+    await admin.query("create role fixture_alert_delivery login; grant novel_episode_alert_delivery to fixture_alert_delivery");
+    url.username='fixture_alert_delivery';
+    const deliveryPool=new Pool({connectionString:url.href,max:3});
+    try {
+      let calls=0;
+      const send=createEpisodeFeishuAlertDelivery(deliveryPool,['studio'],async ()=>{
+        calls++;
+        return calls===1?'retryable':calls===2?'delivered':'unknown';
+      });
+      await assert.rejects(send('other'),{message:'FORBIDDEN'});
+      assert.equal(await send('studio'),'retryable');
+      await admin.query("update episode_alert_deliveries set retry_at=clock_timestamp() where status='retryable'");
+      const concurrent=await Promise.all([send('studio'),send('studio')]);
+      assert.ok(concurrent.includes('delivered'));
+      for (let attempt=0;attempt<3;attempt++) { if (!await send('studio')) break; }
+      const deliveries=(await admin.query("select status,attempts from episode_alert_deliveries order by status")).rows;
+      assert.deepEqual(deliveries,[{status:'delivered',attempts:2},{status:'unknown',attempts:1},{status:'unknown',attempts:1}]);
+      assert.equal(await send('studio'),null);
+      assert.equal(calls,4);
+      assert.deepEqual((await deliveryPool.query('select task_id from episode_alert_deliveries')).rows,[]);
+      await assert.rejects(deliveryPool.query('delete from episode_alert_deliveries'),{code:'42501'});
+    } finally { await deliveryPool.end(); }
     await admin.query("delete from episode_reconciliation_alerts where workspace_id='other'");
 
     assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
