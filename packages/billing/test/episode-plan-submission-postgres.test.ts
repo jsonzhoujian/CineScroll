@@ -349,6 +349,23 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     const events=await admin.query('select kind from episode_execution_events where task_id in ($1,$2) order by kind',[first.id,byok.id]);
     assert.deepEqual(events.rows.map(row=>row.kind),['dispatch_started','invalid_response','not_sent']);
     await assert.rejects(pool.query('delete from episode_execution_events'),{code:'42501'});
+
+    const successfulByok=await submit('successful-byok','byok');
+    const executing=await repository.transition('studio',successfulByok.id,0,'running',null);
+    candidate={
+      id:'successful-byok-candidate',parentVersionId:null,projectId:'p',chapterId:'c',
+      sourceVersionId:'source-1',storyBibleVersionId:'bible-1',targetDurationSeconds:180,
+      aspectRatio:'9:16',narrativeMode:'narration',generationJobId:successfulByok.id,
+      episodes:[],majorAdaptationProposals:[],status:'candidate',createdBy:'owner',createdAt:'2026-11-20',
+    };
+    await journal.record('studio',successfulByok.id,{kind:'dispatch_started'});
+    await journal.record('studio',successfulByok.id,{kind:'completed',candidateId:candidate.id});
+    await repository.transition('studio',successfulByok.id,executing.revision,'succeeded',null,
+      {candidateVersionId:candidate.id,extractionStatus:'succeeded'});
+    const reconciled=await restarted.tick('studio');
+    assert.deepEqual(reconciled.items.find(item=>item.taskId===successfulByok.id),
+      {taskId:successfulByok.id,status:'exempt'});
+    assert.deepEqual(await durableAlerts(),storedAlerts);
   } finally {
     await reconciliationPool?.end();
     await workerPool?.end();
