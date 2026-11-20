@@ -74,3 +74,9 @@ WHERE a.workspace_id = 'local-feishu-test'
 - `delivered` 表示飞书接口确认送达，可按任务 ID 在群里核对。`retryable` 会在 `retry_at` 到期后重试，最多尝试 5 次。
 - Worker 会在发送请求前提交 `unknown` 记录。进程可能在提交后、发送前退出，也可能在请求发出后未收到确认。因此，仅凭 `unknown` 和 `attempts` 无法确认请求是否已发出或告警是否已送达。先按任务 ID 和告警码核对飞书群消息，再结合 Worker 运行记录排查。Worker 重启后也不会自动补发这条告警。
 - `rejected` 或 `exhausted` 时，检查 Webhook 配置和飞书机器人返回结果。
+
+### CI 回归验收
+
+GitHub Actions 的「拆集告警回归」在推送和 PR 时运行。验证 PR 触发时，在运行详情确认事件为 `pull_request`，再查看 `episode-alert` 作业摘要。预期为通过 2 项，失败、跳过和取消均为 0 项。
+
+作业会启动隔离的 PostgreSQL 16，运行拆集对账集成测试及飞书发送器测试。有测试跳过时，作业失败。测试使用替身发送器，无需配置真实飞书 Webhook。
