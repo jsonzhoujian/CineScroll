@@ -3,6 +3,7 @@ import { createEpisodeFeishuAlertSender } from "../../api/src/episode-feishu-ale
 import { createEpisodeFeishuAlertWorker } from "../../api/src/episode-feishu-alert-worker.ts";
 import { createEpisodeReconciliationAlertReader } from "../../api/src/episode-reconciliation-alerts.ts";
 import { setTimeout as delay } from 'node:timers/promises';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -325,6 +326,20 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       assert.deepEqual((await deliveryPool.query('select task_id from episode_alert_deliveries')).rows,[]);
       await assert.rejects(deliveryPool.query('delete from episode_alert_deliveries'),{code:'42501'});
     } finally { await deliveryPool.end(); }
+    await admin.query("insert into episode_reconciliation_checkpoints(workspace_id) values('interrupted'); insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('interrupted','interrupted-before-send','EXECUTION_UNKNOWN')");
+    const interrupted=spawnSync(process.execPath,['--input-type=module','--eval',`
+      import { Pool } from ${JSON.stringify(import.meta.resolve('pg'))};
+      import { createEpisodeFeishuAlertWorker } from ${JSON.stringify(new URL('../../api/src/episode-feishu-alert-worker.ts',import.meta.url).href)};
+      const pool=new Pool({connectionString:process.argv[1],max:1});
+      await createEpisodeFeishuAlertWorker({
+        pool,workspaceIds:['interrupted'],enabled:true,
+        send:async ()=>process.exit(73),
+      }).start();
+    `,url.href],{encoding:'utf8',timeout:5000});
+    assert.ifError(interrupted.error);
+    assert.equal(interrupted.status,73,interrupted.stderr);
+    const interruptedDelivery=await admin.query("select status,attempts,retry_at from episode_alert_deliveries where workspace_id='interrupted' and task_id='interrupted-before-send'");
+    assert.deepEqual(interruptedDelivery.rows,[{status:'unknown',attempts:1,retry_at:null}]);
     let workerSendCount=0;
     let timeoutRequests=0;
     let rejectedRequests=0;
@@ -341,6 +356,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       return new Response(null,{status:403});
     });
     const workerPhases=[
+      {name:'restart after process exit',taskId:'interrupted-before-send',status:'unknown',attempts:1,calls:0},
       {name:'initial start',taskId:'hidden',status:'delivered',attempts:1,calls:1},
       {name:'restart after delivery',taskId:'hidden',status:'delivered',attempts:1,calls:1},
       {name:'rate limited',taskId:'rate-limited',status:'retryable',attempts:1,calls:2},
@@ -363,9 +379,10 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       if (phase.name==='restart after retry due' || (phase.taskId==='always-limited' && phase.attempts>1 && phase.name!=='restart after exhaustion')) {
         await admin.query("update episode_alert_deliveries set retry_at=clock_timestamp() - interval '1 second' where workspace_id='other' and task_id=$1",[phase.taskId]);
       }
+      const workspace=phase.taskId==='interrupted-before-send'?'interrupted':'other';
       const workerPool=new Pool({connectionString:url.href,max:1});
       const worker=createEpisodeFeishuAlertWorker({
-        pool:workerPool,workspaceIds:['other'],enabled:true,
+        pool:workerPool,workspaceIds:[workspace],enabled:true,
         send:async alert=>{
           workerSendCount++;
           if (alert.taskId==='timed-out') return sendTimeout(alert);
@@ -380,8 +397,8 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
         assert.equal(worker.status().lastError,null,phase.name);
         assert.equal(workerSendCount,phase.calls,phase.name);
         const {rows}=await admin.query(
-          "select status,attempts,retry_at>clock_timestamp() as waiting from episode_alert_deliveries where workspace_id='other' and task_id=$1",
-          [phase.taskId]);
+          "select status,attempts,retry_at>clock_timestamp() as waiting from episode_alert_deliveries where workspace_id=$1 and task_id=$2",
+          [workspace,phase.taskId]);
         assert.deepEqual(rows,[{status:phase.status,attempts:phase.attempts,waiting:phase.status==='retryable'?true:null}],phase.name);
       } finally {
         try { await worker.stop(); await running; }
@@ -424,7 +441,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       try {await Promise.all(parallelWorkers.map(worker=>worker.stop())); await Promise.all(runningWorkers);}
       finally {await Promise.all(parallelPools.map(pool=>pool.end()));}
     }
-    await admin.query("delete from episode_alert_deliveries where workspace_id='other'; delete from episode_reconciliation_alerts where workspace_id='other'");
+    await admin.query("delete from episode_alert_deliveries where workspace_id in ('other','interrupted'); delete from episode_reconciliation_alerts where workspace_id in ('other','interrupted')");
 
     assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
     await restarted.tick('studio');
