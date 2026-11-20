@@ -22,6 +22,13 @@ function selection(body: unknown) {
   const value = body as Record<string, unknown>;
   return { configurationVersionId: identifier(value.configurationVersionId), modelId: identifier(value.modelId) };
 }
+function pagination(query: Record<string,unknown>) {
+    if (Object.keys(query).some(key => !["limit", "cursor"].includes(key))) throw new BadRequestException("分页参数无效");
+    const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
+    if (limit < 1 || limit > 50 || !Number.isInteger(limit)) throw new BadRequestException("分页参数无效");
+    const cursor = query.cursor === undefined ? null : identifier(query.cursor);
+  return { limit,cursor };
+}
 async function safely<T>(action: () => Promise<T>): Promise<T> {
   try { return await action(); } catch (error) {
     if (error instanceof ModelTaskError || error instanceof ModelSettingsError) throw error;
@@ -57,12 +64,13 @@ class StoryKnowledgeTaskController {
     return safely(() => this.tasks.availability(request.actor, project, chapter, chosen));
   }
   async list(request: SessionRequest, projectId: string, chapterId: string, query: Record<string, unknown>) {
-    if (Object.keys(query).some(key => !["limit", "cursor"].includes(key))) throw new BadRequestException("分页参数无效");
-    const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
-    if (limit < 1 || limit > 50 || !Number.isInteger(limit)) throw new BadRequestException("分页参数无效");
-    const cursor = query.cursor === undefined ? null : identifier(query.cursor);
+    const page = pagination(query);
     const project = identifier(projectId), chapter = identifier(chapterId);
-    return safely(() => this.tasks.listStoryKnowledge(request.actor, project, chapter, { limit, cursor }));
+    return safely(() => this.tasks.listStoryKnowledge(request.actor,project,chapter,page));
+  }
+  notifications(request: SessionRequest, query: Record<string,unknown>) {
+    const page = pagination(query);
+    return safely(() => this.tasks.listTaskNotifications(request.actor,page,"story_knowledge"));
   }
   async submit(request: TaskSubmissionRequest, projectId: string, chapterId: string, body: unknown) {
     const chosen = selection(body);
@@ -114,7 +122,7 @@ Req()(StoryKnowledgeTaskController.prototype, "submitRetry", 0);
 Param("projectId")(StoryKnowledgeTaskController.prototype, "submitRetry", 1);
 Param("chapterId")(StoryKnowledgeTaskController.prototype, "submitRetry", 2);
 Body()(StoryKnowledgeTaskController.prototype, "submitRetry", 3);
-for (const [method, decorator] of [["availability", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks/availability")], ["list", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")]] as const) {
+for (const [method, decorator] of [["availability", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks/availability")], ["list", Get("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["submit", Post("projects/:projectId/chapters/:chapterId/story-knowledge-tasks")], ["get", Get("story-knowledge-tasks/:id")], ["resubmit", Post("story-knowledge-tasks/:id/resubmit")], ["notifications", Get("story-knowledge-notifications")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(StoryKnowledgeTaskController.prototype, method)!;
   decorator(StoryKnowledgeTaskController.prototype, method, descriptor);
   Header("Cache-Control", "no-store")(StoryKnowledgeTaskController.prototype, method, descriptor);
@@ -124,7 +132,8 @@ for (const [method, decorator] of [["availability", Get("projects/:projectId/cha
     Param("chapterId")(StoryKnowledgeTaskController.prototype, method, 2);
     if (method === "submit") Body()(StoryKnowledgeTaskController.prototype, method, 3);
     else Query()(StoryKnowledgeTaskController.prototype, method, 3);
-  } else {
+  } else if (method === "notifications") Query()(StoryKnowledgeTaskController.prototype,method,1);
+  else {
     Param("id")(StoryKnowledgeTaskController.prototype, method, 1);
     if (method === "resubmit") Body()(StoryKnowledgeTaskController.prototype, method, 2);
   }

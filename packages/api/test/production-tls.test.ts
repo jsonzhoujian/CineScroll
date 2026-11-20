@@ -271,8 +271,24 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         assert.equal(status.body.state, "succeeded"); assert.equal(status.body.result.extractionStatus, "succeeded");
         assert.ok(!JSON.stringify(status.body).includes("fixture-not-real-key"));
         assert.equal(modelCalls, 1);
-        const knowledgePath = `/projects/${projectId}/chapters/${chapterId}/story-knowledge`;
         const candidateId = status.body.result.candidateVersionId;
+        const unknownStoryTaskId = `story_interrupted_${suffix}`;
+        await seedExpiredTask(task.body.id,unknownStoryTaskId);
+        let unknownStory;
+        for (let attempt=0;attempt<100;attempt++) {
+          unknownStory = await restarted.http.get(`/story-knowledge-tasks/${unknownStoryTaskId}`).set("authorization",bearer).expect(200);
+          if (unknownStory.body.state === "paused") break;
+          await new Promise(resolve => setTimeout(resolve,20));
+        }
+        assert.equal(unknownStory!.body.reason,"EXECUTION_UNCERTAIN");
+        await restarted.http.get("/story-knowledge-notifications").expect(401);
+        await restarted.http.get("/story-knowledge-notifications").set("authorization",bearer).query({ limit: 51 }).expect(400);
+        const storyNotices = await restarted.http.get("/story-knowledge-notifications").set("authorization",bearer)
+          .expect("Cache-Control","no-store").expect(200);
+        assert.deepEqual(new Map(storyNotices.body.notifications.map((item: { taskId: string;outcome: string }) => [item.taskId,item.outcome])),
+          new Map([[task.body.id,"succeeded"],[unknownStoryTaskId,"execution_unknown"]]));
+        await admin.query("delete from model_tasks where workspace_id=$1 and id=$2",[workspaceId,unknownStoryTaskId]);
+        const knowledgePath = `/projects/${projectId}/chapters/${chapterId}/story-knowledge`;
         const suggested = await restarted.http.post(`${knowledgePath}/facts/rain/suggestions`).set("authorization",bearer)
           .send({ expectedActiveVersionId: candidateId, statement: "测试建议", reason: "测试建议依据" }).expect(201);
         await restarted.http.post(`${knowledgePath}/versions/${candidateId}/facts/rain/suggestions/${suggested.body.id}/decision`)

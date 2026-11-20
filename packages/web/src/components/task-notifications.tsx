@@ -1,13 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ApiClientError, type ApiClient, type TaskNotification, type EpisodePlanView, type EpisodeTask, type ScriptContentTask, type SettingsTask, type StoryboardTask, type NotificationTaskKind } from "../lib/api";
+import { ApiClientError, type ApiClient, type TaskNotification, type EpisodePlanView, type EpisodeTask, type ScriptContentTask, type SettingsTask, type StoryboardTask, type StoryKnowledgeTask, type NotificationTaskKind } from "../lib/api";
 
-type NotificationTask = EpisodeTask | ScriptContentTask | SettingsTask | StoryboardTask;
+type NotificationTask = StoryKnowledgeTask | EpisodeTask | ScriptContentTask | SettingsTask | StoryboardTask;
+function taskKind(task: NotificationTask) {
+  return "resultType" in task.input ? task.input.resultType : task.input.stage;
+}
+function isEpisodeTask(task: NotificationTask): task is EpisodeTask {
+  return task.input.stage === "script" && taskKind(task) === "episodePlan";
+}
 type NotificationPage = Awaited<ReturnType<ApiClient["listTaskNotifications"]>>;
 
 export function TaskNotifications({ api }: { api: ApiClient }) {
   return <>
+    <Notifications api={api} kind="story_knowledge" />
     <Notifications api={api} kind="episodePlan" />
     <Notifications api={api} kind="scriptContent" />
     <Notifications api={api} kind="settingsContent" />
@@ -16,7 +23,7 @@ export function TaskNotifications({ api }: { api: ApiClient }) {
 }
 
 function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKind }) {
-  const label = { episodePlan: "拆集",scriptContent: "剧本",settingsContent: "文字设定",storyboardContent: "分镜" }[kind];
+  const label = { story_knowledge: "故事知识",episodePlan: "拆集",scriptContent: "剧本",settingsContent: "文字设定",storyboardContent: "分镜" }[kind];
   const [page,setPage] = useState<NotificationPage | null>(null);
   const [busy,setBusy] = useState(true);
   const [error,setError] = useState("");
@@ -72,6 +79,7 @@ function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKi
     await perform(async () => {
       const { taskId, projectId, chapterId } = notification;
       const readTask = {
+        story_knowledge: () => api.getStoryKnowledgeTask(taskId),
         episodePlan: () => api.getEpisodeTask(taskId),
         scriptContent: () => api.getScriptContentTask(taskId),
         settingsContent: () => api.getSettingsTask(taskId),
@@ -79,12 +87,12 @@ function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKi
       };
       const result = await readTask[kind]();
       if (result.id !== notification.taskId || result.projectId !== notification.projectId
-        || result.chapterId !== notification.chapterId || result.input.resultType !== kind) throw new Error("Invalid task");
+        || result.chapterId !== notification.chapterId || taskKind(result) !== kind) throw new Error("Invalid task");
       setTask(result);
     },"无法打开原任务，请刷新通知或联系项目负责人。");
   }
 
-  async function loadCandidate(selectedTask: NotificationTask) {
+  async function loadCandidate(selectedTask: EpisodeTask) {
     setCandidate(null);
     await perform(async () => {
       const { plan, current } = await api.getEpisodePlan(selectedTask.projectId,selectedTask.chapterId);
@@ -111,8 +119,8 @@ function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKi
     {task && <section aria-label={`原${label}任务`}>
       <h4>任务 {task.id}</h4>
       {task.reason === "EXECUTION_UNCERTAIN" && <p>待人工处理。执行结果未知，禁止重投，请联系负责人对账。</p>}
-      {task.state === "succeeded" && task.result && task.input.resultType !== "episodePlan" && <p>{label}候选已生成 · 版本 {task.result.candidateVersionId}</p>}
-      {task.state === "succeeded" && task.result && task.input.resultType === "episodePlan" && <button className="text-button" type="button" disabled={busy} onClick={() => void loadCandidate(task)}>载入拆集候选</button>}
+      {task.state === "succeeded" && task.result && taskKind(task) !== "episodePlan" && <p>{label}候选已生成 · 版本 {task.result.candidateVersionId}</p>}
+      {task.state === "succeeded" && task.result && isEpisodeTask(task) && <button className="text-button" type="button" disabled={busy} onClick={() => void loadCandidate(task)}>载入拆集候选</button>}
       {candidate && <ol aria-label="拆集候选">{candidate.episodes.map(episode => <li key={episode.id}>{episode.title}</li>)}</ol>}
     </section>}
   </section>;

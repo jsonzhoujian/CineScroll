@@ -195,7 +195,7 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
-export type NotificationTaskKind = "episodePlan" | "scriptContent" | "settingsContent" | "storyboardContent";
+export type NotificationTaskKind = "story_knowledge" | "episodePlan" | "scriptContent" | "settingsContent" | "storyboardContent";
 export type TaskNotification = {
   taskId: string; projectId: string; chapterId: string; outcome: "succeeded" | "execution_unknown";
 };
@@ -323,7 +323,7 @@ export class ApiClient {
   listTaskNotifications(kind: NotificationTaskKind, cursor?: string) {
     const query = cursor ? `?${new URLSearchParams({ cursor })}` : "";
     return this.request<{ notifications: TaskNotification[]; nextCursor: string | null }>(
-      `/${{ episodePlan: "episode-plan",scriptContent: "script-content",settingsContent: "settings",storyboardContent: "storyboard" }[kind]}-notifications${query}`,{ method: "GET",cache: "no-store" },"session");
+      `/${{ story_knowledge: "story-knowledge",episodePlan: "episode-plan",scriptContent: "script-content",settingsContent: "settings",storyboardContent: "storyboard" }[kind]}-notifications${query}`,{ method: "GET",cache: "no-store" },"session");
   }
   listEpisodeTasks(p: string,c: string,cursor: string | null = null) {
     const query = new URLSearchParams({ limit: "20" }); if (cursor) query.set("cursor",cursor);

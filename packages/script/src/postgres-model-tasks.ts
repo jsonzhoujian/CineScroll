@@ -49,7 +49,7 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
           encode(sha256(convert_to(id,'UTF8')),'hex') collate "C" as notification_cursor
         from model_tasks
         where workspace_id=$1 and payload->>'createdBy'=$2
-          and payload->'input'->>'stage'=$6 and payload->'input'->>'resultType'=$5
+          and payload->'input'->>'stage'=$6 and coalesce(payload->'input'->>'resultType',payload->'input'->>'stage')=$5
           and not (payload->'input' ? 'storyboardRegeneration')
           and ((state='succeeded' and result_json is not null) or (state='paused' and reason='EXECUTION_UNCERTAIN'))
           and ($3::text is null or encode(sha256(convert_to(id,'UTF8')),'hex') collate "C">$3::text collate "C")

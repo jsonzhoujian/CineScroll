@@ -8,6 +8,9 @@ export class StoryKnowledgeTaskContext implements ModelTaskContextReader {
   private readonly projects: Pick<ProjectImportRepository, "findProjectAccess" | "findProject" | "findChapter">;
   private readonly retryPlanner: StoryKnowledgeRetryPlanner | undefined;
   constructor(projects: Pick<ProjectImportRepository, "findProjectAccess" | "findProject" | "findChapter">, retryPlanner?: StoryKnowledgeRetryPlanner) { this.projects = projects; this.retryPlanner = retryPlanner; }
+  async canRead(actor: Actor, projectId: string, chapterId: string): Promise<boolean> {
+    return !!await this.projects.findProjectAccess(actor,projectId) && !!await this.projects.findChapter(actor,projectId,chapterId);
+  }
   async readRetry(actor: Actor, projectId: string, chapterId: string, selection: StoryRetrySelection): Promise<TaskInput | null> {
     if (!this.retryPlanner) return null;
     const input = await this.read(actor, projectId, chapterId);

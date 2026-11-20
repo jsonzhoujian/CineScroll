@@ -1499,6 +1499,7 @@ test("重新登录后从移动端通知打开拆集任务并载入原候选", as
 for (const [label,notificationPath,taskPath,stage,resultType] of [
   ["剧本","script-content-notifications","script-content-tasks","script","scriptContent"],
   ["文字设定","settings-notifications","settings-tasks","settings","settingsContent"],
+  ["故事知识","story-knowledge-notifications","story-knowledge-tasks","story_knowledge",undefined],
   ["分镜","storyboard-notifications","projects/p/chapters/c/storyboard-tasks","storyboard","storyboardContent"],
 ] as const) test(`移动端${label}通知从同一会话打开成功和执行未知的原任务`, async ({ page }) => {
   await setup(page);
@@ -1511,7 +1512,8 @@ for (const [label,notificationPath,taskPath,stage,resultType] of [
     headers,json: { notifications: rows,nextCursor: null },
   }));
   await page.route(`${origin}/${taskPath}/*`,route => {
-    const task = rows.find(row => route.request().url().endsWith("/"+row.taskId))!;
+    const task = rows.find(row => route.request().url().endsWith("/"+row.taskId));
+    if (!task) return route.fallback();
     const succeeded = task.outcome === "succeeded";
     expect(route.request().headers().authorization).toBe("Bearer session");
     return route.fulfill({ headers,json: {
