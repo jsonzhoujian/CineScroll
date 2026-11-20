@@ -42,6 +42,23 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     modelSettings: { enabled: true as const, encryptionKeyBase64: Buffer.alloc(32, 7).toString("base64"),
       databaseUrl: restrictedUrl.toString(), databaseTlsCa: ca, routes: { deepseek: "mainland" as const } },
   };
+  const seedExpiredTask = async (sourceTaskId: string, expiredTaskId: string) => {
+    const interrupted = await admin.connect();
+    try {
+      await interrupted.query("begin");
+      await interrupted.query(`insert into model_tasks(workspace_id,id,parent_task_id,payload,state,revision,reason)
+        select workspace_id,$3,null,jsonb_set(payload,'{id}',to_jsonb($3::text)),'queued',0,null
+        from model_tasks where workspace_id=$1 and id=$2`,[workspaceId,sourceTaskId,expiredTaskId]);
+      await interrupted.query(`update model_tasks set state='running',revision=revision+1,
+        lease_expires_at=clock_timestamp()-interval '1 second' where workspace_id=$1 and id=$2`,[workspaceId,expiredTaskId]);
+      await interrupted.query("commit");
+    } catch (error) {
+      await interrupted.query("rollback");
+      throw error;
+    } finally {
+      interrupted.release();
+    }
+  };
   let modelEntered!: () => void, modelRelease!: () => void;
   const entered = new Promise<void>(resolve => { modelEntered = resolve; });
   const gate = new Promise<void>(resolve => { modelRelease = resolve; });
@@ -523,21 +540,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         { taskId: scriptTaskId,projectId,chapterId,outcome: "succeeded" },
       ],nextCursor: null });
       const unknownScriptTaskId = `interrupted_${suffix}`;
-      const interrupted = await admin.connect();
-      try {
-        await interrupted.query("begin");
-        await interrupted.query(`insert into model_tasks(workspace_id,id,parent_task_id,payload,state,revision,reason)
-          select workspace_id,$3,null,jsonb_set(payload,'{id}',to_jsonb($3::text)),'queued',0,null
-          from model_tasks where workspace_id=$1 and id=$2`,[workspaceId,scriptTaskId,unknownScriptTaskId]);
-        await interrupted.query(`update model_tasks set state='running',revision=revision+1,
-          lease_expires_at=clock_timestamp()-interval '1 second' where workspace_id=$1 and id=$2`,[workspaceId,unknownScriptTaskId]);
-        await interrupted.query("commit");
-      } catch (error) {
-        await interrupted.query("rollback");
-        throw error;
-      } finally {
-        interrupted.release();
-      }
+      await seedExpiredTask(scriptTaskId,unknownScriptTaskId);
       let unknownScript;
       for (let attempt=0;attempt<100;attempt++) {
         unknownScript = await scriptApp.http.get(`/script-content-tasks/${unknownScriptTaskId}`).set("authorization",bearer).expect(200);
@@ -659,8 +662,24 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       }
       assert.equal(completed.state,"succeeded",JSON.stringify(completed));assert.equal(modelCalls,6);
       settingsCandidateId = completed.result!.candidateVersionId;
+      const settingsNotificationPath = "/settings-notifications";
+      await settingsApp.http.get(settingsNotificationPath).expect(401);
+      await settingsApp.http.get(settingsNotificationPath).set("authorization",bearer).query({ limit: 51 }).expect(400);
+      const unknownSettingsTaskId = `settings_interrupted_${suffix}`;
+      await seedExpiredTask(settingsTaskId,unknownSettingsTaskId);
+      let unknownSettings;
+      for (let attempt=0;attempt<100;attempt++) {
+        unknownSettings = await settingsApp.http.get(`/settings-tasks/${unknownSettingsTaskId}`).set("authorization",bearer).expect(200);
+        if (unknownSettings.body.state === "paused") break;
+        await new Promise(resolve => setTimeout(resolve,20));
+      }
+      assert.equal(unknownSettings!.body.reason,"EXECUTION_UNCERTAIN");
+      const settingsNotices = await settingsApp.http.get(settingsNotificationPath).set("authorization",bearer).expect(200);
+      assert.deepEqual(new Map(settingsNotices.body.notifications.map((item: { taskId: string;outcome: string }) => [item.taskId,item.outcome])),
+        new Map([[settingsTaskId,"succeeded"],[unknownSettingsTaskId,"execution_unknown"]]));
       const view = await settingsApp.http.get(`/projects/${projectId}/chapters/${chapterId}/settings/generations/${task.id}`).set("authorization",bearer).expect(200);
       assert.equal(view.body.version.id,settingsCandidateId);assert.equal(view.body.current,true);assert.equal(view.body.scriptVersion.id,lockedScriptId!);assert.equal(view.body.sourceFragments[0].text,"雨落");
+      await admin.query("delete from model_tasks where workspace_id=$1 and id=$2",[workspaceId,unknownSettingsTaskId]);
       const dependencies = await admin.query("select script_version_id,target_item_id from script_downstream_dependencies where target_stage='settings' and target_version_id=$1",[settingsCandidateId]);
       assert.equal(dependencies.rows.length,2);assert.ok(dependencies.rows.every(d => d.script_version_id === lockedScriptId && d.target_item_id === "location"));
       const settingsBase = `/projects/${projectId}/chapters/${chapterId}/settings`;

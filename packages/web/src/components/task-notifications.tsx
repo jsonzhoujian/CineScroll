@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ApiClientError, type ApiClient, type TaskNotification, type EpisodePlanView, type EpisodeTask, type ScriptContentTask } from "../lib/api";
+import { ApiClientError, type ApiClient, type TaskNotification, type EpisodePlanView, type EpisodeTask, type ScriptContentTask, type SettingsTask, type NotificationTaskKind } from "../lib/api";
 
 type NotificationPage = Awaited<ReturnType<ApiClient["listTaskNotifications"]>>;
 
@@ -9,22 +9,23 @@ export function TaskNotifications({ api }: { api: ApiClient }) {
   return <>
     <Notifications api={api} kind="episodePlan" />
     <Notifications api={api} kind="scriptContent" />
+    <Notifications api={api} kind="settingsContent" />
   </>;
 }
 
-function Notifications({ api, kind }: { api: ApiClient; kind: "episodePlan" | "scriptContent" }) {
-  const label = kind === "episodePlan" ? "拆集" : "剧本";
+function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKind }) {
+  const label = { episodePlan: "拆集",scriptContent: "剧本",settingsContent: "文字设定" }[kind];
   const [page,setPage] = useState<NotificationPage | null>(null);
   const [busy,setBusy] = useState(true);
   const [error,setError] = useState("");
-  const [task,setTask] = useState<EpisodeTask | ScriptContentTask | null>(null);
+  const [task,setTask] = useState<EpisodeTask | ScriptContentTask | SettingsTask | null>(null);
   const [candidate,setCandidate] = useState<EpisodePlanView["plan"] | null>(null);
 
   const fetchPage = useCallback(async (cursor?: string) => {
     try {
       return await api.listTaskNotifications(kind,cursor);
     } catch (error) {
-      if (error instanceof ApiClientError && error.status === 404 && kind === "scriptContent") {
+      if (error instanceof ApiClientError && error.status === 404 && kind !== "episodePlan") {
         return { notifications: [],nextCursor: null };
       }
       throw error;
@@ -69,14 +70,16 @@ function Notifications({ api, kind }: { api: ApiClient; kind: "episodePlan" | "s
     await perform(async () => {
       const result = kind === "episodePlan"
         ? await api.getEpisodeTask(notification.taskId)
-        : await api.getScriptContentTask(notification.taskId);
+        : kind === "scriptContent"
+          ? await api.getScriptContentTask(notification.taskId)
+          : await api.getSettingsTask(notification.taskId);
       if (result.id !== notification.taskId || result.projectId !== notification.projectId
         || result.chapterId !== notification.chapterId || result.input.resultType !== kind) throw new Error("Invalid task");
       setTask(result);
     },"无法打开原任务，请刷新通知或联系项目负责人。");
   }
 
-  async function loadCandidate(selectedTask: EpisodeTask | ScriptContentTask) {
+  async function loadCandidate(selectedTask: EpisodeTask | ScriptContentTask | SettingsTask) {
     setCandidate(null);
     await perform(async () => {
       const { plan, current } = await api.getEpisodePlan(selectedTask.projectId,selectedTask.chapterId);
@@ -103,7 +106,7 @@ function Notifications({ api, kind }: { api: ApiClient; kind: "episodePlan" | "s
     {task && <section aria-label={`原${label}任务`}>
       <h4>任务 {task.id}</h4>
       {task.reason === "EXECUTION_UNCERTAIN" && <p>待人工处理。执行结果未知，禁止重投，请联系负责人对账。</p>}
-      {task.state === "succeeded" && task.result && task.input.resultType === "scriptContent" && <p>剧本候选已生成 · 版本 {task.result.candidateVersionId}</p>}
+      {task.state === "succeeded" && task.result && task.input.resultType !== "episodePlan" && <p>{label}候选已生成 · 版本 {task.result.candidateVersionId}</p>}
       {task.state === "succeeded" && task.result && task.input.resultType === "episodePlan" && <button className="text-button" type="button" disabled={busy} onClick={() => void loadCandidate(task)}>载入拆集候选</button>}
       {candidate && <ol aria-label="拆集候选">{candidate.episodes.map(episode => <li key={episode.id}>{episode.title}</li>)}</ol>}
     </section>}

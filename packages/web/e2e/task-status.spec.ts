@@ -1496,35 +1496,38 @@ test("重新登录后从移动端通知打开拆集任务并载入原候选", as
   await expect(inbox.getByText("暂无拆集通知")).toBeVisible();
 });
 
-test("移动端剧本通知从同一会话打开成功和执行未知的原任务", async ({ page }) => {
+for (const [label,notificationPath,taskPath,stage,resultType] of [
+  ["剧本","script-content-notifications","script-content-tasks","script","scriptContent"],
+  ["文字设定","settings-notifications","settings-tasks","settings","settingsContent"],
+] as const) test(`移动端${label}通知从同一会话打开成功和执行未知的原任务`, async ({ page }) => {
   await setup(page);
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization" };
   const rows = [
-    { taskId: "script-done",projectId: "p",chapterId: "c",outcome: "succeeded" },
-    { taskId: "script-unknown",projectId: "p",chapterId: "c",outcome: "execution_unknown" },
+    { taskId: "task-done",projectId: "p",chapterId: "c",outcome: "succeeded" },
+    { taskId: "task-unknown",projectId: "p",chapterId: "c",outcome: "execution_unknown" },
   ];
-  await page.route(`${origin}/script-content-notifications`,route => route.fulfill({
+  await page.route(`${origin}/${notificationPath}`,route => route.fulfill({
     headers,json: { notifications: rows,nextCursor: null },
   }));
-  await page.route(`${origin}/script-content-tasks/*`,route => {
+  await page.route(`${origin}/${taskPath}/*`,route => {
     const task = rows.find(row => route.request().url().endsWith("/"+row.taskId))!;
     const succeeded = task.outcome === "succeeded";
     expect(route.request().headers().authorization).toBe("Bearer session");
     return route.fulfill({ headers,json: {
       id: task.taskId,projectId: task.projectId,chapterId: task.chapterId,
-      input: { stage: "script",resultType: "scriptContent",sourceVersionId: "s",upstreamConfirmedVersionIds: ["plan"] },
+      input: { stage,resultType,sourceVersionId: "s",upstreamConfirmedVersionIds: ["plan"] },
       state: succeeded ? "succeeded" : "paused",reason: succeeded ? null : "EXECUTION_UNCERTAIN",
-      result: succeeded ? { candidateVersionId: "script-candidate",extractionStatus: "succeeded" } : null,
+      result: succeeded ? { candidateVersionId: "candidate-version",extractionStatus: "succeeded" } : null,
     } });
   });
   await page.setViewportSize({ width: 390,height: 844 });
   await page.getByRole("navigation",{ name: "移动端功能" }).getByRole("button",{ name: "通知",exact: true }).click();
-  const inbox = page.getByRole("region",{ name: "剧本通知" });
-  const detail = inbox.getByRole("region",{ name: "原剧本任务" });
-  await inbox.getByRole("button",{ name: /剧本候选已生成/ }).click();
-  await expect(detail.getByRole("heading")).toHaveText("任务 script-done");
-  await expect(detail.getByText(/版本 script-candidate/)).toBeVisible();
-  await inbox.getByRole("button",{ name: /剧本执行结果未知/ }).click();
-  await expect(detail.getByRole("heading")).toHaveText("任务 script-unknown");
+  const inbox = page.getByRole("region",{ name: `${label}通知` });
+  const detail = inbox.getByRole("region",{ name: `原${label}任务` });
+  await inbox.getByRole("button",{ name: `${label}候选已生成 · task-done`,exact: true }).click();
+  await expect(detail.getByRole("heading")).toHaveText("任务 task-done");
+  await expect(detail.getByText(/版本 candidate-version/)).toBeVisible();
+  await inbox.getByRole("button",{ name: `${label}执行结果未知 · task-unknown`,exact: true }).click();
+  await expect(detail.getByRole("heading")).toHaveText("任务 task-unknown");
   await expect(detail.getByText(/待人工处理/)).toBeVisible();
 });

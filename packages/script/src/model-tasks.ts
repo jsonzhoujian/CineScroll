@@ -15,7 +15,7 @@ export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded"
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
 export type TaskResult = { candidateVersionId: string; extractionStatus: "succeeded" | "partially_succeeded" | "failed" };
 export type TaskPage = { tasks: ModelTask[]; nextCursor: string | null };
-export type NotificationTaskKind = "episodePlan" | "scriptContent";
+export type NotificationTaskKind = "episodePlan" | "scriptContent" | "settingsContent";
 export type TaskNotification = {
   taskId: string; projectId: string; chapterId: string; outcome: "succeeded" | "execution_unknown";
 };
@@ -529,7 +529,7 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async listNotificationTasks(actor: Actor, page: TaskPageRequest, kind: NotificationTaskKind): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === actor.workspaceId
-      && task.createdBy === actor.userId && task.input.stage === "script" && task.input.resultType === kind
+      && task.createdBy === actor.userId && task.input.stage === (kind === "settingsContent" ? "settings" : "script") && task.input.resultType === kind
       && (task.state === "succeeded" && task.result !== null || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN")
       && (page.cursor === null || compareTaskIds(notificationCursor(task.id),page.cursor) > 0))
       .sort((a,b) => compareTaskIds(notificationCursor(a.id),notificationCursor(b.id))).slice(0,page.limit+1);
