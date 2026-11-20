@@ -39,5 +39,6 @@ T09 已有独立基础设施增量，整体验收仍受 T07 阻塞；隔离测�
 - [MVP 交付计划](./docs/plans/2026-09-21-mvp-delivery.md)
 - [本地任务清单](./.scratch/novel-adaptation-mvp/issues/README.md)
 - [行业工作流与痛点证据](./docs/research/INDUSTRY_WORKFLOW_PAIN_POINTS.md)
+- [开源动态漫工作流借鉴](./docs/research/OPEN_SOURCE_MOTION_COMIC_PRACTICES.md)
 - [内部探索测试与测试需求](./docs/research/INTERNAL_EXPLORATORY_TEST.md)
 - [待决策事项](./docs/OPEN_QUESTIONS.md)
