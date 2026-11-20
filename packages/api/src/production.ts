@@ -71,6 +71,10 @@ import { CreditLedgerService } from "../../billing/src/index.ts";
 import { PostgresCreditLedgerRepository } from "../../billing/src/postgres-ledger.ts";
 import { createInternalBillingAccess } from "../../billing/src/internal-access.ts";
 import { assertEpisodeOutboxDatabase } from "./episode-outbox-database-readiness.ts";
+import { createEpisodeReconciliationWorker } from "./episode-reconciliation-worker.ts";
+import { assertEpisodeReconciliationDatabase } from "./episode-reconciliation-database-readiness.ts";
+import { assertEvidenceMaterialDatabase } from "../../billing/src/evidence-database-readiness.ts";
+import { PostgresEvidenceMaterialRepository } from "../../billing/src/postgres-evidence.ts";
 import { EpisodePlanWorkerModule } from "./episode-plan-worker-module.ts";
 import { DeepSeekEpisodePlanModel } from "./deepseek-episode-model.ts";
 import { assertEpisodeTaskDatabase } from "./episode-task-database-readiness.ts";
@@ -98,7 +102,9 @@ export interface ProductionApiConfig {
   settingsTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   scriptTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number;
-    outbox?: { enabled: false } | { enabled: true; databaseUrl: string } };
+    outbox?: { enabled: false } | { enabled: true; databaseUrl: string };
+    reconciliation?: {enabled:false} | {enabled:true;databaseUrl:string;evidenceDatabaseUrl:string;
+      intervalMs?:number;pageSize?:number} };
   databaseUrl: string;
   databaseTlsCa: string;
   sessionSecret: string;
@@ -160,6 +166,23 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         if (!outbox.username || outbox.username === model.username || outbox.username === main.username
           || outbox.hostname !== model.hostname || (outbox.port || "5432") !== (model.port || "5432")
           || outbox.pathname !== model.pathname) throw new Error();
+      }
+      const reconciliation = tasks.reconciliation;
+      if (reconciliation !== undefined && reconciliation.enabled !== false) {
+        if (reconciliation.enabled !== true || tasks.outbox?.enabled !== true
+          || (reconciliation.intervalMs !== undefined && (!Number.isInteger(reconciliation.intervalMs)
+            || reconciliation.intervalMs<100 || reconciliation.intervalMs>60000))
+          || (reconciliation.pageSize !== undefined && (!Number.isInteger(reconciliation.pageSize)
+            || reconciliation.pageSize<1 || reconciliation.pageSize>50))) throw new Error();
+        const logins = new Set([main.username,model.username,new URL(tasks.outbox.databaseUrl).username].map(decodeURIComponent));
+        for (const databaseUrl of [reconciliation.databaseUrl,reconciliation.evidenceDatabaseUrl]) {
+          assertDatabaseUrl(databaseUrl);
+          const url = new URL(databaseUrl);
+          const login = decodeURIComponent(url.username);
+          if (!login || logins.has(login) || url.search || url.hash || url.hostname!==model.hostname
+            || (url.port || "5432")!==(model.port || "5432") || url.pathname!==model.pathname) throw new Error();
+          logins.add(login);
+        }
       }
     } catch { throw new Error("INVALID_EPISODE_TASK_CONFIG"); }
   }
@@ -272,6 +295,9 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   let scriptWorker: StoryKnowledgeTaskWorker | undefined;
   let qualityWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeOutboxPool: Pool | undefined;
+  let episodeReconciliationPool: Pool | undefined;
+  let episodeEvidencePool: Pool | undefined;
+  let episodeReconciliationWorker: StoryKnowledgeTaskWorker | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
   const invitationsModule = ProjectInvitationsApiModule.register(sessions,projectRepository);
   let apiModule: DynamicModule = { module: ProductionApiModule,imports: [projectModule,invitationsModule] };
@@ -378,6 +404,32 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
           consumer:new EpisodeOutboxConsumer(episodeOutboxPool,taskConfig.workspaceIds),repository,executor,
           responsibility:async (workspaceId,taskId)=>(await ledger.task({workspaceId,serviceId},taskId)).snapshot.responsibility,
         });
+      }
+      if (episodeOutboxPool && taskConfig.reconciliation?.enabled === true) {
+        const reconciliation = taskConfig.reconciliation;
+        const ssl = {ca:value.databaseTlsCa,rejectUnauthorized:true};
+        const statePool = episodeReconciliationPool = new Pool({connectionString:reconciliation.databaseUrl,max:2,
+          ssl,options:"-c role=novel_episode_reconciliation",connectionTimeoutMillis:5000});
+        const evidencePool = episodeEvidencePool = new Pool({connectionString:reconciliation.evidenceDatabaseUrl,max:2,
+          ssl,options:"-c role=novel_evidence",connectionTimeoutMillis:5000});
+        const {worker: reconciliationWorker}=createEpisodeReconciliationWorker({
+          pool:statePool,enabled:true,workspaceIds:taskConfig.workspaceIds,serviceId:"episode-reconciliation",
+          ruleVersion:"episode-reconciliation-v1",repository,plans:script,
+          journal:new PostgresEpisodeExecutionJournal(episodeOutboxPool),
+          ledgerRepository:new PostgresCreditLedgerRepository(episodeOutboxPool),
+          evidence:new PostgresEvidenceMaterialRepository(evidencePool),
+          ...(reconciliation.pageSize === undefined ? {} : {pageSize:reconciliation.pageSize}),
+          ...(reconciliation.intervalMs === undefined ? {} : {intervalMs:reconciliation.intervalMs}),
+        });
+        episodeReconciliationWorker = reconciliationWorker;
+        apiModule.providers!.push({provide:"EPISODE_RECONCILIATION_WORKER_LIFECYCLE",useValue:{
+          async onModuleInit() {
+            await assertEpisodeReconciliationDatabase(statePool);
+            await assertEvidenceMaterialDatabase(evidencePool);
+          },
+          onApplicationBootstrap() { void reconciliationWorker.start().catch(()=>{}); },
+          onApplicationShutdown() { return reconciliationWorker.stop(); },
+        }});
       }
       episodeWorker = new StoryKnowledgeTaskWorker({ dispatcher: new EpisodePlanTaskDispatcher({ repository,executor,...(outbox ? {outbox} : {}) }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
@@ -501,8 +553,8 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   return {
     module: apiModule,
     close: () => closing ??= (async () => {
-      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop(),settingsRegenerationWorker?.stop(),storyboardWorker?.stop()]); }
-      finally { await Promise.all([pool.end(), modelPool?.end(), episodeOutboxPool?.end()]); }
+      try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),episodeReconciliationWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop(),settingsRegenerationWorker?.stop(),storyboardWorker?.stop()]); }
+      finally { await Promise.all([pool.end(), modelPool?.end(), episodeOutboxPool?.end(),episodeReconciliationPool?.end(),episodeEvidencePool?.end()]); }
     })(),
   };
 }

@@ -24,11 +24,13 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   const ca = await readFile(process.env.TEST_TLS_CA_PATH!, "utf8");
   const admin = new Pool({ connectionString: databaseUrl, ssl: { ca, rejectUnauthorized: true } });
   const suffix = randomUUID().replaceAll("-", "");
-  const login = `model_${suffix}`, outboxLogin = `outbox_${suffix}`, extraRole = `extra_${suffix}`;
+  const login = `model_${suffix}`, outboxLogin = `outbox_${suffix}`, reconciliationLogin = `reconcile_${suffix}`, evidenceLogin = `evidence_${suffix}`, extraRole = `extra_${suffix}`;
   const workspaceId = `w_${suffix}`, userId = `u_${suffix}`;
   const sessionSecret = "0123456789abcdef0123456789abcdef";
   const restrictedUrl = new URL(databaseUrl); restrictedUrl.username = login; restrictedUrl.password = "";
   const outboxUrl = new URL(restrictedUrl); outboxUrl.username = outboxLogin;
+  const reconciliationUrl = new URL(restrictedUrl); reconciliationUrl.username = reconciliationLogin;
+  const evidenceUrl = new URL(restrictedUrl); evidenceUrl.username = evidenceLogin;
   const config = {
     databaseUrl, databaseTlsCa: ca, sessionSecret, deviceTokenSecret: "abcdef0123456789abcdef0123456789",
     trustedProxyHops: 0, smsEndpoint: "https://sms.example/verify", smsApiKey: "fixture",
@@ -128,14 +130,16 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         evidence: [{ sourceVersionId: input.sourceVersionId, fragmentId: input.input.sourceFragments[0].id }] } }] };
     return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
   };
-  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false, outboxEnabled = false) => {
+  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false, outboxEnabled = false, reconciliationEnabled = false) => {
     const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa },
       ...(storyboardEnabled ? { storyboardTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(settingsEnabled ? { settingsTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(tasksEnabled ? { storyTasks: { enabled: true, workspaceIds: [workspaceId], intervalMs: 100 } } : {}),
       ...(scriptsEnabled ? { scriptTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(episodesEnabled ? { episodeTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100,
-        ...(outboxEnabled ? {outbox:{enabled:true,databaseUrl:outboxUrl.href}} : {}) } } : {}) }, { modelFetch });
+        ...(outboxEnabled ? {outbox:{enabled:true,databaseUrl:outboxUrl.href}} : {}),
+        ...(reconciliationEnabled ? {reconciliation:{enabled:true,databaseUrl:reconciliationUrl.href,
+          evidenceDatabaseUrl:evidenceUrl.href,pageSize:1,intervalMs:60000}} : {}) } } : {}) }, { modelFetch });
     try {
       const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
       const app = ref.createNestApplication();
@@ -163,7 +167,8 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
       "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../../script/migrations/0043_storyboard_reconciliation_retains.sql", "../../script/migrations/0044_storyboard_reconciliation_revisions.sql", "../../script/migrations/0045_storyboard_regeneration_tasks.sql", "../../script/migrations/0046_storyboard_regeneration_adoption.sql", "../../script/migrations/0047_storyboard_reconciliation_confirmation.sql", "../../script/migrations/0048_storyboard_reconciliation_created_at.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql", "../../billing/migrations/0001_credit_ledger.sql",
-      "../../billing/migrations/0003_episode_submission_outbox.sql", "../../billing/migrations/0004_episode_outbox_consumer.sql", "../../billing/migrations/0005_episode_execution_events.sql"]) {
+      "../../billing/migrations/0003_episode_submission_outbox.sql", "../../billing/migrations/0004_episode_outbox_consumer.sql", "../../billing/migrations/0005_episode_execution_events.sql", "../../billing/migrations/0002_evidence_material.sql",
+      "../../billing/migrations/0006_episode_reconciliation.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
     // Identifiers are generated locally from hex UUIDs, not supplied by users.
@@ -171,6 +176,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query(`grant novel_app to ${login}`);
     await admin.query(`create role ${outboxLogin} login nosuperuser nocreatedb nocreaterole nobypassrls`);
     await admin.query(`grant novel_app,novel_billing,novel_episode_submission,novel_episode_outbox_consumer to ${outboxLogin}`);
+    await admin.query(`create role ${reconciliationLogin} login nosuperuser nocreatedb nocreaterole nobypassrls;
+      create role ${evidenceLogin} login nosuperuser nocreatedb nocreaterole nobypassrls;
+      grant novel_episode_reconciliation to ${reconciliationLogin}; grant novel_evidence to ${evidenceLogin}`);
     await admin.query(`create role ${extraRole} nologin`);
     await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)", [userId, workspaceId]);
     await admin.query("insert into workspace_model_members(workspace_id,user_id,role) values($1,$2,'owner')", [workspaceId, userId]);
@@ -376,6 +384,31 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.deepEqual(events.rows,[{kind:"unknown",candidate_id:null}]);
       assert.equal(modelCalls,2);
     } finally { await recoveredEpisode.close(); }
+    const startReconciliation=()=>start(ca,false,true,false,false,false,true,true);
+    await admin.query(`grant novel_billing to ${reconciliationLogin}`);
+    try { await assert.rejects(startReconciliation,{message:"EPISODE_RECONCILIATION_DATABASE_NOT_READY"}); }
+    finally { await admin.query(`revoke novel_billing from ${reconciliationLogin}`); }
+    const readCheckpoint=async()=>(await admin.query("select cursor from episode_reconciliation_checkpoints where workspace_id=$1",
+      [workspaceId])).rows[0];
+    const firstReconciliation=await startReconciliation();
+    try {
+      for(let attempt=0;attempt<100 && !await readCheckpoint();attempt++) await new Promise(resolve=>setTimeout(resolve,20));
+      assert.ok((await readCheckpoint())?.cursor);
+    } finally { await firstReconciliation.close(); }
+    const secondReconciliation=await startReconciliation();
+    try {
+      for(let attempt=0;attempt<100 && (await readCheckpoint())?.cursor!==null;attempt++) await new Promise(resolve=>setTimeout(resolve,20));
+      assert.equal((await readCheckpoint())?.cursor,null);
+      const alerts=await admin.query("select task_id,code from episode_reconciliation_alerts where workspace_id=$1",[workspaceId]);
+      assert.deepEqual(alerts.rows,[{task_id:interruptedEpisodeId,code:"EXECUTION_UNKNOWN"}]);
+      const storedEvidence=await admin.query("select material->'binding'->>'taskId' task from evidence_material where workspace_id=$1",[workspaceId]);
+      assert.deepEqual(new Set(storedEvidence.rows.map(row=>row.task)),new Set([episodeTaskId,interruptedEpisodeId]));
+      const balance=await admin.query(`select v.state_json->'entries' entries from credit_ledger_heads h
+        join credit_ledger_versions v on (v.workspace_id,v.revision)=(h.workspace_id,h.active_revision)
+        where h.workspace_id=$1`,[workspaceId]);
+      assert.deepEqual(balance.rows[0]?.entries,[]);
+      assert.equal(modelCalls,2);
+    } finally { await secondReconciliation.close(); }
     // Uncertainty intentionally occupies the only execution slot. Remove this disposable fixture
     // before exercising unrelated stages under the original workspace quota.
     await admin.query(`with events as (
@@ -1316,7 +1349,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     try { await assert.rejects(start, { message: "MODEL_DATABASE_NOT_READY" }); }
     finally { await admin.query("grant insert on model_settings_audit to novel_app"); }
   } finally {
-    try { await admin.query(`drop role if exists ${login}; drop role if exists ${outboxLogin}`); }
+    try { await admin.query(`drop role if exists ${login}; drop role if exists ${outboxLogin}; drop role if exists ${reconciliationLogin}; drop role if exists ${evidenceLogin}`); }
     finally {
       try { await admin.query(`drop role if exists ${extraRole}`); }
       finally { await admin.end(); }

@@ -85,6 +85,16 @@ test("拆集任务独立默认关闭，开启前拒绝不可信装配配置", as
     assert.throws(() => createProductionApi({ ...base,modelSettings:models,
       episodeTasks:{enabled:true,workspaceIds:["w"],outbox:{enabled:true,databaseUrl}} }),{message:"INVALID_EPISODE_TASK_CONFIG"});
   }
+  const outbox={enabled:true as const,databaseUrl:"postgresql://outbox@localhost/fixture"};
+  const reconciliation={enabled:true as const,databaseUrl:"postgresql://state@localhost/fixture",
+    evidenceDatabaseUrl:"postgresql://evidence@localhost/fixture"};
+  for (const options of [
+    {reconciliation},
+    {outbox,reconciliation:{...reconciliation,evidenceDatabaseUrl:reconciliation.databaseUrl}},
+    {outbox,reconciliation:{...reconciliation,pageSize:51}},
+    {outbox,reconciliation:{...reconciliation,databaseUrl:"postgresql://state@localhost/other"}},
+  ]) assert.throws(()=>createProductionApi({...base,modelSettings:models,
+    episodeTasks:{enabled:true,workspaceIds:["w"],...options}}),{message:"INVALID_EPISODE_TASK_CONFIG"});
   const production = createProductionApi({ ...base,episodeTasks: { enabled: false } });
   const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
   const app = ref.createNestApplication();
