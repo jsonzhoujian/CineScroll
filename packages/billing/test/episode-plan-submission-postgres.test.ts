@@ -331,20 +331,25 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       {name:'rate limited',taskId:'rate-limited',status:'retryable',attempts:1,calls:2},
       {name:'restart before retry',taskId:'rate-limited',status:'retryable',attempts:1,calls:2},
       {name:'restart after retry due',taskId:'rate-limited',status:'delivered',attempts:2,calls:3},
+      ...[1,2,3,4,5].map(attempts=>({
+        name:`continuous rate limit attempt ${attempts}`,taskId:'always-limited',
+        status:attempts===5?'exhausted':'retryable',attempts,calls:3+attempts,
+      })),
+      {name:'restart after exhaustion',taskId:'always-limited',status:'exhausted',attempts:5,calls:8},
     ];
     for (const phase of workerPhases) {
-      if (phase.name==='rate limited') {
-        await admin.query("insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('other','rate-limited','EXECUTION_UNKNOWN')");
+      if (phase.name==='rate limited' || phase.name==='continuous rate limit attempt 1') {
+        await admin.query("insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('other',$1,'EXECUTION_UNKNOWN')",[phase.taskId]);
       }
-      if (phase.name==='restart after retry due') {
-        await admin.query("update episode_alert_deliveries set retry_at=clock_timestamp() - interval '1 second' where workspace_id='other' and task_id='rate-limited'");
+      if (phase.name==='restart after retry due' || (phase.taskId==='always-limited' && phase.attempts>1 && phase.name!=='restart after exhaustion')) {
+        await admin.query("update episode_alert_deliveries set retry_at=clock_timestamp() - interval '1 second' where workspace_id='other' and task_id=$1",[phase.taskId]);
       }
       const workerPool=new Pool({connectionString:url.href,max:1});
       const worker=createEpisodeFeishuAlertWorker({
         pool:workerPool,workspaceIds:['other'],enabled:true,
-        send:async ()=>{
+        send:async ({taskId})=>{
           workerSendCount++;
-          return workerSendCount===2?'retryable':'delivered';
+          return taskId==='always-limited' || workerSendCount===2?'retryable':'delivered';
         },
       });
       const running=worker.start();
@@ -354,9 +359,9 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
         assert.equal(worker.status().lastError,null,phase.name);
         assert.equal(workerSendCount,phase.calls,phase.name);
         const {rows}=await admin.query(
-          "select status,attempts,coalesce(retry_at>clock_timestamp(),false) as waiting from episode_alert_deliveries where workspace_id='other' and task_id=$1",
+          "select status,attempts,retry_at>clock_timestamp() as waiting from episode_alert_deliveries where workspace_id='other' and task_id=$1",
           [phase.taskId]);
-        assert.deepEqual(rows,[{status:phase.status,attempts:phase.attempts,waiting:phase.status==='retryable'}],phase.name);
+        assert.deepEqual(rows,[{status:phase.status,attempts:phase.attempts,waiting:phase.status==='retryable'?true:null}],phase.name);
       } finally {
         try { await worker.stop(); await running; }
         finally { await workerPool.end(); }
