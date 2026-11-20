@@ -152,3 +152,11 @@ Outbox 迁移需在账本及 `model_tasks` 迁移之后执行。提交角色仅�
 同一工作室、任务、告警代码及渠道只保留一份送达状态。发送前先提交未知状态，再调用飞书。并发执行只领取一次。只有明确的限流拒收可在一分钟后重试，最多五次。连接中断、响应不明及发送进程中途退出保留未知，由内部运维核对。此策略优先避免重复消息，领取后发送前崩溃也会留下未知。
 
 专用数据库角色按工作室读取告警及更新送达状态。隔离验收使用模拟发送端。生产装配通过 `episodeTasks.reconciliation.feishu.enabled` 显式开启，默认关闭。启用时使用专用通知登录和部署环境变量 `EPISODE_FEISHU_WEBHOOK`。隔离 TLS 验证默认关闭、额外账本权限拒绝启动、启用后仅发送一次。真实连通验收只使用一条合成告警，飞书确认成功，隔离数据库记录 delivered、attempts=1。生产部署待配置。
+
+## 飞书告警本地验收与 CI
+
+本地持久 PostgreSQL 中，`local-feishu-test` 的测试拆集任务经过对账生成 `EXECUTION_UNKNOWN`。飞书群确认收到同一任务的告警，数据库记录 `delivered`，尝试 1 次。启动和排查步骤见 [API README](../../packages/api/README.md#本地飞书告警-worker)。
+
+隔离 PostgreSQL 16 回归覆盖 BYOK 成功无告警、并发只发送一次、重启后不重复投递、限流到期后重试、第五次限流后停止，以及超时、明确拒绝和发送前进程退出时的状态保留。CI 使用模拟发送器，测试跳过时作业失败。
+
+PR 触发和合并后 `main` 推送触发均为 2 项通过，失败、跳过和取消均为 0 项。[PR 回归](https://github.com/jsonzhoujian/CineScroll/actions/runs/44712742631) · [合并后回归](https://github.com/jsonzhoujian/CineScroll/actions/runs/44713087019)
