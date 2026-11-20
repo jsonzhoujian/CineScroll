@@ -61,14 +61,7 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
     });
   }
   insert(task: ModelTask) {
-    return this.#transaction(task.workspaceId, async client => {
-      if (task.state !== "queued" || task.revision !== 0 || task.reason !== null || task.result !== null || task.leaseExpiresAt !== null) throw new ModelTaskError("STATE_CONFLICT");
-      const { state, revision, reason, result, leaseExpiresAt, ...payload } = task;
-      const row = (await client.query(`insert into model_tasks(workspace_id,id,parent_task_id,payload,state,revision,reason)
-        values($1,$2,$3,$4::jsonb,$5,$6,$7) returning payload,state,revision,reason,result_json,lease_expires_at`,
-        [task.workspaceId,task.id,task.parentTaskId,JSON.stringify(payload),state,revision,reason])).rows[0]!;
-      return decode(row);
-    });
+    return this.#transaction(task.workspaceId, client => insertModelTaskOnConnection(client,task));
   }
   transition(workspaceId: string, id: string, expectedRevision: number, state: TaskState, reason: TaskReason | null, result: TaskResult | null = null) {
     validateTaskStatus(state, reason);
@@ -119,4 +112,14 @@ function decode(row: Record<string, unknown>): ModelTask {
   const expiry = row.lease_expires_at;
   return structuredClone({ ...(row.payload as Omit<ModelTask,"state" | "revision" | "reason" | "result" | "leaseExpiresAt">), state: row.state as TaskState, revision: Number(row.revision), reason: row.reason as TaskReason | null, result: (row.result_json ?? null) as TaskResult | null,
     leaseExpiresAt: expiry == null ? null : new Date(expiry as string).toISOString() });
+}
+
+/** Requires a caller-owned transaction with the model workspace already bound. */
+export async function insertModelTaskOnConnection(client: Pick<ModelSettingsClient,"query">,task: ModelTask): Promise<ModelTask> {
+  if (task.state !== "queued" || task.revision !== 0 || task.reason !== null || task.result !== null || task.leaseExpiresAt !== null) throw new ModelTaskError("STATE_CONFLICT");
+  const { state, revision, reason, result, leaseExpiresAt, ...payload } = task;
+  const row = (await client.query(`insert into model_tasks(workspace_id,id,parent_task_id,payload,state,revision,reason)
+    values($1,$2,$3,$4::jsonb,$5,$6,$7) returning payload,state,revision,reason,result_json,lease_expires_at`,
+    [task.workspaceId,task.id,task.parentTaskId,JSON.stringify(payload),state,revision,reason])).rows[0]!;
+  return decode(row);
 }

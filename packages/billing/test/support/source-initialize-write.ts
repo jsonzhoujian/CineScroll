@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { Client, type Pool } from 'pg';
+import { Client, Pool } from 'pg';
+import { checkInitializeWritePool } from './source-initialize-write-profile.ts';
 import { createIsolatedInitializer, InitializeCommitUnknown } from './source-initialize-transaction.ts';
 import { createIsolatedSourceBusinessLoader } from './source-business-loader.ts';
 import { sourceBusinessFixture } from './source-business-fixture.ts';
@@ -22,12 +23,35 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
       from unnest($1::text[]) fn`, [[`${schema}.deny_draft_write()`, `${schema}.guard_test_business()`]]);
   // Restore the original trigger definitions after the disposable writer test.
   await admin.query(await readDraft('material'));
+  const inspectorUrl = new URL(runtime.options.connectionString!);
+  inspectorUrl.username = 'codec_inspector';
+  const inspector = new Pool({connectionString:inspectorUrl.toString(),max:1,
+    options:'-c search_path=pg_catalog,pg_temp -c statement_timeout=5000'});
   let installed = false;
   try {
     await admin.query(draft);
     installed = true;
     await admin.query(`grant usage on schema ${writer} to ${login};
       grant execute on function ${writer}.initialize_source_collection(jsonb,text,text) to ${login}`);
+    const checkedPool = await checkInitializeWritePool(inspector,runtime);
+    const initializer = createIsolatedInitializer(checkedPool,'init-collector','rule-v1');
+    for (const [change,restore] of [
+      [`alter table ${schema}.collection disable trigger draft_closed_row`,
+        `alter table ${schema}.collection enable always trigger draft_closed_row`],
+      [`grant execute on function ${writer}.replay_initialize(jsonb,bytea) to codec_inspector`,
+        `revoke execute on function ${writer}.replay_initialize(jsonb,bytea) from codec_inspector`],
+      [`alter policy initialize_replay on ${schema}.ingest_receipt using (true)`,
+        `alter policy initialize_replay on ${schema}.ingest_receipt using (${writer}.can_initialize_workspace(workspace_id))`],
+    ] as const) {
+      await admin.query(change);
+      try {
+        await assert.rejects(checkInitializeWritePool(inspector,runtime),{message:'INITIALIZE_WRITE_PROFILE_NOT_READY'});
+        await assert.rejects(initializer.initializeSourceCollection(command),{message:'UNAVAILABLE'});
+      } finally { await admin.query(restore); }
+    }
+    await assert.rejects(checkInitializeWritePool(runtime,runtime),{message:'INITIALIZE_WRITE_PROFILE_NOT_READY'});
+    await assert.rejects(inspector.query(`select * from ${schema}.collection`),{code:'42501'});
+    await assert.rejects(inspector.query(`select ${writer}.initialize_source_collection(null,null,null)`),{code:'42501'});
     const read = async () => (await admin.query(`select
       array[${tables.slice(0,-1).map(table => `(select count(*)::int from ${schema}.${table} where workspace_id='studio')`).join(',')}] counts,
       receipt_count,receipt_bytes,source_count,source_bytes,business_count,business_bytes
@@ -56,7 +80,7 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
       let committedReceipt: unknown;
       const initializer=createIsolatedInitializer({
         async connect() {
-          const connection=await runtime.connect();
+          const connection=await checkedPool.connect();
           if (++attempts>1) return connection;
           return {
             async query(sql: string, values?: unknown[]) {
@@ -158,6 +182,8 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
     } finally {
       try { await client.query('rollback'); } finally { client.release(); }
     }
+    const committed = (await admin.query(`select receipt from ${schema}.ingest_receipt where workspace_id='studio'`)).rows[0].receipt;
+    assert.deepEqual(await initializer.initializeSourceCollection(command),committed);
     const beforeDuplicate=await read();
     const duplicate={...command,ingestId:'duplicate-1'};
     const {receipt: duplicateReceipt}=(await runtime.query(invoke,[duplicate,'init-collector'])).rows[0];
@@ -220,6 +246,7 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
     assert.deepEqual(await recoveryState('parallel'),{receipt_count:1,source_count:2,receipts:1});
 
   } finally {
+    await inspector.end();
     await admin.query('rollback');
     if (installed) {
       for (const table of tables) {
