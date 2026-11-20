@@ -14,6 +14,7 @@ import { InMemoryModelTaskRepository, ModelTaskService } from "@novel-adaptation
 import { EpisodePlanRunner, type EpisodePlanGenerationRequest } from "@novel-adaptation/script/episode-plan-runner";
 import { EpisodePlanUpstreamReader } from "../src/episode-plan-api.ts";
 import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "../src/episode-plan-task-executor.ts";
+import { EpisodeOutboxDispatcher } from "../src/episode-outbox-dispatcher.ts";
 import { EpisodePlanTaskDispatcher, EpisodePlanTaskWorker } from "../src/episode-plan-task-dispatcher.ts";
 import { PostgresModelRateLimiter } from "../src/model-rate-limit.ts";
 import { availableRateLimiter } from "./rate-limit-fixture.ts";
@@ -113,6 +114,52 @@ test("新原文未确认知识时旧拆集任务仍可读取并暂停，非成�
   const executor = new EpisodePlanTaskExecutor({ tasks: f.tasks, projects: f.projects, knowledge: f.knowledge, script: f.script, model: { async generate() { assert.fail("不得调用模型"); } } });
   const paused = await executor.run(f.actor,task.id);
   assert.equal(paused.state,"paused"); assert.equal(paused.reason,"UPSTREAM_CHANGED");
+});
+
+test("Outbox 重复投递复用拆集执行状态并恢复未知结果", async () => {
+  const f=await fixture(); await f.confirm();
+  const queued=await f.submit(), abandoned=await f.submit(), platform=await f.submit();
+  let calls=0;
+  let entered!: () => void, finish!: () => void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const modelGate=new Promise<void>(resolve=>{finish=resolve;});
+  const executor=new EpisodePlanTaskExecutor({ ...f,model:{async generate(r) {
+    calls++;
+    entered();
+    await modelGate;
+    return response(r);
+  }} });
+  let delivery=queued.id;
+  const dispatcher=new EpisodeOutboxDispatcher({
+    consumer:{async tick(workspaceId,dispatch) {
+      try { await dispatch({workspaceId,taskId:delivery}); return true; }
+      catch { return false; }
+    }},
+    repository:f.repository,executor,
+    responsibility:async (_workspaceId,taskId)=>taskId===platform.id ? "platform" : "byok",
+  });
+  const first=dispatcher.tick("w");
+  await Promise.race([started,first]);
+  try {
+    assert.equal(calls,1);
+    assert.equal(await dispatcher.tick("w"),false);
+  } finally { finish(); }
+  assert.equal(await first,true);
+  assert.equal(await dispatcher.tick("w"),true);
+  assert.equal((await f.tasks.get(f.actor,queued.id)).state,"succeeded");
+  assert.equal(calls,1);
+
+  delivery=abandoned.id;
+  await f.repository.transition("w",abandoned.id,0,"running",null);
+  assert.equal(await dispatcher.tick("w"),false);
+  f.expire();
+  assert.equal(await dispatcher.tick("w"),true);
+  assert.equal((await f.tasks.get(f.actor,abandoned.id)).reason,"EXECUTION_UNCERTAIN");
+  assert.equal(await dispatcher.tick("w"),true);
+  delivery=platform.id;
+  assert.equal(await dispatcher.tick("w"),false);
+  assert.equal((await f.tasks.get(f.actor,platform.id)).state,"queued");
+  assert.equal(calls,1);
 });
 
 test("拆集恢复只对账任务对应的已保存版本，不读取最新候选或再次调用模型", async () => {
