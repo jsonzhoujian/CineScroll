@@ -390,6 +390,40 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     }
     assert.equal(timeoutRequests,1);
     assert.equal(rejectedRequests,1);
+    await admin.query("insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('other','concurrent-delivery','EXECUTION_UNKNOWN')");
+    const parallelPools=Array.from({length:2},()=>new Pool({connectionString:url.href,max:1}));
+    const releaseSend=Promise.withResolvers<void>();
+    let parallelSends=0;
+    const parallelWorkers=parallelPools.map(pool=>createEpisodeFeishuAlertWorker({
+      pool,workspaceIds:['other'],enabled:true,
+      send:async ()=>{
+        parallelSends++;
+        await releaseSend.promise;
+        return 'delivered';
+      },
+    }));
+    const runningWorkers=parallelWorkers.map(worker=>worker.start());
+    try {
+      for (let attempt=0; attempt<100; attempt++) {
+        if (parallelSends>1 || (parallelSends===1 && parallelWorkers.some(worker=>worker.status().backoffMs>0))) break;
+        await delay(20);
+      }
+      assert.equal(parallelSends,1);
+      assert.ok(parallelWorkers.some(worker=>worker.status().lastScanAt && worker.status().lastError===null));
+      releaseSend.resolve();
+      for (let attempt=0; attempt<100 && parallelWorkers.some(worker=>!worker.status().backoffMs); attempt++) await delay(20);
+      for (const worker of parallelWorkers) {
+        assert.ok(worker.status().backoffMs);
+        assert.equal(worker.status().lastError,null);
+      }
+      assert.equal(parallelSends,1);
+      const {rows}=await admin.query("select status,attempts from episode_alert_deliveries where workspace_id='other' and task_id='concurrent-delivery'");
+      assert.deepEqual(rows,[{status:'delivered',attempts:1}]);
+    } finally {
+      releaseSend.resolve();
+      try {await Promise.all(parallelWorkers.map(worker=>worker.stop())); await Promise.all(runningWorkers);}
+      finally {await Promise.all(parallelPools.map(pool=>pool.end()));}
+    }
     await admin.query("delete from episode_alert_deliveries where workspace_id='other'; delete from episode_reconciliation_alerts where workspace_id='other'");
 
     assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
