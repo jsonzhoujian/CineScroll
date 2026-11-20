@@ -81,6 +81,10 @@ test("拆集任务独立默认关闭，开启前拒绝不可信装配配置", as
   for (const intervalMs of [0,99,60001,1.5]) {
     assert.throws(() => createProductionApi({ ...base,modelSettings: models,episodeTasks: { enabled: true,workspaceIds: ["w"],intervalMs } }), { message: "INVALID_EPISODE_TASK_CONFIG" });
   }
+  for (const databaseUrl of [models.databaseUrl,"postgresql://outbox@localhost/other","postgresql://outbox@localhost/fixture?sslmode=disable"]) {
+    assert.throws(() => createProductionApi({ ...base,modelSettings:models,
+      episodeTasks:{enabled:true,workspaceIds:["w"],outbox:{enabled:true,databaseUrl}} }),{message:"INVALID_EPISODE_TASK_CONFIG"});
+  }
   const production = createProductionApi({ ...base,episodeTasks: { enabled: false } });
   const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
   const app = ref.createNestApplication();
@@ -95,7 +99,8 @@ test("仅开启拆集也注册独立Worker，初始化失败不启动", async ()
   const production = createProductionApi({ ...base, modelSettings: {
     enabled: true,encryptionKeyBase64: Buffer.alloc(32,7).toString("base64"),
     databaseUrl: "postgresql://model_app@127.0.0.1:1/fixture",databaseTlsCa: base.databaseTlsCa,routes: { deepseek: "mainland" },
-  },databaseUrl: "postgresql://app@127.0.0.1:1/fixture",episodeTasks: { enabled: true,workspaceIds: ["w"] } });
+  },databaseUrl: "postgresql://app@127.0.0.1:1/fixture",episodeTasks: { enabled: true,workspaceIds: ["w"],
+    outbox:{enabled:true,databaseUrl:"postgresql://outbox@127.0.0.1:1/fixture"} } });
   const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
   const app = ref.createNestApplication();
   try {

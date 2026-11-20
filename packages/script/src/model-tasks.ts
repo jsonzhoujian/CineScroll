@@ -23,7 +23,7 @@ export class TaskExecutionError extends Error {
   constructor(code: TaskExecutionError["code"]) { super(code); this.code = code; }
 }
 export type ModelTask = { id: string; workspaceId: string; createdBy: string; projectId: string; chapterId: string;
-  parentTaskId: string | null; input: TaskInput; model: TaskModelSnapshot; state: TaskState; revision: number; reason: TaskReason | null; result: TaskResult | null; leaseExpiresAt: string | null };
+  parentTaskId: string | null; dispatchOwner?: "outbox"; input: TaskInput; model: TaskModelSnapshot; state: TaskState; revision: number; reason: TaskReason | null; result: TaskResult | null; leaseExpiresAt: string | null };
 export class ModelTaskError extends Error {
   readonly code: "TASK_NOT_FOUND" | "STATE_CONFLICT" | "UPSTREAM_CHANGED" | "INVALID_CONTEXT" | "STORAGE_UNAVAILABLE" | "POLICY_RESTRICTED" | "TASK_QUEUE_FULL" | "TASK_EXECUTION_FULL" | "TASK_LIMITS_UNAVAILABLE" | "WORKSPACE_TASK_DISABLED" | "TASK_PROVIDER_UNSUPPORTED";
   constructor(code: ModelTaskError["code"]) { super(code); this.code = code; }

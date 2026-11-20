@@ -116,6 +116,25 @@ test("新原文未确认知识时旧拆集任务仍可读取并暂停，非成�
   assert.equal(paused.state,"paused"); assert.equal(paused.reason,"UPSTREAM_CHANGED");
 });
 
+test("旧拆集扫描跳过 Outbox 任务的执行，仍恢复过期任务", async () => {
+  const f=await fixture(); await f.confirm();
+  const task=await f.submit();
+  const repository=f.repository;
+  const scan=repository.scanEpisodePlans.bind(repository);
+  const executor=new EpisodePlanTaskExecutor({ ...f,model:{async generate() { assert.fail("旧扫描不得调用模型"); }} });
+  const dispatcher=new EpisodePlanTaskDispatcher({repository:{
+    async scanEpisodePlans(...args) {
+      const page=await scan(...args);
+      return {...page,tasks:page.tasks.map(item=>({...item,dispatchOwner:"outbox" as const}))};
+    },
+  },executor});
+  assert.deepEqual((await dispatcher.tick("w","run")).items,[]);
+  assert.equal((await f.tasks.get(f.actor,task.id)).state,"queued");
+  await repository.transition("w",task.id,0,"running",null);
+  f.expire();
+  assert.equal((await dispatcher.tick("w","recover")).items[0]?.reason,"EXECUTION_UNCERTAIN");
+});
+
 test("Outbox 重复投递复用拆集执行状态并恢复未知结果", async () => {
   const f=await fixture(); await f.confirm();
   const queued=await f.submit(), abandoned=await f.submit(), platform=await f.submit();

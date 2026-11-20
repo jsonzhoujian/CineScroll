@@ -6,6 +6,7 @@ import { CreditLedgerService } from '../src/index.ts';
 import { PostgresCreditLedgerRepository } from '../src/postgres-ledger.ts';
 import { ModelTaskService } from '../../script/src/model-tasks.ts';
 import { InMemoryModelSettingsRepository, WorkspaceModelSettings } from '../../script/src/model-settings.ts';
+import { assertEpisodeOutboxDatabase } from '../../api/src/episode-outbox-database-readiness.ts';
 import { EpisodeOutboxConsumer } from '../../api/src/episode-outbox-consumer.ts';
 import { createEpisodeSubmissionRepository } from '../../api/src/episode-submission.ts';
 
@@ -29,10 +30,12 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
-    await admin.query('grant novel_app,novel_billing,novel_episode_submission to episode_submission');
+    await admin.query('grant novel_app,novel_billing,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
     await admin.query('grant novel_episode_outbox_consumer to episode_outbox_worker');
     url.username='episode_submission';
     pool=new Pool({connectionString:url.href,max:3});
+    await assertEpisodeOutboxDatabase(pool);
+    await assert.rejects(assertEpisodeOutboxDatabase(admin),{message:'EPISODE_OUTBOX_DATABASE_NOT_READY'});
     const actor={workspaceId:'studio',userId:'owner'};
     const billingActor={workspaceId:'studio',serviceId:'episode-test'};
     const ledger=new CreditLedgerService({repository:new PostgresCreditLedgerRepository(pool),
@@ -70,6 +73,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     await admin.query('alter table episode_submission_outbox drop constraint fail_insert');
     const [first,second]=await Promise.all([submit('same-request'),submit('same-request')]);
     assert.deepEqual(second,first);
+    assert.equal(first.dispatchOwner,'outbox');
     const platformBilling=await ledger.task(billingActor,first.id);
     assert.equal(platformBilling.snapshot.quoteId,'fixture-quote');
     assert.equal(platformBilling.snapshot.priceVersion,'fixture-v1');
@@ -84,7 +88,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     const byokBilling=await ledger.task(billingActor,byok.id);
     assert.equal(byokBilling.snapshot.responsibility,'byok');
     assert.deepEqual(byokBilling.units.map(unit=>[unit.state,unit.reserved]),[['exempt',0]]);
-    await assert.rejects(pool.query('select * from public.episode_submission_outbox'),{code:'42501'});
+    assert.deepEqual((await pool.query('select task_id from public.episode_submission_outbox')).rows,[]);
     const connection=await pool.connect();
     try {
       await connection.query("begin; set local app.model_workspace_id='studio'; set local app.billing_workspace_id='different'");

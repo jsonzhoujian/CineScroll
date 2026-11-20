@@ -43,7 +43,7 @@ export function createEpisodeSubmissionRepository(pool: Pool, options: Readonly<
         await client.query("select set_config('app.model_workspace_id',$1,true),set_config('app.billing_workspace_id',$1,true)",[task.workspaceId]);
         let inserted: ModelTask;
         try {
-          inserted=await insertModelTaskOnConnection(client,task);
+          inserted=await insertModelTaskOnConnection(client,{...task,dispatchOwner:"outbox"});
         } catch (error) {
           if (error && typeof error==='object' && 'code' in error && error.code==='23505') throw new ModelTaskError('STATE_CONFLICT');
           throw error;

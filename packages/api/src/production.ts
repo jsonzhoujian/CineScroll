@@ -63,6 +63,13 @@ import { EpisodePlanApiModule, EpisodePlanUpstreamReader } from "./episode-plan-
 import { EpisodePlanTaskApiModule } from "./episode-plan-task-api.ts";
 import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "./episode-plan-task-executor.ts";
 import { EpisodePlanTaskDispatcher } from "./episode-plan-task-dispatcher.ts";
+import { createEpisodeSubmissionRepository } from "./episode-submission.ts";
+import { EpisodeOutboxConsumer } from "./episode-outbox-consumer.ts";
+import { EpisodeOutboxDispatcher } from "./episode-outbox-dispatcher.ts";
+import { CreditLedgerService } from "../../billing/src/index.ts";
+import { PostgresCreditLedgerRepository } from "../../billing/src/postgres-ledger.ts";
+import { createInternalBillingAccess } from "../../billing/src/internal-access.ts";
+import { assertEpisodeOutboxDatabase } from "./episode-outbox-database-readiness.ts";
 import { EpisodePlanWorkerModule } from "./episode-plan-worker-module.ts";
 import { DeepSeekEpisodePlanModel } from "./deepseek-episode-model.ts";
 import { assertEpisodeTaskDatabase } from "./episode-task-database-readiness.ts";
@@ -89,7 +96,8 @@ export interface ProductionApiConfig {
   storyboardTasks?: ProductionApiConfig["settingsTasks"];
   settingsTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
   scriptTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
-  episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number };
+  episodeTasks?: { enabled: false } | { enabled: true; workspaceIds: readonly string[]; intervalMs?: number;
+    outbox?: { enabled: false } | { enabled: true; databaseUrl: string } };
   databaseUrl: string;
   databaseTlsCa: string;
   sessionSecret: string;
@@ -144,6 +152,14 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
           (tasks.intervalMs !== undefined && (!Number.isInteger(tasks.intervalMs) || tasks.intervalMs < 100 || tasks.intervalMs > 60000))) throw new Error();
       const main = new URL(config.databaseUrl), model = new URL(models.databaseUrl);
       if (main.hostname !== model.hostname || (main.port || "5432") !== (model.port || "5432") || main.pathname !== model.pathname || config.databaseTlsCa !== models.databaseTlsCa) throw new Error();
+      if (tasks.outbox !== undefined && tasks.outbox.enabled !== false) {
+        if (tasks.outbox.enabled !== true) throw new Error();
+        assertDatabaseUrl(tasks.outbox.databaseUrl);
+        const outbox = new URL(tasks.outbox.databaseUrl);
+        if (!outbox.username || outbox.username === model.username || outbox.username === main.username
+          || outbox.hostname !== model.hostname || (outbox.port || "5432") !== (model.port || "5432")
+          || outbox.pathname !== model.pathname) throw new Error();
+      }
     } catch { throw new Error("INVALID_EPISODE_TASK_CONFIG"); }
   }
   if (config.scriptTasks !== undefined && config.scriptTasks.enabled !== false) {
@@ -254,6 +270,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
   let settingsRegenerationWorker: StoryKnowledgeTaskWorker | undefined;
   let scriptWorker: StoryKnowledgeTaskWorker | undefined;
   let qualityWorker: StoryKnowledgeTaskWorker | undefined;
+  let episodeOutboxPool: Pool | undefined;
   let episodeWorker: StoryKnowledgeTaskWorker | undefined;
   const invitationsModule = ProjectInvitationsApiModule.register(sessions,projectRepository);
   let apiModule: DynamicModule = { module: ProductionApiModule,imports: [projectModule,invitationsModule] };
@@ -331,12 +348,36 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         upstreamReader: new EpisodePlanUpstreamReader(projects,knowledge),accessReader: projects,
         idGenerator: () => `epv_${randomUUID()}`,clock: () => new Date() });
       const repository = new PostgresModelTaskRepository(restrictedPool);
-      const tasks = new ModelTaskService({ settings,repository,contextReader: new EpisodePlanTaskContext(projects,knowledge),
+      const serviceId = "episode-outbox";
+      if (taskConfig.outbox?.enabled === true) {
+        episodeOutboxPool = new Pool({connectionString:taskConfig.outbox.databaseUrl,max:5,
+          ssl:{ca:value.databaseTlsCa,rejectUnauthorized:true},connectionTimeoutMillis:5000});
+        const outboxPool = episodeOutboxPool;
+        apiModule.providers!.push({provide:"EPISODE_OUTBOX_DATABASE_STARTUP_CHECK",useValue:{
+          onModuleInit:()=>assertEpisodeOutboxDatabase(outboxPool),
+        }});
+      }
+      const submissionRepository = episodeOutboxPool
+        ? createEpisodeSubmissionRepository(episodeOutboxPool,{serviceId,workspaceIds:taskConfig.workspaceIds,platformQuotes:[]})
+        : repository;
+      const tasks = new ModelTaskService({ settings,repository:submissionRepository,contextReader: new EpisodePlanTaskContext(projects,knowledge),
         episodeAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
         generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `job_${randomUUID()}` });
       const executor = new EpisodePlanTaskExecutor({ tasks,projects,knowledge,script,
         model: new DeepSeekEpisodePlanModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
-      episodeWorker = new StoryKnowledgeTaskWorker({ dispatcher: new EpisodePlanTaskDispatcher({ repository,executor }),
+      let outbox: EpisodeOutboxDispatcher | undefined;
+      if (episodeOutboxPool) {
+        const access = createInternalBillingAccess({serviceId,grants:taskConfig.workspaceIds.map(workspaceId=>({
+          workspaceId,operations:["read"],
+        }))});
+        const ledger = new CreditLedgerService({repository:new PostgresCreditLedgerRepository(episodeOutboxPool),
+          access,clock:()=>new Date()});
+        outbox = new EpisodeOutboxDispatcher({
+          consumer:new EpisodeOutboxConsumer(episodeOutboxPool,taskConfig.workspaceIds),repository,executor,
+          responsibility:async (workspaceId,taskId)=>(await ledger.task({workspaceId,serviceId},taskId)).snapshot.responsibility,
+        });
+      }
+      episodeWorker = new StoryKnowledgeTaskWorker({ dispatcher: new EpisodePlanTaskDispatcher({ repository,executor,...(outbox ? {outbox} : {}) }),
         enabled: true,workspaceIds: taskConfig.workspaceIds,...(taskConfig.intervalMs ? { intervalMs: taskConfig.intervalMs } : {}) });
       apiModule.imports!.push(EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks,rateLimiter: new PostgresModelRateLimiter(restrictedPool) }),
         EpisodePlanApiModule.register({ sessionVerifier: sessions,script,projects,knowledge }),EpisodePlanWorkerModule.forWorker(episodeWorker));
@@ -459,7 +500,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
     module: apiModule,
     close: () => closing ??= (async () => {
       try { await Promise.allSettled([worker?.stop(),episodeWorker?.stop(),scriptWorker?.stop(),qualityWorker?.stop(),settingsWorker?.stop(),settingsRegenerationWorker?.stop(),storyboardWorker?.stop()]); }
-      finally { await Promise.all([pool.end(), modelPool?.end()]); }
+      finally { await Promise.all([pool.end(), modelPool?.end(), episodeOutboxPool?.end()]); }
     })(),
   };
 }

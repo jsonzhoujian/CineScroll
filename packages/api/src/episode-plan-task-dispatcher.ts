@@ -1,13 +1,15 @@
 import { ModelTaskError, validateTaskScan, type ModelTaskRepository, type TaskScanMode, type TaskPageRequest } from "@novel-adaptation/script/model-tasks";
 import type { EpisodePlanTaskExecutor } from "./episode-plan-task-executor.ts";
+import type { EpisodeOutboxDispatcher } from "./episode-outbox-dispatcher.ts";
 import type { DispatchItem } from "./story-knowledge-task-dispatcher.ts";
 
 export { StoryKnowledgeTaskWorker as EpisodePlanTaskWorker } from "./story-knowledge-task-worker.ts";
 /** Internal bounded sweep. The worker supplies a trusted workspace allowlist; no public run route. */
 export class EpisodePlanTaskDispatcher {
-  readonly #repository: ModelTaskRepository;
+  readonly #repository: Pick<ModelTaskRepository,"scanEpisodePlans">;
+  readonly #outbox: Pick<EpisodeOutboxDispatcher,"tick"> | undefined;
   readonly #executor: EpisodePlanTaskExecutor;
-  constructor(options: { repository: ModelTaskRepository; executor: EpisodePlanTaskExecutor }) { this.#repository = options.repository; this.#executor = options.executor; }
+  constructor(options: { repository: Pick<ModelTaskRepository,"scanEpisodePlans">; executor: EpisodePlanTaskExecutor; outbox?: Pick<EpisodeOutboxDispatcher,"tick"> }) { this.#repository = options.repository; this.#executor = options.executor; this.#outbox = options.outbox; }
   async tick(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest = { limit: 20,cursor: null }, signal?: AbortSignal) {
     validateTaskScan(mode,page);
     if (typeof workspaceId !== "string" || !workspaceId.trim() || workspaceId.length > 256 || /[\r\n]/.test(workspaceId)) throw new ModelTaskError("INVALID_CONTEXT");
@@ -17,6 +19,7 @@ export class EpisodePlanTaskDispatcher {
     for (const task of found.tasks) {
       if (signal?.aborted) break;
       if (task.workspaceId !== workspaceId || task.input.stage !== "script" || task.input.resultType !== "episodePlan") throw new ModelTaskError("INVALID_CONTEXT");
+      if (mode === "run" && task.dispatchOwner === "outbox") continue;
       const actor = { workspaceId,userId: task.createdBy };
       try {
         const result = mode === "run" ? await this.#executor.run(actor,task.id,signal) : await this.#executor.recover(actor,task.id);
@@ -27,6 +30,7 @@ export class EpisodePlanTaskDispatcher {
           : error instanceof ModelTaskError && error.code === "STATE_CONFLICT" ? "raced" : "unavailable" });
       }
     }
+    if (mode === "run" && !signal?.aborted) await this.#outbox?.tick(workspaceId,signal);
     return { items,nextCursor: found.nextCursor };
   }
 }
