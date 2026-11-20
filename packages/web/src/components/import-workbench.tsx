@@ -11,6 +11,7 @@ import { StoryKnowledgeWorkbench } from "./story-knowledge-workbench";
 import { OpenStoryboardImpact, type StoryboardImpactTarget } from "../lib/storyboard-impact-navigation";
 import { StoryboardWorkbench } from "./storyboard-workbench";
 import { ProjectInvitationPanel } from "./project-invitation-panel";
+import { EpisodeNotifications } from "./episode-notifications";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { TaskStatusPanel, type TaskReviewTarget } from "./task-status-panel";
 
@@ -100,6 +101,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
   }, []);
   const [auditPublication,setAuditPublication] = useState<StoryboardView | null>(null);
   const [impactTarget,setImpactTarget] = useState<StoryboardImpactTarget | null>(null);
+  const [notificationsOpen,setNotificationsOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>("progress");
   const expectedWechatState = useRef<string | null>(null);
   const wechatPopup = useRef<Window | null>(null);
@@ -260,6 +262,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
       <a className="brand" href="#"><span className="seal">映</span><span><b>映卷</b><small>小说动态漫改编工作台</small></span></a>
       <nav className="modes" aria-label="工作模式">
         {workbenchModes.map((item) => <button key={item.id} type="button" className={mode === item.id ? "active" : ""} aria-pressed={mode === item.id} onClick={() => setMode(item.id)}>{item.label}</button>)}
+        {step !== "login" && <button className="text-button" type="button" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(!notificationsOpen)}>通知</button>}
       </nav>
       <div className="top-meta"><span>中国大陆区</span><i /> <span>{project?.title || "未命名项目"}</span>{step !== "login" && <button type="button" className="text-button model-settings-entry" onClick={() => setModelSettingsOpen(true)}>工作室模型设置</button>}</div>
     </header>
@@ -322,7 +325,8 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
           auditProjectId={project?.role === "owner" || project?.role === "reviewer" ? project.id : null} accountId={accountId} activeWorkspaceId={activeWorkspaceId}
           onSwitchWorkspace={id => api.switchWorkspace(id).then(onWorkspaceChange)} onOpenChapter={openProjectChapter} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
-        <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} />
+        {step !== "login" && notificationsOpen && <div className="desktop-notifications"><EpisodeNotifications api={api} /></div>}
+        <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} api={api} />
         {mode === "trace" && step === "login" && <Panel eyebrow="身份验证" title="进入你的工作室" description="首版支持中国大陆手机号验证码与微信扫码。">
           <div className="form-grid compact"><Field label="手机号"><input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" /></Field>
             <button className="button secondary align-end" onClick={sendCode} disabled={busy}>获取验证码</button>
@@ -395,7 +399,7 @@ function VersionDesk({ chapter, canReimport, traceFragmentId, importedDocument, 
 }
 function Diff({ title, tone, items }: { title: string; tone: string; items: string[] }) { return <div className={`diff-group ${tone}`} role="group" aria-label={`${title}内容`}><b>{title} · {items.length}</b>{items.map((item, index) => <p key={`${tone}-${index}`}>{item}</p>)}</div>; }
 
-function MobileCompanion({ tab, onTabChange, step, project, chapter }: { tab: MobileTab; onTabChange(tab: MobileTab): void; step: Step; project: { id: string; title: string } | null; chapter: Chapter | null }) {
+function MobileCompanion({ tab, onTabChange, step, project, chapter, api }: { api: ApiClient; tab: MobileTab; onTabChange(tab: MobileTab): void; step: Step; project: { id: string; title: string } | null; chapter: Chapter | null }) {
   const version = chapter?.versions.at(-1);
   const tabs: ReadonlyArray<{ id: MobileTab; label: string }> = [
     { id: "progress", label: "进度" },
@@ -416,7 +420,7 @@ function MobileCompanion({ tab, onTabChange, step, project, chapter }: { tab: Mo
     </div>}
     {tab === "review" && <MobileEmpty mark="审" title="暂无待审核内容" note={chapter ? "原文已就绪；故事知识生成后，将在这里逐项审核。" : "完成原文入卷后，审核任务会出现在这里。"} />}
     {tab === "decisions" && <MobileEmpty mark="议" title="暂无修改建议" note="成员提交建议后，可在此查看理由并接受或拒绝；移动端不直接编辑正文。" />}
-    {tab === "notifications" && <MobileEmpty mark="铃" title="暂无新通知" note="阶段完成、审核请求和建议处理结果会集中出现在这里。" />}
+    {tab === "notifications" && step !== "login" && <EpisodeNotifications api={api} />}
     <footer><i />移动端为审阅席，不提供立项、导入或重新生成</footer>
   </section>;
 }

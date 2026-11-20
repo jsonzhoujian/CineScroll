@@ -381,6 +381,21 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const status=await recoveredEpisode.http.get(`/episode-plan-tasks/${interruptedEpisodeId}`).set("authorization",bearer).expect(200);
       assert.equal(status.body.state,"paused");
       assert.equal(status.body.reason,"EXECUTION_UNCERTAIN");
+      const notificationPath = "/episode-plan-notifications";
+      await recoveredEpisode.http.get(notificationPath).expect(401);
+      await recoveredEpisode.http.get(notificationPath).set("authorization",bearer).query({ limit: 51 }).expect(400);
+      const notificationCursor = (id: string) => createHash("sha256").update(id).digest("hex");
+      const expectedNotifications = [
+        { taskId: episodeTaskId!,projectId,chapterId,outcome: "succeeded" },
+        { taskId: interruptedEpisodeId,projectId,chapterId,outcome: "execution_unknown" },
+      ].sort((a,b) => notificationCursor(a.taskId) < notificationCursor(b.taskId) ? -1 : 1);
+      const first = await recoveredEpisode.http.get(notificationPath).set("authorization",bearer).query({ limit: 1 }).expect(200);
+      assert.deepEqual(first.body,{ notifications: expectedNotifications.slice(0,1),nextCursor: notificationCursor(expectedNotifications[0]!.taskId) });
+      const second = await recoveredEpisode.http.get(notificationPath).set("authorization",bearer)
+        .query({ limit: 1,cursor: first.body.nextCursor }).expect(200);
+      assert.deepEqual(second.body,{ notifications: expectedNotifications.slice(1),nextCursor: null });
+      const refreshed = await recoveredEpisode.http.get(notificationPath).set("authorization",bearer).expect(200);
+      assert.deepEqual(refreshed.body,{ notifications: expectedNotifications,nextCursor: null });
       const outbox=(await admin.query("select dispatched_at,lease_token from episode_submission_outbox where workspace_id=$1 and task_id=$2",
         [workspaceId,interruptedEpisodeId])).rows[0];
       assert.ok(outbox?.dispatched_at);

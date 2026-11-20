@@ -15,6 +15,9 @@ export type TaskState = "queued" | "running" | "paused" | "failed" | "succeeded"
 export type TaskReason = "VERSION_CONFLICT" | "FORBIDDEN" | "NOT_READY" | "UPSTREAM_CHANGED" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "CANDIDATE_EXISTS" | "EXECUTION_UNCERTAIN" | "POLICY_RESTRICTED";
 export type TaskResult = { candidateVersionId: string; extractionStatus: "succeeded" | "partially_succeeded" | "failed" };
 export type TaskPage = { tasks: ModelTask[]; nextCursor: string | null };
+export type EpisodeNotification = {
+  taskId: string; projectId: string; chapterId: string; outcome: "succeeded" | "execution_unknown";
+};
 export type TaskPageRequest = { limit: number; cursor: string | null };
 export type TaskScanMode = "run" | "recover";
 /** Controlled execution outcomes only; never include provider messages or raw responses. */
@@ -44,6 +47,7 @@ export interface ModelTaskRepository {
   scanEpisodePlans(workspaceId: string, mode: TaskScanMode, page: TaskPageRequest): Promise<TaskPage>;
   listStoryKnowledge(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
   listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage>;
+  listEpisodeNotificationTasks(actor: Actor, page: TaskPageRequest): Promise<TaskPage>;
   find(workspaceId: string, id: string): Promise<ModelTask | null>;
   insert(task: ModelTask): Promise<ModelTask>;
   transition(workspaceId: string, id: string, expectedRevision: number, state: TaskState, reason: TaskReason | null, result?: TaskResult | null): Promise<ModelTask>;
@@ -118,6 +122,18 @@ export class ModelTaskService {
       if (!await this.#options.contextReader.canRead(actor,projectId,chapterId)) throw new ModelTaskError("TASK_NOT_FOUND");
     } else await this.#context(actor,projectId,chapterId);
     return this.#options.repository.listEpisodePlans(actor.workspaceId,projectId,chapterId,page);
+  }
+  async listEpisodeNotifications(actor: Actor, page: TaskPageRequest) {
+    validateTaskPage(page);
+    const { tasks, nextCursor } = await this.#options.repository.listEpisodeNotificationTasks(actor,page);
+    const notifications: EpisodeNotification[] = [];
+    for (const task of tasks) {
+      if (task.workspaceId !== actor.workspaceId || task.createdBy !== actor.userId) continue;
+      if (!await this.#options.contextReader.canRead?.(actor,task.projectId,task.chapterId)) continue;
+      notifications.push({ taskId: task.id, projectId: task.projectId, chapterId: task.chapterId,
+        outcome: task.state === "succeeded" ? "succeeded" : "execution_unknown" });
+    }
+    return { notifications, nextCursor };
   }
   async listStoryboard(actor: Actor, projectId: string, chapterId: string, page: TaskPageRequest) {
     validateTaskPage(page);
@@ -509,6 +525,16 @@ export class InMemoryModelTaskRepository implements ModelTaskRepository {
   async listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest): Promise<TaskPage> {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
+  async listEpisodeNotificationTasks(actor: Actor, page: TaskPageRequest): Promise<TaskPage> {
+    validateTaskPage(page);
+    const rows = [...this.#tasks.values()].filter(task => task.workspaceId === actor.workspaceId
+      && task.createdBy === actor.userId && task.input.stage === "script" && task.input.resultType === "episodePlan"
+      && (task.state === "succeeded" && task.result !== null || task.state === "paused" && task.reason === "EXECUTION_UNCERTAIN")
+      && (page.cursor === null || compareTaskIds(notificationCursor(task.id),page.cursor) > 0))
+      .sort((a,b) => compareTaskIds(notificationCursor(a.id),notificationCursor(b.id))).slice(0,page.limit+1);
+    const tasks = rows.slice(0,page.limit);
+    return structuredClone({ tasks,nextCursor: rows.length > page.limit ? notificationCursor(tasks.at(-1)!.id) : null });
+  }
   async #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent", createdBy?: string): Promise<TaskPage> {
     validateTaskPage(page);
     const rows = [...this.#tasks.values()].filter(task => task.workspaceId === workspaceId && task.projectId === projectId
@@ -562,6 +588,8 @@ export function validateTaskScan(mode: TaskScanMode, page: TaskPageRequest) {
   validateTaskPage(page);
   if (!["run", "recover"].includes(mode)) throw new ModelTaskError("INVALID_CONTEXT");
 }
+// Permission filtering can omit the task at a page boundary.
+function notificationCursor(taskId: string) { return createHash("sha256").update(taskId,"utf8").digest("hex"); }
 function compareTaskIds(a: string, b: string) { return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8")); }
 
 function sameRegeneration(a: SettingsRegenerationSelection | undefined,b: SettingsRegenerationSelection | undefined) {

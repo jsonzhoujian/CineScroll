@@ -1443,3 +1443,55 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   expect(posts).toBe(2);
   expect(retryAttempts).toBe(2);
 });
+
+test("重新登录后从移动端通知打开拆集任务并载入原候选", async ({ page }) => {
+  await setup(page);
+  const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type" };
+  const success = { taskId: "completed",projectId: "p",chapterId: "c",outcome: "succeeded" };
+  const unknown = { taskId: "interrupted",projectId: "p",chapterId: "c",outcome: "execution_unknown" };
+  let accessRevoked = false;
+  await page.route(`${origin}/episode-plan-notifications`,route => route.fulfill({
+    headers,json: { notifications: accessRevoked ? [] : [success,unknown],nextCursor: null },
+  }));
+  await page.route(`${origin}/episode-plan-tasks/*`,route => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (accessRevoked) return route.fulfill({ headers,status: 404,json: { code: "TASK_NOT_FOUND" } });
+    return route.fulfill({ headers,json: {
+      id,projectId: "p",chapterId: "c",
+      input: { stage: "script",resultType: "episodePlan",sourceVersionId: "s",upstreamConfirmedVersionIds: ["k"] },
+      state: id === "completed" ? "succeeded" : "paused",
+      reason: id === "completed" ? null : "EXECUTION_UNCERTAIN",
+      result: id === "completed" ? { candidateVersionId: "plan",extractionStatus: "succeeded" } : null,
+    } });
+  });
+  await page.route(`${origin}/projects/p/chapters/c/episode-plan`,route => route.fulfill({
+    headers,json: { current: true,plan: { id: "plan",generationJobId: "completed",projectId: "p",chapterId: "c",
+      sourceVersionId: "s",storyBibleVersionId: "k",episodes: [{ id: "e",title: "风雨将至" }] } },
+  }));
+
+  await page.reload();
+  await login(page);
+  await page.setViewportSize({ width: 900,height: 800 });
+  const desktopButton = page.getByRole("navigation",{ name: "工作模式" }).getByRole("button",{ name: "通知",exact: true });
+  await desktopButton.click();
+  await expect(page.getByRole("region",{ name: "拆集通知" }).getByRole("button",{ name: /拆集候选已生成/ })).toBeVisible();
+  await desktopButton.click();
+  await page.setViewportSize({ width: 390,height: 844 });
+  const mobile = page.getByRole("region",{ name: "移动端工作区" });
+  await mobile.getByRole("button",{ name: "通知",exact: true }).click();
+  const inbox = mobile.getByRole("region",{ name: "拆集通知" });
+  const completed = inbox.getByRole("button",{ name: /拆集候选已生成/ });
+  await expect(completed).toHaveCount(1);
+  await completed.click();
+  await inbox.getByRole("button",{ name: "载入拆集候选" }).click();
+  await expect(inbox.getByText("风雨将至")).toBeVisible();
+  await inbox.getByRole("button",{ name: /拆集执行结果未知/ }).click();
+  await expect(inbox.getByText(/待人工处理/)).toBeVisible();
+  await inbox.getByRole("button",{ name: "刷新通知" }).click();
+  await expect(completed).toHaveCount(1);
+  accessRevoked = true;
+  await completed.click();
+  await expect(inbox.getByRole("alert")).toContainText("无法打开原任务");
+  await inbox.getByRole("button",{ name: "刷新通知" }).click();
+  await expect(inbox.getByText("暂无拆集通知")).toBeVisible();
+});

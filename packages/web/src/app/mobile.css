@@ -256,3 +256,24 @@
     background: var(--gold);
   }
 }
+
+@media (max-width: 720px) {
+  .desktop-notifications {
+    display: none;
+  }
+
+  .mode-review .mobile-companion:has(.episode-notifications) {
+    display: block;
+  }
+}
+
+.episode-notifications {
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--sheet);
+  overflow-wrap: anywhere;
+}
+
+.desktop-notifications {
+  margin-bottom: 16px;
+}

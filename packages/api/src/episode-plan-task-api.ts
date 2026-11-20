@@ -18,6 +18,12 @@ function selection(body: unknown, submission = false) {
   const value = body as Record<string,unknown>;
   return { configurationVersionId: identifier(value.configurationVersionId),modelId: identifier(value.modelId),...(submission ? { requestId: identifier(value.requestId) } : {}) };
 }
+function pagination(query: Record<string,unknown>) {
+  if (Object.keys(query).some(key => !["limit","cursor"].includes(key))) throw new BadRequestException("分页参数无效");
+  const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new BadRequestException("分页参数无效");
+  return { limit,cursor: query.cursor === undefined ? null : identifier(query.cursor) };
+}
 async function safely<T>(action: () => Promise<T>) {
   try { return await action(); } catch (error) {
     if (error instanceof ModelTaskError || error instanceof ModelSettingsError) throw error;
@@ -38,11 +44,12 @@ class EpisodePlanTaskController {
     return safely(() => this.#tasks.availability(request.actor,projectId,chapterId,chosen,"episodePlan"));
   }
   list(request: { actor: Actor }, p: string, c: string, query: Record<string,unknown>) {
-    if (Object.keys(query).some(key => !["limit","cursor"].includes(key))) throw new BadRequestException("分页参数无效");
-    const limit = query.limit === undefined ? 20 : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new BadRequestException("分页参数无效");
-    const cursor = query.cursor === undefined ? null : identifier(query.cursor),projectId = identifier(p),chapterId = identifier(c);
-    return safely(() => this.#tasks.listEpisodePlans(request.actor,projectId,chapterId,{ limit,cursor }));
+    const page = pagination(query), projectId = identifier(p), chapterId = identifier(c);
+    return safely(() => this.#tasks.listEpisodePlans(request.actor,projectId,chapterId,page));
+  }
+  notifications(request: { actor: Actor }, query: Record<string,unknown>) {
+    const page = pagination(query);
+    return safely(() => this.#tasks.listEpisodeNotifications(request.actor,page));
   }
   get(request: { actor: Actor }, id: string) {
     const taskId = identifier(id);
@@ -65,10 +72,11 @@ class EpisodeTaskFilter implements ExceptionFilter<ModelTaskError | ModelSetting
 Catch(ModelTaskError,ModelSettingsError)(EpisodeTaskFilter);
 Controller()(EpisodePlanTaskController); UseGuards(SessionGuard)(EpisodePlanTaskController); Inject(TASKS)(EpisodePlanTaskController,undefined,0);
 Inject(RATE)(EpisodePlanTaskController,undefined,1);
-for (const [method,decorator] of [["submit",Post("projects/:projectId/chapters/:chapterId/episode-plan-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/episode-plan-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/episode-plan-tasks/availability")], ["get",Get("episode-plan-tasks/:id")]] as const) {
+for (const [method,decorator] of [["submit",Post("projects/:projectId/chapters/:chapterId/episode-plan-tasks")], ["list",Get("projects/:projectId/chapters/:chapterId/episode-plan-tasks")], ["availability",Get("projects/:projectId/chapters/:chapterId/episode-plan-tasks/availability")], ["get",Get("episode-plan-tasks/:id")], ["notifications",Get("episode-plan-notifications")]] as const) {
   const descriptor = Object.getOwnPropertyDescriptor(EpisodePlanTaskController.prototype,method)!;
   decorator(EpisodePlanTaskController.prototype,method,descriptor); Header("Cache-Control","no-store")(EpisodePlanTaskController.prototype,method,descriptor); Req()(EpisodePlanTaskController.prototype,method,0);
   if (method === "get") Param("id")(EpisodePlanTaskController.prototype,method,1);
+  else if (method === "notifications") Query()(EpisodePlanTaskController.prototype,method,1);
   else {
     Param("projectId")(EpisodePlanTaskController.prototype,method,1); Param("chapterId")(EpisodePlanTaskController.prototype,method,2);
     if (method === "submit") Body()(EpisodePlanTaskController.prototype,method,3); else Query()(EpisodePlanTaskController.prototype,method,3);

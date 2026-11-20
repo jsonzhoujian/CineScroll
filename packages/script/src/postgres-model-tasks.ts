@@ -42,6 +42,21 @@ export class PostgresModelTaskRepository implements ModelTaskRepository {
   listEpisodePlans(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest) {
     return this.#list(workspaceId,projectId,chapterId,page,"episodePlan");
   }
+  listEpisodeNotificationTasks(actor: Actor, page: TaskPageRequest) {
+    validateTaskPage(page);
+    return this.#transaction(actor.workspaceId, async client => {
+      const rows = (await client.query(`select payload,state,revision,reason,result_json,lease_expires_at,
+          encode(sha256(convert_to(id,'UTF8')),'hex') collate "C" as notification_cursor
+        from model_tasks
+        where workspace_id=$1 and payload->>'createdBy'=$2
+          and payload->'input'->>'stage'='script' and payload->'input'->>'resultType'='episodePlan'
+          and ((state='succeeded' and result_json is not null) or (state='paused' and reason='EXECUTION_UNCERTAIN'))
+          and ($3::text is null or encode(sha256(convert_to(id,'UTF8')),'hex') collate "C">$3::text collate "C")
+        order by notification_cursor limit $4`,[actor.workspaceId,actor.userId,page.cursor,page.limit+1])).rows;
+      const tasks = rows.slice(0,page.limit).map(decode);
+      return { tasks,nextCursor: rows.length > page.limit ? String(rows[page.limit-1]!.notification_cursor) : null };
+    });
+  }
   #list(workspaceId: string, projectId: string, chapterId: string, page: TaskPageRequest, kind: "story_knowledge" | "episodePlan" | "scriptContent" | "scriptQuality" | "settingsContent" | "settingsRegeneration" | "storyboardContent", createdBy?: string) {
     validateTaskPage(page);
     return this.#transaction(workspaceId, async client => {

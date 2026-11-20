@@ -383,3 +383,41 @@ test("DeepSeek非法拆集信封通过执行器仍记录INVALID_RESPONSE，不�
   assert.equal(failed.state,"failed"); assert.equal(failed.reason,"INVALID_RESPONSE");
   await assert.rejects(() => f.script.getEpisodePlan(f.actor,"p","c"),{ code: "EPISODE_PLAN_NOT_FOUND" });
 });
+
+test("拆集通知仅返回当前工作室的提交者仍可访问的任务", async () => {
+  const f = await fixture();
+  await f.confirm();
+  await f.projects.saveProject(f.actor,{ ...f.project,members: [
+    ...f.project.members,{ userId: "editor",role: "editor" },
+  ] });
+  const template = await f.submit();
+  const task = await f.repository.insert({ ...template,id: "editor-episode",createdBy: "editor" });
+  const running = await f.repository.transition("w",task.id,task.revision,"running",null);
+  await f.repository.transition("w",task.id,running.revision,"paused","EXECUTION_UNCERTAIN");
+  const sessions = new HmacSessionManager({
+    secret: "0123456789abcdef0123456789abcdef",
+    resolveActor: async (userId,workspaceId) => workspaceId ? { userId,workspaceId } : null,
+  });
+  const ref = await Test.createTestingModule({
+    imports: [EpisodePlanTaskApiModule.register({ sessionVerifier: sessions,tasks: f.tasks })],
+  }).compile();
+  const app = ref.createNestApplication();
+  await app.listen(0,"127.0.0.1");
+  try {
+    const http = request(app.getHttpServer()), path = "/episode-plan-notifications";
+    const auth = async (userId: string,workspaceId: string) => ({ authorization: `Bearer ${await sessions.issue(userId,workspaceId)}` });
+    const editor = await auth("editor","w");
+    const initial = await http.get(path).set(editor).expect(200);
+    assert.equal(initial.headers["cache-control"],"no-store");
+    assert.deepEqual(initial.body,{ notifications: [
+      { taskId: task.id,projectId: "p",chapterId: "c",outcome: "execution_unknown" },
+    ],nextCursor: null });
+    assert.deepEqual((await http.get(path).set(await auth("owner","w")).expect(200)).body.notifications,[]);
+    assert.deepEqual((await http.get(path).set(await auth("editor","other")).expect(200)).body.notifications,[]);
+    await f.projects.saveProject(f.actor,f.project);
+    assert.deepEqual((await http.get(path).set(editor).expect(200)).body.notifications,[]);
+    await http.get(`/episode-plan-tasks/${task.id}`).set(editor).expect(404);
+  } finally {
+    await app.close();
+  }
+});
