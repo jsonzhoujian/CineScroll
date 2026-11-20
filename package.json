@@ -10,6 +10,7 @@
     "test:script": "node --test packages/script/test/*.test.ts",
     "test:billing": "node --test packages/billing/test/*.test.ts",
     "test:identity-postgres": "node --test packages/identity/test/postgres-adapters.test.ts",
+    "worker:feishu:local": "node packages/api/src/local-feishu-worker.ts",
     "test:api": "node --test packages/api/test/*.test.ts",
     "test:web": "node --test packages/web/test/*.test.ts",
     "setup:web:e2e": "pnpm --filter @novel-adaptation/web install:e2e-browser",

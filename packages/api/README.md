@@ -37,3 +37,17 @@ For browser WeChat login, `wechatRedirectUri` must be the public HTTPS web callb
 分镜历史发布可通过 `GET /projects/:projectId/chapters/:chapterId/storyboard-tasks/publications/:id` 按正式发布编号只读查询。返回内容和锁定状态重建到该次确认修订。
 
 同一路径的 `GET /publications` 按发布编号倒序返回每页最多 20 条，使用 `nextCursor` 继续读取。
+
+## 本地飞书告警 Worker
+
+从仓库根目录运行 `pnpm worker:feishu:local`。该命令以前台进程运行，只投递已有的拆集对账告警。使用 Ctrl+C 退出，送达记录保留在 PostgreSQL 中。
+
+使用持久的本地测试数据库。启动前应用计费迁移 `0001_credit_ledger.sql`、`0006_episode_reconciliation.sql` 和 `0008_episode_alert_delivery.sql`，并给专用登录授予 `novel_episode_alert_delivery`。启动入口会检查迁移和登录权限。数据库地址支持本机回环 TCP 和通过 `?host=/path/to/socket` 指定的 Unix socket。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `EPISODE_FEISHU_DATABASE_URL` | 专用登录的本地 PostgreSQL 连接串 |
+| `EPISODE_FEISHU_WORKSPACE_ID` | 单个本地测试工作室 ID |
+| `EPISODE_FEISHU_WEBHOOK` | 从本地密钥配置注入的飞书机器人地址 |
+
+Worker 会领取该工作室已经存在的待投递告警。请使用测试工作室。若数据库中暂无该工作室的告警，Worker 会等待写入。需要绕过包管理器时可运行 `node packages/api/src/local-feishu-worker.ts`。
