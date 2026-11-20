@@ -33,5 +33,23 @@ jobs:
             -o "-c listen_addresses='' -k $test_dir -p 55720" -w start
 
           export TEST_EPISODE_SUBMISSION_DATABASE_URL="postgresql://postgres@localhost:55720/postgres?host=$test_dir"
-          node --test packages/billing/test/episode-plan-submission-postgres.test.ts \
-            packages/api/test/episode-feishu-alert.test.ts
+          test_exit=0
+          node --test --test-reporter=tap packages/billing/test/episode-plan-submission-postgres.test.ts \
+            packages/api/test/episode-feishu-alert.test.ts | tee "$test_dir/results.tap" || test_exit=$?
+
+          awk '
+            /^# (pass|fail|skipped|cancelled) [0-9]+$/ { counts[$2] = $3 }
+            END {
+              print "### 拆集告警回归"
+              if (!("pass" in counts && "fail" in counts && "skipped" in counts && "cancelled" in counts)) {
+                print "未获取完整测试计数，请查看作业日志。"
+                exit 1
+              }
+              print ""
+              printf "通过 %d 项，失败 %d 项，跳过 %d 项，取消 %d 项。\n",
+                counts["pass"], counts["fail"], counts["skipped"], counts["cancelled"]
+              if (counts["skipped"] > 0) print "\n该作业要求所有回归用例实际执行。"
+              if (counts["pass"] == 0 || counts["fail"] || counts["skipped"] || counts["cancelled"]) exit 1
+            }
+          ' "$test_dir/results.tap" >> "$GITHUB_STEP_SUMMARY"
+          exit "$test_exit"
