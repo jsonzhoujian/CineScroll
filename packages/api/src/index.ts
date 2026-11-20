@@ -320,6 +320,22 @@ export class StoryKnowledgeController {
     return this.service().resolveFact(request.actor!, projectId, chapterId, factCommand(body, factId));
   }
 
+  suggestFact(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string, body: unknown) {
+    return this.service().suggestFact(request.actor!, projectId, chapterId, factCommand(body, factId));
+  }
+
+  listFactSuggestions(request: AuthenticatedRequest, projectId: string, chapterId: string, versionId: string, factId: string) {
+    return this.service().listFactSuggestions(request.actor!, projectId, chapterId, versionId, factId);
+  }
+
+  listFactSuggestionHistory(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string) {
+    return this.service().listFactSuggestions(request.actor!, projectId, chapterId, null, factId);
+  }
+
+  decideFactSuggestion(request: AuthenticatedRequest, projectId: string, chapterId: string, versionId: string, factId: string, suggestionId: string, body: unknown) {
+    return this.service().decideFactSuggestion(request.actor!, projectId, chapterId, versionId, factId, suggestionId, body);
+  }
+
   editFact(request: AuthenticatedRequest, projectId: string, chapterId: string, factId: string, body: unknown) {
     return this.service().editFact(request.actor!, projectId, chapterId, factCommand(body, factId));
   }
@@ -507,6 +523,31 @@ Param("projectId")(StoryKnowledgeController.prototype, "resolveFact", 1);
 Param("chapterId")(StoryKnowledgeController.prototype, "resolveFact", 2);
 Param("factId")(StoryKnowledgeController.prototype, "resolveFact", 3);
 Body()(StoryKnowledgeController.prototype, "resolveFact", 4);
+Post("facts/:factId/suggestions")(StoryKnowledgeController.prototype, "suggestFact", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "suggestFact")!);
+Req()(StoryKnowledgeController.prototype, "suggestFact", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "suggestFact", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "suggestFact", 2);
+Param("factId")(StoryKnowledgeController.prototype, "suggestFact", 3);
+Body()(StoryKnowledgeController.prototype, "suggestFact", 4);
+Get("versions/:versionId/facts/:factId/suggestions")(StoryKnowledgeController.prototype, "listFactSuggestions", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "listFactSuggestions")!);
+Req()(StoryKnowledgeController.prototype, "listFactSuggestions", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "listFactSuggestions", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "listFactSuggestions", 2);
+Param("versionId")(StoryKnowledgeController.prototype, "listFactSuggestions", 3);
+Param("factId")(StoryKnowledgeController.prototype, "listFactSuggestions", 4);
+Get("facts/:factId/suggestions")(StoryKnowledgeController.prototype, "listFactSuggestionHistory", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "listFactSuggestionHistory")!);
+Req()(StoryKnowledgeController.prototype, "listFactSuggestionHistory", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "listFactSuggestionHistory", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "listFactSuggestionHistory", 2);
+Param("factId")(StoryKnowledgeController.prototype, "listFactSuggestionHistory", 3);
+Post("versions/:versionId/facts/:factId/suggestions/:suggestionId/decision")(StoryKnowledgeController.prototype, "decideFactSuggestion", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "decideFactSuggestion")!);
+Req()(StoryKnowledgeController.prototype, "decideFactSuggestion", 0);
+Param("projectId")(StoryKnowledgeController.prototype, "decideFactSuggestion", 1);
+Param("chapterId")(StoryKnowledgeController.prototype, "decideFactSuggestion", 2);
+Param("versionId")(StoryKnowledgeController.prototype, "decideFactSuggestion", 3);
+Param("factId")(StoryKnowledgeController.prototype, "decideFactSuggestion", 4);
+Param("suggestionId")(StoryKnowledgeController.prototype, "decideFactSuggestion", 5);
+Body()(StoryKnowledgeController.prototype, "decideFactSuggestion", 6);
 Post("facts/:factId/edit")(StoryKnowledgeController.prototype, "editFact", Object.getOwnPropertyDescriptor(StoryKnowledgeController.prototype, "editFact")!);
 Req()(StoryKnowledgeController.prototype, "editFact", 0);
 Param("projectId")(StoryKnowledgeController.prototype, "editFact", 1);

@@ -89,7 +89,28 @@ export type StoryBible = Readonly<{
   facts: StoryFact[];
 }>;
 
+export type StoryFactSuggestionDecision = Readonly<{
+  outcome: "accepted" | "rejected";
+  reason: string;
+  decidedBy: string;
+  decidedAt: string;
+}>;
+
+export type StoryFactSuggestion = Readonly<{
+  id: string;
+  versionId: string;
+  factId: string;
+  statement: string;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+  decision?: StoryFactSuggestionDecision;
+}>;
+
 export interface StoryKnowledgeRepository {
+  saveFactSuggestion(actor: Actor, projectId: string, chapterId: string, suggestion: StoryFactSuggestion): Promise<StoryFactSuggestion>;
+  listFactSuggestions(actor: Actor, projectId: string, chapterId: string, versionId: string | null, factId: string): Promise<StoryFactSuggestion[]>;
+  decideFactSuggestion(actor: Actor, projectId: string, chapterId: string, suggestion: StoryFactSuggestion, decision: StoryFactSuggestionDecision, revision?: StoryKnowledgeVersion): Promise<void>;
   findInitialExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<StoryKnowledgeVersion | null>;
   /** Durable adapters must hold the current chapter-source check through commit when requested. */
   saveCandidate(
@@ -185,6 +206,36 @@ export class StoryKnowledgeGenerationRestrictedError extends StoryKnowledgeError
 
 export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepository {
   readonly #activeVersionIds = new Map<string, string>();
+  readonly #suggestions = new Map<string, StoryFactSuggestion[]>();
+
+  async saveFactSuggestion(actor: Actor, projectId: string, chapterId: string, suggestion: StoryFactSuggestion): Promise<StoryFactSuggestion> {
+    const stageKey = key(actor, projectId, chapterId);
+    if (this.#activeVersionIds.get(stageKey) !== suggestion.versionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    const scope = JSON.stringify([stageKey, suggestion.factId]);
+    const suggestions = this.#suggestions.get(scope) ?? [];
+    this.#suggestions.set(scope, [...suggestions, structuredClone(suggestion)]);
+    return structuredClone(suggestion);
+  }
+
+  async listFactSuggestions(actor: Actor, projectId: string, chapterId: string, versionId: string | null, factId: string): Promise<StoryFactSuggestion[]> {
+    const suggestions = this.#suggestions.get(JSON.stringify([key(actor, projectId, chapterId), factId])) ?? [];
+    return structuredClone(versionId === null ? suggestions : suggestions.filter(item => item.versionId === versionId));
+  }
+
+  async decideFactSuggestion(actor: Actor, projectId: string, chapterId: string, suggestion: StoryFactSuggestion, decision: StoryFactSuggestionDecision, revision?: StoryKnowledgeVersion): Promise<void> {
+    const stageKey = key(actor, projectId, chapterId);
+    const scope = JSON.stringify([stageKey, suggestion.factId]);
+    const suggestions = this.#suggestions.get(scope) ?? [];
+    const pending = suggestions.find(item => item.id === suggestion.id && item.versionId === suggestion.versionId);
+    if (!pending || pending.decision) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "建议不存在或已处理");
+    }
+    if (revision) this.#saveCandidate(actor, revision, suggestion.versionId);
+    this.#suggestions.set(scope, suggestions.map(item => item === pending ? { ...item, decision } : item));
+  }
+
   readonly #versions = new Map<string, StoryKnowledgeVersion>();
   readonly #retryResults = new Map<string, { fingerprint: string; versionId: string }>();
   readonly #confirmedVersionIds = new Map<string, string>();
@@ -202,6 +253,10 @@ export class InMemoryStoryKnowledgeRepository implements StoryKnowledgeRepositor
     version: StoryKnowledgeVersion,
     expectedActiveVersionId?: string | null,
   ): Promise<StoryKnowledgeVersion> {
+    return this.#saveCandidate(actor, version, expectedActiveVersionId);
+  }
+
+  #saveCandidate(actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null): StoryKnowledgeVersion {
     const saved = structuredClone(version);
     const stageKey = key(actor, version.projectId, version.chapterId);
     if (expectedActiveVersionId !== undefined
@@ -489,6 +544,67 @@ export class StoryKnowledgeService {
     return result ? this.getVersion(actor, projectId, chapterId, result.version.id) : null;
   }
 
+  async suggestFact(actor: Actor, projectId: string, chapterId: string, input: unknown): Promise<StoryFactSuggestion> {
+    const edit = parseFactEdit(input);
+    const access = await this.#projectAccessReader?.findProjectAccess(actor, projectId);
+    if (!access) {
+      throw new StoryKnowledgeError("FORBIDDEN", "只有项目成员可以提交故事事实建议");
+    }
+    const current = await this.getActive(actor, projectId, chapterId);
+    if (current.id !== edit.expectedActiveVersionId) {
+      throw new StoryKnowledgeError("VERSION_CONFLICT", "故事知识已被其他操作更新，请刷新后重试");
+    }
+    const fact = current.facts.find(({ id }) => id === edit.factId);
+    if (!fact) throw new StoryKnowledgeError("FACT_NOT_FOUND", "故事事实不存在");
+    if (!canSuggestFact(current, fact) || edit.statement === fact.statement
+      || edit.statement.length > 20000 || edit.reason.length > 20000) {
+      throw new StoryKnowledgeError("INVALID_EDIT", "请为可审核的事实填写修改建议和理由");
+    }
+    return this.#repository.saveFactSuggestion(actor, projectId, chapterId, {
+      id: this.#idGenerator(), versionId: current.id, factId: fact.id, statement: edit.statement,
+      reason: edit.reason, createdBy: actor.userId, createdAt: this.#clock().toISOString(),
+    });
+  }
+
+  async listFactSuggestions(actor: Actor, projectId: string, chapterId: string, versionId: string | null, factId: string): Promise<StoryFactSuggestion[]> {
+    if (!await this.#projectAccessReader?.findProjectAccess(actor, projectId)) {
+      throw new StoryKnowledgeError("FORBIDDEN", "只有项目成员可以查看故事事实建议");
+    }
+    return this.#repository.listFactSuggestions(actor, projectId, chapterId, versionId, factId);
+  }
+
+  async decideFactSuggestion(actor: Actor, projectId: string, chapterId: string, versionId: string, factId: string, suggestionId: string, input: unknown): Promise<{ suggestion: StoryFactSuggestion; version?: StoryKnowledgeVersion }> {
+    const command = parseFactReview({ ...(typeof input === "object" && input !== null ? input : {}), expectedActiveVersionId: versionId, factId });
+    if (command.reason.length > 20000) throw new StoryKnowledgeError("INVALID_REVIEW", "建议裁决理由过长");
+    await this.#assertFactReviewer(actor, projectId);
+    const suggestions = await this.#repository.listFactSuggestions(actor, projectId, chapterId, versionId, factId);
+    const suggestion = suggestions.find(item => item.id === suggestionId);
+    if (!suggestion || suggestion.decision) throw new StoryKnowledgeError("VERSION_CONFLICT", "建议不存在或已处理");
+    const decision = {
+      outcome: command.outcome, reason: command.reason, decidedBy: actor.userId, decidedAt: this.#clock().toISOString(),
+    };
+    let revision: StoryKnowledgeVersion | undefined;
+    if (decision.outcome === "accepted") {
+      const current = await this.getActive(actor, projectId, chapterId);
+      const target = current.facts.find(item => item.id === factId);
+      if (current.id !== versionId || !target || !canSuggestFact(current, target)) {
+        throw new StoryKnowledgeError("VERSION_CONFLICT", "建议对应的事实或版本已变化");
+      }
+      const { confirmedBy, confirmedAt, ...base } = current;
+      const candidate = current.status === "confirmed" ? {
+        ...base, status: "candidate" as const,
+        facts: current.facts.map(fact => {
+          if (fact.id !== factId) return fact;
+          const { decision, ...unreviewed } = fact;
+          return unreviewed;
+        }),
+      } : current;
+      revision = this.#factRevision(actor, candidate, { factId, statement: suggestion.statement, reason: decision.reason }, decision.decidedAt);
+    }
+    await this.#repository.decideFactSuggestion(actor, projectId, chapterId, suggestion, decision, revision);
+    return { suggestion: { ...suggestion, decision }, ...(revision ? { version: revision } : {}) };
+  }
+
   async #assertFactReviewer(actor: Actor, projectId: string): Promise<void> {
     const access = await this.#projectAccessReader?.findProjectAccess(actor, projectId);
     if (!access || (access.role !== "owner" && access.role !== "reviewer")) {
@@ -613,22 +729,26 @@ export class StoryKnowledgeService {
     }
     const target = current.facts.find((fact) => fact.id === edit.factId);
     if (!target) throw new StoryKnowledgeError("FACT_NOT_FOUND", "故事事实不存在");
-    if (target.decision) throw new StoryKnowledgeError("INVALID_EDIT", "已接受或拒绝的故事事实不能直接编辑");
-    const editedAt = this.#clock().toISOString();
+    if (target.locked || target.decision) throw new StoryKnowledgeError("INVALID_EDIT", "已锁定、接受或拒绝的故事事实不能直接编辑");
+    const revision = this.#factRevision(actor, current, edit, this.#clock().toISOString());
+    return this.#repository.saveCandidate(actor, revision, current.id, false, "review");
+  }
+
+  #factRevision(actor: Actor, current: StoryKnowledgeVersion, edit: { factId: string; statement: string; reason: string }, editedAt: string): StoryKnowledgeVersion {
     const facts = current.facts.map((fact): StoryFact => fact.id === edit.factId ? {
       ...structuredClone(fact),
       statement: edit.statement,
       assertionKind: "user_confirmed",
       lastEdit: { editedBy: actor.userId, editedAt, reason: edit.reason },
     } : structuredClone(fact));
-    return this.#repository.saveCandidate(actor, {
+    return {
       ...current,
       id: this.#idGenerator(),
       parentVersionId: current.id,
       createdAt: editedAt,
       createdBy: actor.userId,
       facts,
-    }, current.id, false, "review");
+    };
   }
 
   async reviewFact(
@@ -848,8 +968,8 @@ export class StoryKnowledgeService {
     const confirmedAt = this.#clock().toISOString();
     const facts = current.facts.map((fact): StoryFact => ({
       ...structuredClone(fact),
-      locked: false,
-      lockHistory: [],
+      locked: fact.locked ?? false,
+      lockHistory: fact.lockHistory ?? [],
       ...(fact.decision ? {} : {
         decision: {
           outcome: "accepted" as const,
@@ -1135,6 +1255,10 @@ function parseDecision(input: unknown): {
 
 function invalidDecision(): never {
   throw new StoryKnowledgeError("INVALID_DECISION", "故事知识决定不符合运行时契约");
+}
+
+function canSuggestFact(version: StoryKnowledgeVersion, fact: StoryFact): boolean {
+  return !fact.locked && (version.status === "confirmed" ? fact.decision?.outcome === "accepted" : !fact.decision);
 }
 
 function parseFactEdit(input: unknown): {

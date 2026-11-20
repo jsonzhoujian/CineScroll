@@ -4,6 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import type {
   Actor,
   StoryBible,
+  StoryFactSuggestion,
+  StoryFactSuggestionDecision,
   StoryKnowledgeRepository,
   StoryKnowledgeVersion,
 } from "./index.ts";
@@ -19,6 +21,61 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
   constructor(pool: Pool) {
     this.pool = pool;
   }
+  async saveFactSuggestion(actor: Actor, projectId: string, chapterId: string, suggestion: StoryFactSuggestion): Promise<StoryFactSuggestion> {
+    return this.inTransaction(actor, async client => {
+      await assertActive(client, actor, projectId, chapterId, suggestion.versionId);
+      await client.query(
+        `insert into story_knowledge_fact_suggestions
+         (workspace_id, project_id, chapter_id, version_id, fact_id, id, statement, reason, created_by, created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [actor.workspaceId, projectId, chapterId, suggestion.versionId, suggestion.factId,
+          suggestion.id, suggestion.statement, suggestion.reason, suggestion.createdBy, suggestion.createdAt],
+      );
+      return structuredClone(suggestion);
+    });
+  }
+
+  async listFactSuggestions(actor: Actor, projectId: string, chapterId: string, versionId: string | null, factId: string): Promise<StoryFactSuggestion[]> {
+    return this.inTransaction(actor, async client => {
+      const result = await client.query<Omit<StoryFactSuggestion, "createdAt" | "decision"> & {
+        createdAt: Date; outcome: StoryFactSuggestionDecision["outcome"] | null;
+        decisionReason: string; decidedBy: string; decidedAt: Date;
+      }>(
+        `select s.id, s.version_id as "versionId", s.fact_id as "factId", s.statement, s.reason,
+           s.created_by as "createdBy", s.created_at as "createdAt",
+           d.outcome, d.reason as "decisionReason", d.decided_by as "decidedBy", d.decided_at as "decidedAt"
+         from story_knowledge_fact_suggestions s
+         left join story_knowledge_fact_suggestion_decisions d
+           on (d.workspace_id, d.project_id, d.chapter_id, d.version_id, d.fact_id, d.suggestion_id)
+            = (s.workspace_id, s.project_id, s.chapter_id, s.version_id, s.fact_id, s.id)
+         where s.workspace_id=$1 and s.project_id=$2 and s.chapter_id=$3 and ($4::text is null or s.version_id=$4) and s.fact_id=$5
+         order by s.created_at, s.id`,
+        [actor.workspaceId, projectId, chapterId, versionId, factId],
+      );
+      return result.rows.map(({ createdAt, outcome, decisionReason, decidedBy, decidedAt, ...row }) => ({
+        ...row, createdAt: createdAt.toISOString(),
+        ...(outcome ? { decision: { outcome, reason: decisionReason, decidedBy, decidedAt: decidedAt.toISOString() } } : {}),
+      }));
+    });
+  }
+
+  async decideFactSuggestion(actor: Actor, projectId: string, chapterId: string, suggestion: StoryFactSuggestion, decision: StoryFactSuggestionDecision, revision?: StoryKnowledgeVersion): Promise<void> {
+    await this.inTransaction(actor, async client => {
+      const result = await client.query(
+        `insert into story_knowledge_fact_suggestion_decisions
+         (workspace_id, project_id, chapter_id, version_id, fact_id, suggestion_id, outcome, reason, decided_by, decided_at, result_version_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict do nothing`,
+        [actor.workspaceId, projectId, chapterId, suggestion.versionId, suggestion.factId, suggestion.id,
+          decision.outcome, decision.reason, decision.decidedBy, decision.decidedAt, revision?.id ?? null],
+      );
+      if (!result.rowCount) throw new StoryKnowledgeError("VERSION_CONFLICT", "建议已处理");
+      if (revision) {
+        await setOperation(client, "review");
+        await writeCandidate(client, actor, revision, suggestion.versionId);
+      }
+    });
+  }
+
   async findInitialExtraction(actor: Actor, projectId: string, chapterId: string, jobId: string): Promise<StoryKnowledgeVersion | null> {
     return this.inTransaction(actor, async client => {
       const result = await client.query<VersionRow>(`select version_json from story_knowledge_versions
@@ -33,10 +90,7 @@ export class PostgresStoryKnowledgeRepository implements StoryKnowledgeRepositor
     return this.inTransaction(actor, async (client) => {
       await setOperation(client, operation);
       if (requireCurrentSource) await assertCurrentGeneration(client, actor, version);
-      await lockHead(client, actor, version.projectId, version.chapterId);
-      if (expectedActiveVersionId !== undefined) await assertActive(client, actor, version.projectId, version.chapterId, expectedActiveVersionId);
-      await insertVersion(client, actor, version);
-      await setHead(client, actor, version.projectId, version.chapterId, version.id);
+      await writeCandidate(client, actor, version, expectedActiveVersionId);
       return structuredClone(version);
     });
   }
@@ -183,6 +237,13 @@ async function assertCurrentGeneration(client: PoolClient, actor: Actor, version
   if (source.rows[0].active_source_version_id !== version.sourceVersionId) throw new StoryKnowledgeSourceChangedError();
   const policy = await client.query("select public.generation_allowed_locked($1,$2,$3,$4) as allowed", [actor.workspaceId, version.projectId, version.chapterId, version.sourceVersionId]);
   if (policy.rows[0]?.allowed !== true) throw new StoryKnowledgeGenerationRestrictedError();
+}
+
+async function writeCandidate(client: PoolClient, actor: Actor, version: StoryKnowledgeVersion, expectedActiveVersionId?: string | null): Promise<void> {
+  await lockHead(client, actor, version.projectId, version.chapterId);
+  if (expectedActiveVersionId !== undefined) await assertActive(client, actor, version.projectId, version.chapterId, expectedActiveVersionId);
+  await insertVersion(client, actor, version);
+  await setHead(client, actor, version.projectId, version.chapterId, version.id);
 }
 
 async function lockHead(client: PoolClient, actor: Actor, projectId: string, chapterId: string): Promise<void> {

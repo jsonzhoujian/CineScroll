@@ -152,6 +152,17 @@ export type StoryFact = {
   lockedAt?: string;
 };
 
+export type StoryFactSuggestion = {
+  id: string;
+  versionId: string;
+  factId: string;
+  statement: string;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+  decision?: { outcome: "accepted" | "rejected"; reason: string; decidedBy: string; decidedAt: string };
+};
+
 export type StoryKnowledgeVersion = {
   id: string;
   parentVersionId: string | null;
@@ -500,6 +511,18 @@ export class ApiClient {
     return this.request<StoryKnowledgeVersion>(`/projects/${projectId}/chapters/${chapterId}/story-knowledge`, {
       method: "GET",
     }, "session");
+  }
+
+  suggestStoryFact(projectId: string, chapterId: string, factId: string, input: { expectedActiveVersionId: string; statement: string; reason: string }) {
+    return this.request<StoryFactSuggestion>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge/facts/${encodeURIComponent(factId)}/suggestions`, { method: "POST", body: JSON.stringify(input) }, "session");
+  }
+
+  listStoryFactSuggestions(projectId: string, chapterId: string, factId: string) {
+    return this.request<StoryFactSuggestion[]>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge/facts/${encodeURIComponent(factId)}/suggestions`, { cache: "no-store" }, "session");
+  }
+
+  decideStoryFactSuggestion(projectId: string, chapterId: string, versionId: string, factId: string, suggestionId: string, input: { outcome: "accepted" | "rejected"; reason: string }) {
+    return this.request<{ suggestion: StoryFactSuggestion; version?: StoryKnowledgeVersion }>(`/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/story-knowledge/versions/${encodeURIComponent(versionId)}/facts/${encodeURIComponent(factId)}/suggestions/${encodeURIComponent(suggestionId)}/decision`, { method: "POST", body: JSON.stringify(input) }, "session");
   }
 
   editStoryFact(projectId: string, chapterId: string, factId: string, input: { expectedActiveVersionId: string; statement: string; reason: string }) {

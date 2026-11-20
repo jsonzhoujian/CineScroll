@@ -1,6 +1,6 @@
 # T08 — Versions, impact analysis, and collaboration
 
-status: in_progress
+status: done
 prerequisite: T07 completed
 unlocks: [T10]
 
@@ -59,6 +59,4 @@ Protect confirmed work when upstream content changes and support non-realtime st
 
 - 故事知识候选事实的直接修改、接受、拒绝及冲突裁决限负责人和审核人。工作台按角色显示操作，数据库通过独立审核写入权限校验角色。
 
-## 剩余验收
-
-- 故事知识仍需接入独立的编辑建议提交与审核入口。
+- 项目成员可对候选或已确认的未锁定事实提交修改建议，负责人和审核人可采纳或驳回。采纳派生候选，原故事圣经保留至重新确认。基准变更后，旧建议仍可查看和驳回，采纳须基于当前版本重新提出。提交与裁决均纳入项目版本审计。

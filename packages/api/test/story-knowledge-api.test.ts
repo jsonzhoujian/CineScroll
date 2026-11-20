@@ -151,11 +151,66 @@ test("故事知识 API 支持不确定事实裁决与局部幂等重试", async 
   }
 });
 
+test("编辑提交故事事实建议，审核人并发裁决只写入一个新候选", async () => {
+  const h = await createHarness();
+  try {
+    const candidate = await h.storyKnowledge.recordExtraction(h.owner, extraction());
+    const base = "/projects/prj_1/chapters/chp_1/story-knowledge";
+    const submit = `${base}/facts/fact_1/suggestions`;
+    const list = `${base}/versions/${candidate.id}/facts/fact_1/suggestions`;
+    const client = request(h.app.getHttpServer());
+    const command = { expectedActiveVersionId: candidate.id, statement: "少年在试炼中觉醒灵纹", reason: "补足地点" };
+    const proposed = await client.post(submit).auth(h.editorToken, { type: "bearer" }).send(command).expect(201);
+    assert.equal(proposed.body.createdBy, "usr_editor");
+    assert.deepEqual(await h.storyKnowledge.getActive(h.owner, "prj_1", "chp_1"), candidate);
+    await client.get(list).auth(h.outsiderToken, { type: "bearer" }).expect(403);
+    const rejectedProposal = await client.post(submit).auth(h.editorToken, { type: "bearer" })
+      .send({ ...command, statement: "新事实" }).expect(201);
+    await client.post(`${list}/${rejectedProposal.body.id}/decision`).auth(h.reviewerToken, { type: "bearer" })
+      .send({ outcome: "rejected", reason: "原文无依据" }).expect(201);
+    assert.deepEqual(await h.storyKnowledge.getActive(h.owner, "prj_1", "chp_1"), candidate);
+    const decision = `${list}/${proposed.body.id}/decision`;
+    const accept = { outcome: "accepted", reason: "已核对原文" };
+    await client.post(decision).auth(h.editorToken, { type: "bearer" }).send(accept).expect(403);
+    const results = await Promise.all([h.ownerToken, h.reviewerToken].map(token =>
+      client.post(decision).auth(token, { type: "bearer" }).send(accept)));
+    assert.deepEqual(results.map(result => result.status).sort(), [201, 409]);
+    const active = await h.storyKnowledge.getActive(h.owner, "prj_1", "chp_1");
+    assert.equal(active.parentVersionId, candidate.id);
+    const [activeFact] = active.facts;
+    const [originalFact] = candidate.facts;
+    assert.ok(activeFact && originalFact);
+    assert.equal(activeFact.statement, command.statement);
+    assert.deepEqual(activeFact.evidence, originalFact.evidence);
+    const history = await client.get(list).auth(h.editorToken, { type: "bearer" }).expect(200);
+    assert.deepEqual(history.body.map((item: { decision: { outcome: string } }) => item.decision.outcome), ["accepted", "rejected"]);
+    await client.post(submit).auth(h.editorToken, { type: "bearer" }).send(command).expect(409);
+    const confirmed = await client.post(`${base}/confirm`).auth(h.ownerToken, { type: "bearer" })
+      .send({ expectedActiveVersionId: active.id, reason: "确认故事知识" }).expect(201);
+    const formalId = confirmed.body.version.id;
+    const formalSuggestion = await client.post(submit).auth(h.reviewerToken, { type: "bearer" })
+      .send({ ...command, expectedActiveVersionId: formalId, statement: "少年在初次试炼中觉醒灵纹" }).expect(201);
+    const formalDecision = `${base}/versions/${formalId}/facts/fact_1/suggestions/${formalSuggestion.body.id}/decision`;
+    const revised = await client.post(formalDecision).auth(h.ownerToken, { type: "bearer" }).send(accept).expect(201);
+    assert.equal(revised.body.version.parentVersionId, formalId);
+    assert.equal(revised.body.version.status, "candidate");
+    assert.equal(revised.body.version.confirmedBy, undefined);
+    assert.equal(revised.body.version.facts[0].decision, undefined);
+    const published = await client.get(`${base}/story-bible`).auth(h.editorToken, { type: "bearer" }).expect(200);
+    assert.deepEqual(published.body, confirmed.body.storyBible);
+    const fullHistory = await client.get(submit).auth(h.editorToken, { type: "bearer" }).expect(200);
+    assert.equal(fullHistory.body.length, 3);
+    assert.equal(fullHistory.body.at(-1).decision.outcome, "accepted");
+  } finally {
+    await h.app.close();
+  }
+});
+
 async function createHarness() {
   const owner = { userId: "usr_owner", workspaceId: "wsp_studio" } as const;
   const sessions = new HmacSessionManager({
     secret: "0123456789abcdef0123456789abcdef",
-    resolveActor: async (userId) => userId === owner.userId ? owner : { userId, workspaceId: "wsp_other" },
+    resolveActor: async (userId) => ({ userId, workspaceId: userId === "usr_outsider" ? "wsp_other" : owner.workspaceId }),
   });
   const projectImport = new ProjectImportService({
     repository: new InMemoryProjectImportRepository(),
@@ -175,7 +230,9 @@ async function createHarness() {
     },
     projectAccessReader: {
       async findProjectAccess(actor, projectId) {
-        return actor.workspaceId === owner.workspaceId && projectId === "prj_1" ? { role: "owner" as const } : null;
+        if (actor.workspaceId !== owner.workspaceId || projectId !== "prj_1") return null;
+        const role = actor.userId === "usr_editor" ? "editor" : actor.userId === "usr_reviewer" ? "reviewer" : "owner";
+        return { role };
       },
     },
     idGenerator: () => `skv_api_${++id}`,
@@ -195,6 +252,8 @@ async function createHarness() {
   return {
     app, storyKnowledge, owner,
     ownerToken: await sessions.issue(owner.userId, owner.workspaceId),
+    editorToken: await sessions.issue("usr_editor", owner.workspaceId),
+    reviewerToken: await sessions.issue("usr_reviewer", owner.workspaceId),
     outsiderToken: await sessions.issue("usr_outsider", "wsp_other"),
   };
 }

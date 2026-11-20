@@ -153,7 +153,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     for (const path of ["../../identity/migrations/0001_identity.sql", "../../identity/migrations/0002_shared_workspace_accounts.sql", "../../project-import/migrations/0001_project_import.sql",
       "../../project-import/migrations/0002_imported_documents.sql", "../../project-import/migrations/0003_project_invitations.sql", "../../project-import/migrations/0004_project_workspace_access.sql", "../../project-import/migrations/0005_project_member_management.sql", "../../project-import/migrations/0006_manage_pending_invitations.sql", "../../project-import/migrations/0007_received_project_invitations.sql", "../../project-import/migrations/0008_project_membership_audit.sql", "../../project-import/migrations/0009_project_membership_audit_pagination.sql", "../../story-knowledge/migrations/0001_story_knowledge.sql",
       "../../story-knowledge/migrations/0002_extraction_recovery.sql", "../../story-knowledge/migrations/0003_generation_policy.sql",
-      "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../story-knowledge/migrations/0005_fact_review_permissions.sql", "../../script/migrations/0001_model_settings.sql",
+      "../../story-knowledge/migrations/0004_generation_policy_audit.sql", "../../story-knowledge/migrations/0005_fact_review_permissions.sql", "../../story-knowledge/migrations/0006_fact_suggestions.sql", "../../script/migrations/0001_model_settings.sql",
       "../../script/migrations/0002_workspace_model_access.sql", "../../script/migrations/0003_model_tasks.sql",
       "../../script/migrations/0004_model_task_results.sql", "../../script/migrations/0005_model_task_recovery.sql",
       "../../script/migrations/0006_chapter_task_list.sql", "../../script/migrations/0007_story_task_scan.sql",
@@ -236,6 +236,11 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         assert.ok(!JSON.stringify(status.body).includes("fixture-not-real-key"));
         assert.equal(modelCalls, 1);
         const knowledgePath = `/projects/${projectId}/chapters/${chapterId}/story-knowledge`;
+        const candidateId = status.body.result.candidateVersionId;
+        const suggested = await restarted.http.post(`${knowledgePath}/facts/rain/suggestions`).set("authorization",bearer)
+          .send({ expectedActiveVersionId: candidateId, statement: "测试建议", reason: "测试建议依据" }).expect(201);
+        await restarted.http.post(`${knowledgePath}/versions/${candidateId}/facts/rain/suggestions/${suggested.body.id}/decision`)
+          .set("authorization",bearer).send({ outcome: "rejected", reason: "测试驳回理由" }).expect(201);
         const reviewed = await restarted.http.post(`${knowledgePath}/facts/rain/review`).set("authorization",bearer)
           .send({ expectedActiveVersionId: status.body.result.candidateVersionId,outcome: "accepted",reason: "符合测试原文" }).expect(201);
         await restarted.http.post(`${knowledgePath}/confirm`).set("authorization",bearer)
@@ -974,6 +979,12 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(knowledgeDecision?.decision,"accepted");
       assert.equal(knowledgeDecision?.actorId,userId);
       assert.ok(knowledgeDecision?.previousVersionId && knowledgeDecision?.versionId);
+      const knowledgeSuggestion = events.find(event => event.kind === "knowledge_suggest");
+      const knowledgeSuggestionDecision = events.find(event => event.kind === "knowledge_suggestion_decide");
+      assert.equal(knowledgeSuggestion?.reason, "测试建议依据");
+      assert.equal(knowledgeSuggestionDecision?.targetId, knowledgeSuggestion?.targetId);
+      assert.equal(knowledgeSuggestionDecision?.decision, "rejected");
+      assert.equal(knowledgeSuggestionDecision?.reason, "测试驳回理由");
       const knowledgeConfirmation = events.find(event => event.kind === "knowledge_confirm");
       assert.equal(knowledgeConfirmation?.reason,"确认测试知识");
       assert.ok(!("fingerprint" in knowledgeConfirmation));

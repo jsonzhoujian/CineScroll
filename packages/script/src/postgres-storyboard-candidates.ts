@@ -270,6 +270,16 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         cross join lateral (select v.version_json->'operation' as value) operation
         where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
         union all
+        select s.chapter_id,'knowledge-suggestion:'||s.version_id||':'||s.fact_id||':'||s.id,s.created_at,s.created_by,
+          'knowledge_suggest',null,null,null,null,s.reason,null,null,null,s.version_id,null,s.id
+        from story_knowledge_fact_suggestions s
+        where $3::text is null and (s.workspace_id,s.project_id)=($1,$2)
+        union all
+        select d.chapter_id,'knowledge-suggestion-decision:'||d.version_id||':'||d.fact_id||':'||d.suggestion_id,d.decided_at,d.decided_by,
+          'knowledge_suggestion_decide',null,null,null,null,d.reason,d.outcome,null,null,d.version_id,d.result_version_id,d.suggestion_id
+        from story_knowledge_fact_suggestion_decisions d
+        where $3::text is null and (d.workspace_id,d.project_id)=($1,$2)
+        union all
         select v.chapter_id,'knowledge-confirm:'||v.id,v.created_at,v.created_by,
           'knowledge_confirm',null,null,null,null,
           case when command.value->>'expectedActiveVersionId'=confirmation.candidate_version_id
@@ -296,6 +306,9 @@ export class PostgresStoryboardCandidateRepository implements StoryboardCandidat
         ) action(kind,metadata,previous,reason,outcome)
         where $3::text is null and (v.workspace_id,v.project_id)=($1,$2)
           and action.metadata is not null and action.metadata is distinct from action.previous
+          and not (action.kind='edit' and exists (select 1 from story_knowledge_fact_suggestion_decisions d
+            where (d.workspace_id,d.project_id,d.chapter_id,d.result_version_id,d.fact_id)
+              =(v.workspace_id,v.project_id,v.chapter_id,v.id,fact.value->>'id')))
           and not exists (select 1 from story_knowledge_confirmation_results confirmation
             where (confirmation.workspace_id,confirmation.project_id,confirmation.chapter_id,confirmation.version_id)
               =(v.workspace_id,v.project_id,v.chapter_id,v.id))

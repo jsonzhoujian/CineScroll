@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { ApiClientError, type ApiClient, type Chapter, type StoryKnowledgeVersion } from "../lib/api";
+import { ApiClientError, type ApiClient, type Chapter, type StoryFactSuggestion, type StoryKnowledgeVersion } from "../lib/api";
 import { StoryKnowledgeRetry } from "./story-knowledge-retry";
 import { EpisodePlanWorkbench } from "./episode-plan-workbench";
 import { availableFactActions, buildReviewRows, canConfirmStoryKnowledge, resolutionGroupCandidates, selectFactEvidence, selectVisibleFact, storyFactTypeLabel, type FactAction, type ReviewFilter } from "../lib/story-knowledge-review";
@@ -162,12 +162,106 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
         {selected.resolutionStatus === "conflicting" && <label><span>冲突分类</span><select value={conflictClassification} onChange={(event) => setConflictClassification(event.target.value as keyof typeof conflictLabels)}>{Object.entries(conflictLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
         <label><span>本次判断理由</span><textarea className="reason-input" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="说明为何修改、接受、拒绝、裁决或锁定" /></label>
         <div className="fact-actions">{actions.map((action) => <button type="button" disabled={busy} className={`action-${action} ${action === "accept" || action === "resolve" || action === "lock" ? "primary" : ""}`} key={action} onClick={() => execute(action)}>{actionLabel(action)}</button>)}</div>
+        <FactSuggestions key={JSON.stringify([project.id, chapter.id, version.id, selected.id])}
+          api={api} version={version} fact={selected} onNotice={onNotice} canReview={canManageStage}
+          onRevision={next => { setVersion(next); onConfirmationChange(false); }}
+          canSuggest={version.sourceVersionId === chapter.activeSourceVersionId && !selected.locked
+            && (version.status === "confirmed" ? selected.decision?.outcome === "accepted" : !selected.decision)} />
         {selected.decision && <div className={`decision-note ${selected.decision.outcome}`}><b>{selected.decision.outcome === "accepted" ? "已接受" : "已拒绝"}</b><p>{selected.decision.reason}</p></div>}
       </section> : <section className="fact-inspector empty">请选择一条故事事实。</section>}
       <aside className="evidence-column"><span className="eyebrow">原文证据</span><h3>每个判断都有出处</h3>{evidence.map((fragment) => <article key={fragment.id}><small>片段 {String(fragment.ordinal + 1).padStart(2, "0")}</small><p>{fragment.text}</p></article>)}{evidence.length === 0 && <p className="no-evidence">当前事实没有可显示的原文证据。</p>}</aside>
     </div>
     <footer className="knowledge-footer"><p>{canManageStage ? confirmation.reason ?? "确认后生成故事圣经；后续修改会创建新版本，不覆盖当前记录。" : "仅负责人或审核人可以修改、裁决或锁定事实，以及确认阶段。"}</p>{canManageStage && version.status !== "confirmed" && <button type="button" className="button primary" disabled={busy || !confirmation.allowed} onClick={confirm}>确认故事知识阶段</button>}</footer>
   </div>;
+}
+
+function FactSuggestions({ api, version, fact, canSuggest, canReview, onNotice, onRevision }: {
+  api: ApiClient;
+  version: StoryKnowledgeVersion;
+  fact: StoryKnowledgeVersion["facts"][number];
+  canSuggest: boolean;
+  canReview: boolean;
+  onRevision(version: StoryKnowledgeVersion): void;
+  onNotice(message: string): void;
+}) {
+  const { projectId, chapterId, id: versionId } = version;
+  const { id: factId } = fact;
+  const [suggestions, setSuggestions] = useState<StoryFactSuggestion[]>([]);
+  const [statement, setStatement] = useState(fact.statement);
+  const [reason, setReason] = useState("");
+  const [reviewReason, setReviewReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    void api.listStoryFactSuggestions(projectId, chapterId, factId)
+      .then(result => { if (active) setSuggestions(result); })
+      .catch(() => { if (active) setError("建议读取失败。"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [api, projectId, chapterId, versionId, factId, reload]);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const suggestion = await api.suggestStoryFact(projectId, chapterId, factId, {
+        expectedActiveVersionId: versionId, statement: statement.trim(), reason: reason.trim(),
+      });
+      setSuggestions(current => [...current, suggestion]);
+      setStatement(fact.statement);
+      setReason("");
+      onNotice("修改建议已提交");
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "修改建议提交失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decide = async (suggestion: StoryFactSuggestion, outcome: "accepted" | "rejected") => {
+    setBusy(true);
+    try {
+      const result = await api.decideStoryFactSuggestion(projectId, chapterId, suggestion.versionId, factId, suggestion.id, {
+        outcome, reason: reviewReason.trim(),
+      });
+      setSuggestions(current => current.map(item => item.id === suggestion.id && item.versionId === suggestion.versionId ? result.suggestion : item));
+      setReviewReason("");
+      onNotice(outcome === "accepted" ? "建议已采纳，并创建新候选版本" : "建议已驳回");
+      if (result.version) onRevision(result.version);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "建议裁决失败");
+      if (error instanceof ApiClientError && error.code === "VERSION_CONFLICT") setReload(value => value + 1);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <section aria-label="事实修改建议">
+    <h3>修改建议</h3>
+    {loading && <p role="status">正在读取建议…</p>}
+    {error && <p>{error} <button type="button" onClick={() => { setError(""); setLoading(true); setReload(value => value + 1); }}>重试</button></p>}
+    {!loading && !error && suggestions.length === 0 && <p>当前事实暂无建议。</p>}
+    {canReview && suggestions.some(item => !item.decision) &&
+      <label>建议裁决理由<textarea className="reason-input" value={reviewReason} maxLength={20000} onChange={event => setReviewReason(event.target.value)} /></label>}
+    {suggestions.map(suggestion => <article key={JSON.stringify([suggestion.versionId, suggestion.id])} className="decision-note">
+      <b>{suggestion.statement}</b><p>{suggestion.reason}</p>
+      <small>提交人 {suggestion.createdBy}</small>
+      {suggestion.decision ? <p>{suggestion.decision.outcome === "accepted" ? "已采纳" : "已驳回"} · {suggestion.decision.decidedBy} · {suggestion.decision.reason}</p> :
+        <><p>{suggestion.versionId === versionId ? "待裁决" : "待裁决 · 基准版本已变化"}</p>{canReview && <div className="fact-actions">
+          <button type="button" disabled={busy || !reviewReason.trim() || !canSuggest || suggestion.versionId !== versionId} onClick={() => void decide(suggestion, "accepted")}>采纳建议</button>
+          <button type="button" disabled={busy || !reviewReason.trim()} onClick={() => void decide(suggestion, "rejected")}>驳回建议</button>
+        </div>}</>}
+    </article>)}
+    {canSuggest && <div className="fact-suggestion-editor">
+      <label>建议陈述<textarea value={statement} maxLength={20000} onChange={event => setStatement(event.target.value)} /></label>
+      <label>建议理由<textarea value={reason} maxLength={20000} onChange={event => setReason(event.target.value)} /></label>
+      <button type="button" disabled={loading || !!error || busy || !statement.trim() || statement.trim() === fact.statement || !reason.trim()}
+        onClick={() => void submit()}>提交修改建议</button>
+    </div>}
+  </section>;
 }
 
 function ReviewEmpty({ mark, title, note }: { mark: string; title: string; note: string }) {

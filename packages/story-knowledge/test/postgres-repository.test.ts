@@ -23,7 +23,7 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
       "../migrations/0003_generation_policy.sql",
-      "../migrations/0004_generation_policy_audit.sql", "../migrations/0005_fact_review_permissions.sql",
+      "../migrations/0004_generation_policy_audit.sql", "../migrations/0005_fact_review_permissions.sql", "../migrations/0006_fact_suggestions.sql",
     ]) {
       await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
@@ -213,8 +213,28 @@ integrationTest("PostgreSQL 持久化活动版本与故事圣经，并隔离非�
       { code: "FORBIDDEN" },
     );
     assert.equal((await repository.findActive(actor, "prj_story", "chp_story"))?.id, revision.parentVersionId);
-    await repository.saveCandidate(reviewer, revision, revision.parentVersionId, false, "review");
-    assert.deepEqual(await repository.findActive(actor, "prj_story", "chp_story"), revision);
+    const suggestion = {
+      id: "suggestion_1", versionId: "skv_ambiguous_initial", factId: "fact_1",
+      statement: "少年觉醒灵纹", reason: "补足事件", createdBy: editor.userId, createdAt: revision.createdAt,
+    };
+    await repository.saveFactSuggestion(editor, "prj_story", "chp_story", suggestion);
+    const list = (requester: typeof editor) => repository.listFactSuggestions(requester, "prj_story", "chp_story", suggestion.versionId, suggestion.factId);
+    assert.deepEqual(await list(reviewer), [suggestion]);
+    assert.deepEqual(await list({ ...editor, userId: "usr_other" }), []);
+    const decision = { outcome: "accepted" as const, reason: "有原文依据", decidedBy: reviewer.userId, decidedAt: revision.createdAt };
+    await assert.rejects(
+      () => repository.decideFactSuggestion(editor, "prj_story", "chp_story", suggestion, { ...decision, decidedBy: editor.userId }, revision),
+      { code: "FORBIDDEN" },
+    );
+    const revised = { ...revision, facts: revision.facts.map(fact => ({ ...fact, statement: suggestion.statement })) };
+    const secondSuggestion = await repository.saveFactSuggestion(editor, "prj_story", "chp_story", { ...suggestion, id: "suggestion_2" });
+    await repository.decideFactSuggestion(reviewer, "prj_story", "chp_story", suggestion, decision, revised);
+    await assert.rejects(() => repository.decideFactSuggestion(reviewer, "prj_story", "chp_story", secondSuggestion, decision, { ...revised, id: "skv_stale_suggestion" }), {
+      code: "VERSION_CONFLICT",
+    });
+    assert.deepEqual(await list(reviewer), [{ ...suggestion, decision }, secondSuggestion]);
+
+    assert.deepEqual(await repository.findActive(actor, "prj_story", "chp_story"), revised);
     assert.deepEqual(await repository.findConfirmedStoryBible(actor, "prj_story", "chp_story"), bible);
   } finally {
     await applicationPool?.end();
@@ -231,7 +251,7 @@ integrationTest("PostgreSQL 以事务保证 CAS 与局部重试幂等", async ()
       "../migrations/0001_story_knowledge.sql",
       "../migrations/0002_extraction_recovery.sql",
       "../migrations/0003_generation_policy.sql",
-      "../migrations/0004_generation_policy_audit.sql", "../migrations/0005_fact_review_permissions.sql",
+      "../migrations/0004_generation_policy_audit.sql", "../migrations/0005_fact_review_permissions.sql", "../migrations/0006_fact_suggestions.sql",
     ]) await adminPool.query(await readFile(new URL(path, import.meta.url), "utf8"));
     await resetFixture(adminPool);
     await adminPool.query("drop role if exists novel_story_test");
