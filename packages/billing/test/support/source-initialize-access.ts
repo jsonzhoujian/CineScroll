@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import type { TestContext } from 'node:test';
+import { assertInitializeAccessProfile } from './source-initialize-access-profile.ts';
 import { Pool } from 'pg';
 import { assertIsolatedPrivateVerificationDatabase } from './source-private-readiness.ts';
 
@@ -21,6 +22,30 @@ export async function testInitializeAccess(t:TestContext,admin:Pool,inspector:Po
       await admin.query(draft);roleCreated=true;
     });
     if(!roleCreated)return;
+    await t.test('initializer profile accepts the installed access configuration and rejects drift',async()=>{
+      await assertInitializeAccessProfile(inspector);
+      const drifts=[
+        `alter role ${role} inherit`,
+        `grant ${role} to codec_inspector`,
+        `alter policy initializer_business_select on ${schema}.fixed_quote using (true)`,
+        'alter function source_ingest_d1b_initialize_access_v1.can_read_business(text,text) stable',
+        `grant select (workspace_id) on ${schema}.fixed_quote to public`,
+        `revoke select on ${schema}.fixed_quote from ${role}`,
+        'alter default privileges for role codec_admin grant execute on functions to novel_d1b_initializer',
+      ];
+      for(const sql of drifts){
+        const client=await admin.connect();
+        try{
+          await client.query('begin');
+          await assertInitializeAccessProfile(client);
+          await client.query(sql);
+          await assert.rejects(assertInitializeAccessProfile(client),{message:'INITIALIZE_ACCESS_PROFILE_NOT_READY'},sql);
+        }finally{
+          try{await client.query('rollback');}finally{client.release();}
+        }
+      }
+      await assertInitializeAccessProfile(inspector);
+    });
     const flags=(await admin.query('select rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolbypassrls,rolreplication from pg_roles where rolname=$1',[role])).rows[0];
     assert.ok(Object.values(flags).every(value=>value===false));
     await admin.query(`create role ${login} login nosuperuser nocreatedb nocreaterole nobypassrls noreplication`);loginCreated=true;
