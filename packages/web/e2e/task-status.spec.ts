@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 const origin = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
-for (const mode of ["success","uncertain","stale","expired","mobile","disabled"]) test(`拆集任务生成并明确载入：${mode}`, async ({ page }) => {
+for (const mode of ["success","uncertain","stale","expired","mobile","disabled","reopen","execution-unknown"]) test(`拆集任务生成并明确载入：${mode}`, async ({ page }) => {
   await setup(page);
   const headers = { "access-control-allow-origin": "*","access-control-allow-headers": "authorization,content-type","access-control-allow-methods": "GET,POST,OPTIONS" };
   const chapter = { id: "c",title: "雨落",activeSourceVersionId: "s",versions: [{ id: "s",ordinal: 1,text: "雨落",fragments: [{ id: "f",ordinal: 1,text: "雨落" }] }] };
@@ -20,7 +20,12 @@ for (const mode of ["success","uncertain","stale","expired","mobile","disabled"]
     }
     return r.fulfill({ headers,json: r.request().url().includes("availability") ? { available: mode !== "disabled",reason: mode === "disabled" ? "WORKSPACE_TASK_DISABLED" : null } : { tasks: [],nextCursor: null } });
   });
-  await page.route(`${origin}/episode-plan-tasks/episode-task`,r => r.fulfill({ headers,json: { ...task,state: "succeeded",result: { candidateVersionId: "plan",extractionStatus: "succeeded" } } }));
+  await page.route(`${origin}/episode-plan-tasks/episode-task`, r => r.fulfill({
+    headers,
+    json: mode === "execution-unknown"
+      ? { ...task, state: "paused", reason: "EXECUTION_UNCERTAIN" }
+      : { ...task, state: "succeeded", result: { candidateVersionId: "plan", extractionStatus: "succeeded" } },
+  }));
   const plan = { id: mode === "stale" ? "newer-plan" : "plan",generationJobId: task.id,projectId: "p",chapterId: "c",sourceVersionId: "s",storyBibleVersionId: "candidate",status: "candidate",targetDurationSeconds: 180,episodes: [{ id: "e",ordinal: 1,title: "风雨将至",sourceFragmentIds: ["f"],coreEventFactIds: ["event"] }],majorAdaptationProposals: [] };
   await page.route(`${origin}/projects/p/chapters/c/episode-plan`,r => r.fulfill({ headers,json: { plan,current: true,canReview: true,sourceFragments: [{ id: "f",text: "雨落" }],coreEvents: [{ id: "event",statement: "下雨" }] } }));
   await page.getByRole("button",{ name: "进入审核",exact: true }).click();
@@ -37,7 +42,26 @@ for (const mode of ["success","uncertain","stale","expired","mobile","disabled"]
     await page.getByRole("button",{ name: "进入审核",exact: true }).click();
     await panel.getByRole("button",{ name: "核对拆集原提交" }).click();
   }
+  if (mode === "reopen") {
+    await expect(page).toHaveURL(/[?&]episodeTask=episode-task(?:&|$)/);
+    await page.reload();
+    await login(page);
+    const storyTask = page.getByRole("region", { name: "故事知识任务" });
+    await storyTask.getByLabel("任务编号").fill("task");
+    await storyTask.getByRole("button", { name: "读取任务", exact: true }).click();
+    await page.getByRole("button", { name: "进入审核", exact: true }).click();
+    await panel.getByRole("button", { name: "读取拆集任务" }).click();
+    await expect(panel.getByRole("button", { name: "载入拆集候选" })).toBeEnabled();
+  }
   await panel.getByRole("button",{ name: "刷新拆集状态" }).click();
+  if (mode === "execution-unknown") {
+    await expect(panel.getByText(/待人工处理/)).toBeVisible();
+    await expect(panel.getByText(/执行结果未知，禁止重投/)).toBeVisible();
+    await expect(panel.getByRole("button", { name: "生成拆集候选" })).toBeDisabled();
+    await expect(panel.getByRole("button", { name: "载入拆集候选" })).toHaveCount(0);
+    expect(posts).toBe(1);
+    return;
+  }
   if (mode === "mobile") { await page.setViewportSize({ width: 390,height: 844 }); await expect(panel.getByRole("button",{ name: "生成拆集候选",exact: true })).toBeHidden(); await expect(panel.getByText(/候选已生成/)).toBeVisible(); }
   await expect(panel.getByRole("button",{ name: "载入拆集候选" })).toBeEnabled();
   await expect(desk.getByRole("button",{ name: "确认拆集方案",exact: true })).toHaveCount(0);
