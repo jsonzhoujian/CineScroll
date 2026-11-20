@@ -170,9 +170,17 @@ test("任务候选可进入对应章节审核，部分成功不自动确认", as
     facts: [{ id: "rain", factType: "worldRule", statement: "雨落", assertionKind: "explicit", resolutionStatus: "resolved", resolutionGroupId: null, evidence: [{ sourceVersionId: "s", fragmentId: "f" }] }],
     failures: [{ scopeKey: "identity", originJobId: "task", code: "UNKNOWN", message: "待确认", retryable: true }],
   } }));
+  await page.route(`${origin}/projects/p/chapters/c/story-knowledge/facts/rain/suggestions`, route => route.fulfill({ headers,json: [
+    { id: "suggestion",versionId: "candidate",factId: "rain",statement: "深秋雨后，青石庭院仍在滴水。",reason: "保留雨后的时间线索。",createdBy: "editor",createdAt: "2026-11-20" },
+  ] }));
   await page.getByRole("button", { name: "进入审核", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "逐条核证，再让故事进入剧本" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "故事知识审核" })).toBeVisible();
+  await expect(page.locator("main.mode-review")).toHaveAttribute("data-workbench-theme","studio");
+  await expect(page.locator(".knowledge-state")).toContainText("部分提取成功");
   await expect(page.getByRole("button", { name: "确认故事知识阶段" })).toBeDisabled();
+  const suggestions = page.getByRole("region",{ name: "事实修改建议" });
+  await expect(suggestions.getByText("待裁决",{ exact: true })).toBeVisible();
+  await expect(suggestions.locator("[data-review-state]")).toHaveAttribute("data-review-state","pending");
   await expect(page.getByRole("textbox", { name: "事实陈述" })).toHaveValue("雨落");
   await page.getByRole("textbox", { name: "事实陈述" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/private/tmp/task-review-entry.png" });
@@ -194,7 +202,7 @@ for (const change of ["source", "candidate", "during-load"]) {
     if (change === "during-load") await expect(page.getByText(/原文或活动候选已变化，停止审核/)).toBeVisible();
     else {
       await expect(page.getByText(/该结果已不是当前原文或活动候选，仅可只读预览/)).toBeVisible();
-      await expect(page.getByRole("heading", { name: "逐条核证，再让故事进入剧本" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "故事知识审核" })).toHaveCount(0);
       await page.getByRole("button", { name: "查看候选版本" }).click();
       await expect(page.getByRole("region", { name: "任务候选版本" })).toBeVisible();
     }
@@ -220,7 +228,7 @@ test("原文流程请求在途时不能切入任务审核", async ({ page }) => 
     await page.getByRole("button", { name: /创建项目/ }).click(); await started;
     await page.getByRole("button", { name: "进入审核", exact: true }).click();
     await expect(page.getByText("请等待当前原文流程操作完成，再进入任务审核。")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "逐条核证，再让故事进入剧本" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "故事知识审核" })).toHaveCount(0);
   } finally { release(); }
 });
 async function login(page: Page) {
@@ -822,7 +830,7 @@ for (const mode of ["owner","editor","reviewer","unknown","conflict","stale","mo
   await review.getByLabel("设定名称",{ exact: true }).fill("修改后的庭院");await review.getByLabel("设定操作理由",{ exact: true }).fill("可见特征");
   if (mode === "editor") {
     await expect(review.getByRole("button",{ name: "保存设定修改",exact: true })).toHaveCount(0);
-    await review.getByRole("button",{ name: "提交设定建议",exact: true }).click();await expect(review.getByText("pending",{ exact: false })).toBeVisible();expect(posts).toBe(1);return;
+    await review.getByRole("button",{ name: "提交设定建议",exact: true }).click();await expect(review.getByText("待裁决",{ exact: true })).toBeVisible();expect(posts).toBe(1);return;
   }
   await review.getByRole("button",{ name: "保存设定修改",exact: true }).click();
   if (mode === "conflict") { await expect(review.getByRole("status")).toContainText("操作被拒绝");expect(posts).toBe(1);return; }

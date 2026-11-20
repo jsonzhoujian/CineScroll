@@ -141,11 +141,10 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
 
   return <div className="knowledge-workbench">
     <header className="knowledge-head">
-      <div><span className="eyebrow">故事知识 · 版本 {version.id}</span><h2>逐条核证，再让故事进入剧本</h2><p>{chapter.title} · {version.facts.length} 条事实 · {version.failures.length} 项局部失败</p></div>
+      <div><span className="eyebrow">故事知识 · 版本 {version.id}</span><h2>故事知识审核</h2><p>{chapter.title} · {version.facts.length} 条事实 · {version.failures.length} 项局部失败</p></div>
       <div className={`knowledge-state state-${version.status}`}><b>{version.status === "confirmed" ? "已确认" : version.status === "needs_resolution" ? "待裁决" : "待审核"}</b><small>{version.extractionStatus === "partially_succeeded" ? "部分提取成功" : version.extractionStatus === "failed" ? "提取失败" : "提取完成"}</small></div>
     </header>
     <nav className="knowledge-filters" aria-label="故事事实筛选">{filters.map((item) => <button type="button" key={item.id} aria-pressed={filter === item.id} className={filter === item.id ? "active" : ""} onClick={() => onCursorChange({ filter: item.id, selectedId })}>{item.label}<span>{buildReviewRows(version, item.id).length}</span></button>)}</nav>
-    {version.status !== "confirmed" && version.failures.length > 0 && <StoryKnowledgeRetry key={version.id} api={api} version={version} disabled={busy} onLoaded={next => { setVersion(next); onConfirmationChange(false); onCursorChange({ filter, selectedId: next.facts[0]?.id ?? null }); onNotice("重试候选已载入，请继续逐项审核；不会自动确认。"); }} />}
     {version.status === "confirmed" && <EpisodePlanWorkbench key={`${project.id}:${chapter.id}:${chapter.activeSourceVersionId}:${version.id}`} api={api} projectId={project.id} chapterId={chapter.id} sourceVersionId={chapter.activeSourceVersionId} knowledgeVersionId={version.id} />}
     <div className="knowledge-grid">
       <aside className="fact-ledger" aria-label="故事事实目录">
@@ -171,7 +170,8 @@ export function StoryKnowledgeWorkbench({ api, project, chapter, canManageStage,
       </section> : <section className="fact-inspector empty">请选择一条故事事实。</section>}
       <aside className="evidence-column"><span className="eyebrow">原文证据</span><h3>每个判断都有出处</h3>{evidence.map((fragment) => <article key={fragment.id}><small>片段 {String(fragment.ordinal + 1).padStart(2, "0")}</small><p>{fragment.text}</p></article>)}{evidence.length === 0 && <p className="no-evidence">当前事实没有可显示的原文证据。</p>}</aside>
     </div>
-    <footer className="knowledge-footer"><p>{canManageStage ? confirmation.reason ?? "确认后生成故事圣经；后续修改会创建新版本，不覆盖当前记录。" : "仅负责人或审核人可以修改、裁决或锁定事实，以及确认阶段。"}</p>{canManageStage && version.status !== "confirmed" && <button type="button" className="button primary" disabled={busy || !confirmation.allowed} onClick={confirm}>确认故事知识阶段</button>}</footer>
+    <footer className="knowledge-footer"><p>{canManageStage ? confirmation.reason ?? "确认后生成故事圣经；后续修改会创建新版本，不覆盖当前记录。" : "仅负责人或审核人可以修改、裁决或锁定事实，以及确认阶段。"}</p>{canManageStage && version.status !== "confirmed" && <button type="button" className="button primary review-confirm" disabled={busy || !confirmation.allowed} onClick={confirm}>确认故事知识阶段</button>}</footer>
+    {version.status !== "confirmed" && version.failures.length > 0 && <StoryKnowledgeRetry key={version.id} api={api} version={version} disabled={busy} onLoaded={next => { setVersion(next); onConfirmationChange(false); onCursorChange({ filter, selectedId: next.facts[0]?.id ?? null }); onNotice("重试候选已载入，请继续逐项审核；不会自动确认。"); }} />}
   </div>;
 }
 
@@ -239,18 +239,18 @@ function FactSuggestions({ api, version, fact, canSuggest, canReview, onNotice, 
     }
   };
 
-  return <section aria-label="事实修改建议">
+  return <section className="review-suggestions" aria-label="事实修改建议">
     <h3>修改建议</h3>
     {loading && <p role="status">正在读取建议…</p>}
     {error && <p>{error} <button type="button" onClick={() => { setError(""); setLoading(true); setReload(value => value + 1); }}>重试</button></p>}
     {!loading && !error && suggestions.length === 0 && <p>当前事实暂无建议。</p>}
     {canReview && suggestions.some(item => !item.decision) &&
       <label>建议裁决理由<textarea className="reason-input" value={reviewReason} maxLength={20000} onChange={event => setReviewReason(event.target.value)} /></label>}
-    {suggestions.map(suggestion => <article key={JSON.stringify([suggestion.versionId, suggestion.id])} className="decision-note">
-      <b>{suggestion.statement}</b><p>{suggestion.reason}</p>
+    {suggestions.map(suggestion => <article key={JSON.stringify([suggestion.versionId, suggestion.id])} className="review-suggestion" data-review-state={suggestion.decision?.outcome ?? "pending"}>
+      <b>{suggestion.statement}</b><span className="review-chip">{suggestion.decision ? suggestion.decision.outcome === "accepted" ? "已采纳" : "已驳回" : "待裁决"}</span><p>{suggestion.reason}</p>
       <small>提交人 {suggestion.createdBy}</small>
-      {suggestion.decision ? <p>{suggestion.decision.outcome === "accepted" ? "已采纳" : "已驳回"} · {suggestion.decision.decidedBy} · {suggestion.decision.reason}</p> :
-        <><p>{suggestion.versionId === versionId ? "待裁决" : "待裁决 · 基准版本已变化"}</p>{canReview && <div className="fact-actions">
+      {suggestion.decision ? <p>裁决人 {suggestion.decision.decidedBy} · {suggestion.decision.reason}</p> :
+        <>{suggestion.versionId !== versionId && <p>基准版本已变化</p>}{canReview && <div className="fact-actions">
           <button type="button" disabled={busy || !reviewReason.trim() || !canSuggest || suggestion.versionId !== versionId} onClick={() => void decide(suggestion, "accepted")}>采纳建议</button>
           <button type="button" disabled={busy || !reviewReason.trim()} onClick={() => void decide(suggestion, "rejected")}>驳回建议</button>
         </div>}</>}

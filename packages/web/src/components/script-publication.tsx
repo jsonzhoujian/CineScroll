@@ -64,8 +64,8 @@ export function ScriptPublication({ api,projectId,chapterId,context,view,selecte
   const report = result?.report,matching = report?.candidateVersionId === view.version.id;
   const blocked = disabled || invalid || !!publication;
   const unresolved = result?.task.input.qualityTarget.candidateVersionId === view.version.id && (["queued","running"].includes(result.task.state) || result.task.reason === "EXECUTION_UNCERTAIN");
-  return <section aria-label="剧本质量与确认"><h3>质量报告与正式确认</h3><p role="status">{notice}</p>
-    <p>剧本状态：{formal ? "正式" : "候选"}{view.version.confirmedBy ? ` · 确认人 ${view.version.confirmedBy}` : ""}</p>
+  return <section className="review-section" aria-label="剧本质量与确认"><h3>质量报告与正式确认</h3><p role="status">{notice}</p>
+    <p className="review-chip" data-review-state={formal ? "confirmed" : "pending"}>剧本状态：{formal ? "正式" : "候选"}{view.version.confirmedBy ? ` · 确认人 ${view.version.confirmedBy}` : ""}</p>
     <div className="desktop-task-action">
       {canReview && !formal && <><button type="button" disabled={blocked || !!pending || unresolved} onClick={() => void run(async () => { const config = (await api.modelConfiguration()).configuration;setConfiguration(config?.tested && config.processingRegion === "mainland" ? config : null);setModel(""); })}>读取质量模型</button>
         <label>质量评估模型<select value={model} disabled={blocked || !!pending || unresolved} onChange={e => setModel(e.target.value)}><option value="">选择模型</option>{configuration?.availableModelIds.map(m => <option key={m}>{m}</option>)}</select></label>
@@ -80,7 +80,7 @@ export function ScriptPublication({ api,projectId,chapterId,context,view,selecte
     {report && <article><p>报告版本 {report.candidateVersionId} · 规则 {report.ruleVersion} · {report.passed ? "通过" : "未通过"} · 核心事件覆盖率 {Math.round(report.coverage * 100)}%</p>
       {report.reasons.map(reason => <p key={reason}>阻断原因：{qualityReasons[reason] ?? "报告尚未通过，请核对评估结果"}</p>)}{report.assessment?.episodes.map(e => <p key={e.episodeId}>集 {e.episodeId}：估算 {e.estimatedSeconds} 秒</p>)}
       {!matching && !formal && <p>报告已过期，请评估当前候选。</p>}</article>}
-    <div className="desktop-task-action">{canReview && <label>正式操作理由<input value={reason} maxLength={2000} disabled={blocked} onChange={e => setReason(e.target.value)} /></label>}{canReview && !formal && <button type="button" disabled={blocked || !reason.trim() || !!pending || !matching || !report?.passed || result?.task.state !== "succeeded" || !!view.version.failures.length || view.version.suggestions?.some(s => s.status === "pending")} onClick={() => void run(() => publish("confirm"))}>确认正式剧本</button>}
+    <div className="desktop-task-action">{canReview && <label>正式操作理由<input value={reason} maxLength={2000} disabled={blocked} onChange={e => setReason(e.target.value)} /></label>}{canReview && !formal && <button className="review-confirm" type="button" disabled={blocked || !reason.trim() || !!pending || !matching || !report?.passed || result?.task.state !== "succeeded" || !!view.version.failures.length || view.version.suggestions?.some(s => s.status === "pending")} onClick={() => void run(() => publish("confirm"))}>确认正式剧本</button>}
       {canReview && formal && <button type="button" disabled={blocked || !reason.trim() || !selectedId || !!view.version.elements.find(e => e.id === selectedId)?.lockedAt} onClick={() => void run(() => publish("lock"))}>锁定当前元素</button>}</div>
   </section>;
 }

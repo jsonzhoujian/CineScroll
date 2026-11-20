@@ -1,0 +1,51 @@
+/* Shared semantic tokens for the workbench. Add future palettes under another theme value. */
+[data-workbench-theme="studio"] {
+  --studio-workspace: #eff2f3;
+  --studio-surface: #fff;
+  --studio-rail: #f6f8f8;
+  --studio-text: #17272b;
+  --studio-secondary: #53666b;
+  --studio-border: #dce4e5;
+  --studio-accent: #006c60;
+  --studio-accent-text: #fff;
+  --studio-selection: #e6f3ef;
+  --studio-chrome: #172629;
+  --studio-chrome-text: #e1eae9;
+  --studio-chrome-accent: #aee6d4;
+  --studio-warning: #805412;
+  --studio-warning-surface: #fff4df;
+  --studio-danger: #9a3835;
+  --studio-danger-surface: #fbece9;
+  --studio-font: "Instrument Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+[data-workbench-theme] {
+  background: var(--studio-workspace);
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+}
+
+[data-workbench-theme] .topbar {
+  background: var(--studio-chrome);
+  color: var(--studio-chrome-text);
+  border-color: transparent;
+}
+[data-workbench-theme] .topbar .seal,
+[data-workbench-theme] .topbar .modes button.active {
+  background: var(--studio-chrome-accent);
+  color: var(--studio-chrome);
+  border-radius: 6px;
+}
+[data-workbench-theme] .topbar .modes { background: transparent; border: 0; gap: 6px; }
+[data-workbench-theme] .topbar .modes button,
+[data-workbench-theme] .topbar .top-meta,
+[data-workbench-theme] .topbar .top-meta button,
+[data-workbench-theme] .topbar .brand small { color: var(--studio-chrome-text); }
+[data-workbench-theme] .topbar .modes button { white-space: nowrap; }
+[data-workbench-theme] .topbar .top-meta i { background: var(--studio-chrome-accent); }
+[data-workbench-theme] .body-grid { display: block; }
+[data-workbench-theme] .step-rail,
+[data-workbench-theme] .context-panel,
+[data-workbench-theme] .ambient-mark { display: none; }
+[data-workbench-theme] .work-area { max-width: 1680px; padding: 23px clamp(16px,3vw,48px) 64px; margin-inline: auto; }
+[data-workbench-theme] .work-area > .text-button { color: var(--studio-secondary); margin: 0 14px 8px 0; padding: 3px 0; }

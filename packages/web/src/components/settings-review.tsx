@@ -63,7 +63,7 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
     try { const saved = await api.getSettingsOperation(projectId,chapterId,pending.requestId);await completed(saved.version,pending,"原操作已核对，已读取当前设定。"); }
     catch (error) { if (alive.current) setNotice(error instanceof ApiClientError && error.status === 401 ? "登录已失效，请重新登录后核对原操作。" : "原操作尚未核对成功，保留原请求；不会发起新操作。"); }
   }
-  return <section aria-label="文字设定审核"><h3>文字设定审核</h3><p>设定状态：{isFormal ? "正式" : "候选"}</p><p role="status">{notice}</p>
+  return <section className="review-section" aria-label="文字设定审核"><h3>文字设定审核</h3><p className="review-chip" data-review-state={isFormal ? "confirmed" : "pending"}>设定状态：{isFormal ? "正式" : "候选"}</p><p role="status">{notice}</p>
     {!eligible && <p>当前内容仅供追溯，请读取当前设定后再审核。</p>}
     <button type="button" disabled={readDisabled} onClick={() => void run(async () => { const result = await api.getSettingsVersion(projectId,chapterId,"confirmed");if (result.version.projectId !== projectId || result.version.chapterId !== chapterId || result.version.status !== "confirmed") throw new Error("NOT_FORMAL");if (alive.current) setFormal(result.version); })}>读取保留正式设定</button>
     {formal && <article aria-label="保留正式设定"><p>正式版本 {formal.id}</p>{formal.assets.map(a => <p key={a.id}>{a.name}</p>)}</article>}
@@ -78,9 +78,9 @@ export function SettingsReview({ api,projectId,chapterId,context,view,selectedId
       </fieldset>}
       {draft && view.permissions?.canEdit && !isFormal && <button type="button" disabled={blocked || locked || !reason.trim() || !draft.name.trim()} onClick={() => void run(() => submit("edit"))}>保存设定修改</button>}
       {draft && view.permissions?.canSuggest && <button type="button" disabled={blocked || locked || !reason.trim() || !draft.name.trim()} onClick={() => void run(() => submit("suggest"))}>提交设定建议</button>}
-      {view.permissions?.canConfirm && !isFormal && <button type="button" disabled={blocked || !reason.trim() || view.version.generationStatus !== "succeeded" || !!view.version.failures.length || !!view.version.reconciliation?.pendingAssets.length || !!view.version.reconciliation?.pendingFailureScopeKeys.length || !view.version.assets.length || !!view.version.suggestions?.some(s => s.status === "pending")} onClick={() => void run(() => submit("confirm"))}>确认文字设定</button>}
+      {view.permissions?.canConfirm && !isFormal && <button className="review-confirm" type="button" disabled={blocked || !reason.trim() || view.version.generationStatus !== "succeeded" || !!view.version.failures.length || !!view.version.reconciliation?.pendingAssets.length || !!view.version.reconciliation?.pendingFailureScopeKeys.length || !view.version.assets.length || !!view.version.suggestions?.some(s => s.status === "pending")} onClick={() => void run(() => submit("confirm"))}>确认文字设定</button>}
       {draft && isFormal && view.permissions?.canLock && <button type="button" disabled={blocked || !reason.trim()} onClick={() => void run(() => submit(locked ? "unlock" : "lock"))}>{locked ? "明确解锁当前设定" : "锁定当前设定"}</button>}
-      {view.version.suggestions?.map(s => <article key={s.id}><p>{s.value.name}</p><small>{s.reason} · {s.status} · {s.submittedBy}</small>
+      {view.version.suggestions?.map(s => <article className="review-suggestion" data-review-state={s.status} key={s.id}><p>{s.value.name}</p><span className="review-chip">{s.status === "accepted" ? "已采纳" : s.status === "rejected" ? "已驳回" : "待裁决"}</span><small>{s.reason} · 提交人 {s.submittedBy}</small>
         <details><summary>查看建议内容 {s.id}</summary><dl>{Object.entries(s.value.visibleDefinition).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}</dl>
           <p>当前状态：{s.value.state}</p><p>状态变化：{s.value.stateChanges.join("；") || "无"}</p><p>使用限制：{s.value.restrictions.join("；") || "无"}</p>
           <p>原文依据：{s.value.provenance.map(p => p.type === "source_fragment" ? view.sourceFragments.find(f => f.id === p.fragmentId)?.text ?? "原文不可用" : p.additionId).join("；")}</p>

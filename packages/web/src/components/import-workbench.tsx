@@ -258,7 +258,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
     if (target.projectId !== project?.id || target.chapterId !== chapter?.id) return;
     setImpactTarget(target);
     setMode("storyboard");
-  }}><main className={`app-shell mode-${mode} step-${step}`} data-trace-theme={showTraceDesk && chapter ? "studio" : undefined}>
+  }}><main className={`app-shell mode-${mode} step-${step}`} data-workbench-theme={step !== "login" && (mode === "review" || showTraceDesk && chapter) ? "studio" : undefined}>
     <header className="topbar">
       <a className="brand" href="#"><span className="seal">映</span><span><b>映卷</b><small>小说动态漫改编工作台</small></span></a>
       <nav className="modes" aria-label="工作模式">
@@ -327,6 +327,11 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
           onSwitchWorkspace={id => api.switchWorkspace(id).then(onWorkspaceChange)} onOpenChapter={openProjectChapter} />}
         {showTraceDesk && chapter && project && <VersionDesk key={JSON.stringify([project.id,chapter.id,chapter.activeSourceVersionId])} api={api} projectId={project.id} chapter={chapter} onReview={() => setMode("review")} canReimport={project?.role === "owner" || project?.role === "editor"} traceFragmentId={traceFragment?.projectId === project?.id && traceFragment?.chapterId === chapter.id
           && traceFragment?.sourceVersionId === chapter.activeSourceVersionId ? traceFragment?.fragmentId : undefined} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
+        {mode === "review" && taskReviewTarget && taskReviewTarget.project.id === project?.id && taskReviewTarget.chapter.id === chapter?.id
+          ? <StoryKnowledgeWorkbench key={`task-review:${taskReviewTarget.expectedVersionId}`} api={api} project={taskReviewTarget.project} chapter={taskReviewTarget.chapter}
+              expectedVersionId={taskReviewTarget.expectedVersionId} canManageStage={taskReviewTarget.project.role !== "editor"} cursor={reviewCursor}
+              onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
+          : mode !== "trace" && !(mode === "storyboard" && project && chapter) && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         {step !== "login" && notificationsOpen && <div className="desktop-notifications"><TaskNotifications api={api} /></div>}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} api={api} />
@@ -362,11 +367,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
         </Panel>}
 
 
-        {mode === "review" && taskReviewTarget && taskReviewTarget.project.id === project?.id && taskReviewTarget.chapter.id === chapter?.id
-          ? <StoryKnowledgeWorkbench key={`task-review:${taskReviewTarget.expectedVersionId}`} api={api} project={taskReviewTarget.project} chapter={taskReviewTarget.chapter}
-              expectedVersionId={taskReviewTarget.expectedVersionId} canManageStage={taskReviewTarget.project.role !== "editor"} cursor={reviewCursor}
-              onCursorChange={setReviewCursor} onNotice={setNotice} onConfirmationChange={confirmed => syncStoryKnowledgeConfirmation(taskReviewTarget.chapter.id, confirmed)} />
-          : mode !== "trace" && !(mode === "storyboard" && project && chapter) && <ModeWorkspace mode={mode} project={project} chapter={chapter} api={api} storyKnowledgeConfirmed={confirmedStoryKnowledgeChapterId === chapter?.id} reviewCursor={reviewCursor} onReviewCursorChange={setReviewCursor} onStoryKnowledgeConfirmationChange={syncStoryKnowledgeConfirmation} onNotice={setNotice} onReturnToTrace={() => setMode("trace")} />}
+
         {project && chapter && <div hidden={mode !== "storyboard"}>
           <StoryboardWorkbench key={JSON.stringify([project.id,chapter.id])} api={api} projectId={project.id} chapterId={chapter.id} active={mode === "storyboard"} canReadAudit={project.role === "owner" || project.role === "reviewer"} impactTarget={impactTarget} onImpactHandled={setImpactTarget}
             initialPublication={auditPublication?.version.projectId === project.id && auditPublication.version.chapterId === chapter.id ? auditPublication : null}
