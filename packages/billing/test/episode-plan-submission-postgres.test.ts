@@ -325,23 +325,38 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       await assert.rejects(deliveryPool.query('delete from episode_alert_deliveries'),{code:'42501'});
     } finally { await deliveryPool.end(); }
     let workerSendCount=0;
-    for (const phase of ['initial start','restart']) {
+    const workerPhases=[
+      {name:'initial start',taskId:'hidden',status:'delivered',attempts:1,calls:1},
+      {name:'restart after delivery',taskId:'hidden',status:'delivered',attempts:1,calls:1},
+      {name:'rate limited',taskId:'rate-limited',status:'retryable',attempts:1,calls:2},
+      {name:'restart before retry',taskId:'rate-limited',status:'retryable',attempts:1,calls:2},
+      {name:'restart after retry due',taskId:'rate-limited',status:'delivered',attempts:2,calls:3},
+    ];
+    for (const phase of workerPhases) {
+      if (phase.name==='rate limited') {
+        await admin.query("insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('other','rate-limited','EXECUTION_UNKNOWN')");
+      }
+      if (phase.name==='restart after retry due') {
+        await admin.query("update episode_alert_deliveries set retry_at=clock_timestamp() - interval '1 second' where workspace_id='other' and task_id='rate-limited'");
+      }
       const workerPool=new Pool({connectionString:url.href,max:1});
       const worker=createEpisodeFeishuAlertWorker({
         pool:workerPool,workspaceIds:['other'],enabled:true,
         send:async ()=>{
           workerSendCount++;
-          return 'delivered';
+          return workerSendCount===2?'retryable':'delivered';
         },
       });
       const running=worker.start();
       try {
         for (let attempt=0; attempt<100 && worker.status().backoffMs===0; attempt++) await delay(20);
-        assert.ok(worker.status().lastScanAt,phase);
-        assert.equal(worker.status().lastError,null,phase);
-        assert.equal(workerSendCount,1,phase);
-        const {rows}=await admin.query("select status,attempts from episode_alert_deliveries where workspace_id='other' and task_id='hidden'");
-        assert.deepEqual(rows,[{status:'delivered',attempts:1}],phase);
+        assert.ok(worker.status().lastScanAt,phase.name);
+        assert.equal(worker.status().lastError,null,phase.name);
+        assert.equal(workerSendCount,phase.calls,phase.name);
+        const {rows}=await admin.query(
+          "select status,attempts,coalesce(retry_at>clock_timestamp(),false) as waiting from episode_alert_deliveries where workspace_id='other' and task_id=$1",
+          [phase.taskId]);
+        assert.deepEqual(rows,[{status:phase.status,attempts:phase.attempts,waiting:phase.status==='retryable'}],phase.name);
       } finally {
         try { await worker.stop(); await running; }
         finally { await workerPool.end(); }
