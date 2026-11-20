@@ -72,4 +72,5 @@ WHERE a.workspace_id = 'local-feishu-test'
 
 - 无查询结果时，先核对工作室与任务 ID，再检查对账流程是否已生成告警。有告警且 `status` 为空时，检查飞书 Worker 是否运行、工作室配置是否匹配。
 - `delivered` 表示飞书接口确认送达，可按任务 ID 在群里核对。`retryable` 会在 `retry_at` 到期后重试，最多尝试 5 次。
-- `unknown` 表示投递结果未确认。先查群消息，Worker 不会自动重试。`rejected` 或 `exhausted` 时，检查 Webhook 配置和飞书机器人返回结果。
+- Worker 会在发送请求前提交 `unknown` 记录。进程可能在提交后、发送前退出，也可能在请求发出后未收到确认。因此，仅凭 `unknown` 和 `attempts` 无法确认请求是否已发出或告警是否已送达。先按任务 ID 和告警码核对飞书群消息，再结合 Worker 运行记录排查。Worker 重启后也不会自动补发这条告警。
+- `rejected` 或 `exhausted` 时，检查 Webhook 配置和飞书机器人返回结果。
