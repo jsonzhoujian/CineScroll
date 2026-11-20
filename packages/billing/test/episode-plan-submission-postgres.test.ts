@@ -6,6 +6,7 @@ import { CreditLedgerService } from '../src/index.ts';
 import { PostgresCreditLedgerRepository } from '../src/postgres-ledger.ts';
 import { ModelTaskService } from '../../script/src/model-tasks.ts';
 import { InMemoryModelSettingsRepository, WorkspaceModelSettings } from '../../script/src/model-settings.ts';
+import { EpisodeOutboxConsumer } from '../../api/src/episode-outbox-consumer.ts';
 import { createEpisodeSubmissionRepository } from '../../api/src/episode-submission.ts';
 
 test('拆集请求同事务保存任务、冻结额度及 Outbox', {
@@ -18,16 +19,18 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
   assert.equal(url.password,'');
   const admin=new Pool({connectionString:url.href,max:1});
   let pool: Pool | undefined;
+  let workerPool: Pool | undefined;
   try {
     assert.equal((await admin.query('show data_directory')).rows[0].data_directory,`${socket}/data`);
     assert.equal((await admin.query('show listen_addresses')).rows[0].listen_addresses,'');
-    await admin.query('create role novel_app nologin; create role episode_submission login');
+    await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login');
     for (const file of ['../migrations/0001_credit_ledger.sql','../../script/migrations/0003_model_tasks.sql',
       '../../script/migrations/0004_model_task_results.sql','../../script/migrations/0005_model_task_recovery.sql',
-      '../migrations/0003_episode_submission_outbox.sql']) {
+      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
     await admin.query('grant novel_app,novel_billing,novel_episode_submission to episode_submission');
+    await admin.query('grant novel_episode_outbox_consumer to episode_outbox_worker');
     url.username='episode_submission';
     pool=new Pool({connectionString:url.href,max:3});
     const actor={workspaceId:'studio',userId:'owner'};
@@ -94,7 +97,42 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     assert.deepEqual(await counts(),{tasks:2,ledger_versions:3,outbox:2});
     assert.deepEqual(await submit('byok-request','byok'),byok);
     assert.deepEqual(await counts(),{tasks:2,ledger_versions:3,outbox:2});
+
+    url.username='episode_outbox_worker';
+    workerPool=new Pool({connectionString:url.href,max:3});
+    const consumer=new EpisodeOutboxConsumer(workerPool,['studio']);
+    const delivered: string[]=[];
+    const dispatch=async ({taskId}: {taskId:string})=>{delivered.push(taskId);};
+    await assert.rejects(consumer.tick('different',dispatch),{message:'FORBIDDEN'});
+    let interruptedTask: string | undefined;
+    assert.equal(await consumer.tick('studio',async ({taskId})=>{
+      interruptedTask=taskId;
+      throw new Error('simulated failure after dispatch');
+    }),false);
+    assert.ok(interruptedTask);
+    await Promise.all([consumer.tick('studio',dispatch),consumer.tick('studio',dispatch)]);
+    assert.equal(delivered.length,1);
+    assert.equal(await consumer.tick('studio',dispatch),false);
+    await admin.query(`update episode_submission_outbox set lease_until=clock_timestamp()-interval '1 second'
+      where dispatched_at is null`);
+    const stale=await consumer.claim('studio');
+    assert.ok(stale);
+    await admin.query(`update episode_submission_outbox set lease_until=clock_timestamp()-interval '1 second'
+      where dispatched_at is null`);
+    assert.equal(await consumer.tick('studio',async item=>{
+      assert.equal(item.taskId,interruptedTask);
+      assert.equal(await consumer.acknowledge(stale),false);
+      await dispatch(item);
+    }),true);
+    assert.equal(await consumer.acknowledge(stale),false);
+    assert.equal(await consumer.tick('studio',dispatch),false);
+    assert.deepEqual(new Set(delivered),new Set([first.id,byok.id]));
+    assert.equal(delivered.length,2);
+    assert.deepEqual((await workerPool.query('select task_id from episode_submission_outbox')).rows,[]);
+    await assert.rejects(workerPool.query('select * from model_tasks'),{code:'42501'});
+    await assert.rejects(workerPool.query('delete from episode_submission_outbox'),{code:'42501'});
   } finally {
+    await workerPool?.end();
     await pool?.end();
     await admin.end();
   }
