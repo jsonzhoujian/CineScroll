@@ -1,4 +1,5 @@
 import type { Pool,PoolClient } from "pg";
+import { validateTaskPage,type TaskPageRequest } from "@novel-adaptation/script/model-tasks";
 
 export type EpisodeExecutionEvent =
   | {kind:"dispatch_started" | "not_sent" | "invalid_response" | "unknown"}
@@ -18,6 +19,22 @@ export class PostgresEpisodeExecutionJournal implements EpisodeExecutionJournal 
       `,[workspaceId,taskId]);
       return result.rows.map(row=>row.kind==="completed"
         ? {kind:row.kind,candidateId:row.candidate_id} : {kind:row.kind});
+    });
+  }
+  async scanSettlementTasks(workspaceId:string,page:TaskPageRequest) {
+    validateTaskPage(page);
+    return this.#transaction(workspaceId,async client=>{
+      const result=await client.query<{id:string}>(`
+        select t.id from public.model_tasks t
+        where t.workspace_id=$1 and ($2::text is null or t.id collate "C">$2)
+          and t.payload->>'dispatchOwner'='outbox' and t.payload#>>'{input,resultType}'='episodePlan'
+          and (t.state in ('succeeded','failed','paused') or (t.state='running' and exists(
+            select 1 from public.episode_execution_events e
+            where e.workspace_id=t.workspace_id and e.task_id=t.id and e.kind='unknown')))
+        order by t.id collate "C" limit $3
+      `,[workspaceId,page.cursor,page.limit+1]);
+      const taskIds=result.rows.slice(0,page.limit).map(row=>row.id);
+      return {taskIds,nextCursor:result.rows.length>page.limit ? taskIds.at(-1)! : null};
     });
   }
   async record(workspaceId:string,taskId:string,event:EpisodeExecutionEvent):Promise<void> {
