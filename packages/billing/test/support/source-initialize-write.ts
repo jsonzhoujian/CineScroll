@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Client, type Pool } from 'pg';
+import { createIsolatedInitializer, InitializeCommitUnknown } from './source-initialize-transaction.ts';
+import { createIsolatedSourceBusinessLoader } from './source-business-loader.ts';
+import { sourceBusinessFixture } from './source-business-fixture.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const schema = 'source_ingest_d1b_fixture_v1';
@@ -44,6 +47,48 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
       assert.deepEqual(await read(),original);
     } finally {
       await admin.query(`alter table ${schema}.ingest_receipt drop constraint test_reject_receipt`);
+    }
+
+    async function interruptedCommit(commitOnServer: boolean, input: object) {
+      let attempts=0;
+      let discarded=false;
+      let terminated=false;
+      let committedReceipt: unknown;
+      const initializer=createIsolatedInitializer({
+        async connect() {
+          const connection=await runtime.connect();
+          if (++attempts>1) return connection;
+          return {
+            async query(sql: string, values?: unknown[]) {
+              if (sql==='commit') {
+                const pid=(await connection.query('select pg_backend_pid() pid')).rows[0].pid;
+                if (commitOnServer) await connection.query(sql);
+                connection.on('error',()=>{});
+                terminated=(await admin.query('select pg_terminate_backend($1,2000) stopped',[pid])).rows[0].stopped===true;
+                throw new Error('test connection terminated during COMMIT');
+              }
+              const result=await connection.query(sql,values);
+              if (values) committedReceipt=result.rows[0]?.receipt;
+              return result;
+            },
+            release(destroy?: boolean) {
+              discarded=destroy===true;
+              connection.release(destroy);
+            },
+          };
+        },
+      },'init-collector','rule-v1');
+      let unknown: InitializeCommitUnknown | undefined;
+      await assert.rejects(initializer.initializeSourceCollection(input), error => {
+        if (!(error instanceof InitializeCommitUnknown)) return false;
+        unknown=error;
+        return error.message==='UNAVAILABLE';
+      });
+      assert.equal(attempts,1);
+      assert.equal(discarded,true);
+      assert.equal(terminated,true);
+      assert.ok(committedReceipt);
+      return {unknown:unknown!,committedReceipt,retryCount:()=>attempts};
     }
 
     const client = await runtime.connect();
@@ -113,6 +158,31 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
     } finally {
       try { await client.query('rollback'); } finally { client.release(); }
     }
+    const recoveryWorkspace='recovery';
+    const fixture=sourceBusinessFixture();
+    fixture.tasks[0].binding.workspaceId=recoveryWorkspace;
+    await createIsolatedSourceBusinessLoader(admin,{workspaceId:recoveryWorkspace,allowedProducerServiceIds:['producer']}).load(fixture);
+    for (const workspace of [recoveryWorkspace,'parallel']) {
+      await admin.query(`select ${schema}.prepare_test_access($1,'init-collector',$2,true,true,true,array['task'],array['producer'],array['init-collector'])`,[login,workspace]);
+    }
+    const recoveryState=async (workspace: string)=>(await admin.query(`select receipt_count,source_count,
+      (select count(*)::int from ${schema}.ingest_receipt where workspace_id=$1) receipts
+      from ${schema}.workspace_budget where workspace_id=$1`,[workspace])).rows[0];
+
+    const rolledBack=await interruptedCommit(false,{...command,workspaceId:recoveryWorkspace});
+    assert.deepEqual(await recoveryState(recoveryWorkspace),{receipt_count:0,source_count:0,receipts:0});
+    const recovered=await rolledBack.unknown.retry();
+    assert.equal(rolledBack.retryCount(),2);
+    assert.notDeepEqual(recovered,rolledBack.committedReceipt);
+    assert.deepEqual(await recoveryState(recoveryWorkspace),{receipt_count:1,source_count:2,receipts:1});
+
+    const parallel={...command,workspaceId:'parallel'};
+    const missingResponse=await interruptedCommit(true,parallel);
+    parallel.workspaceId='changed-after-first-attempt';
+    assert.deepEqual(await missingResponse.unknown.retry(),missingResponse.committedReceipt);
+    assert.equal(missingResponse.retryCount(),2);
+    assert.deepEqual(await recoveryState('parallel'),{receipt_count:1,source_count:2,receipts:1});
+
   } finally {
     await admin.query('rollback');
     if (installed) {
