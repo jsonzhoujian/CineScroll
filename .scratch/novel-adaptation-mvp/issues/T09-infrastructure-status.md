@@ -14,7 +14,7 @@
 
 ## 当前基础设施前沿
 
-[只读权限前置](../../../docs/plans/2026-10-09-source-initialize-access-precursor.md)已补齐权限配置指纹和漂移验收。下一切片为受控同事务写入口。
+[只读权限前置](../../../docs/plans/2026-10-09-source-initialize-access-precursor.md)已补齐权限配置指纹和漂移验收。已冻结首笔初始化的八份 SQL 写入材料和计费字节数。下一切片接入真实服务的受控同事务写入口。
 
 2026-11-20 已执行本地计费、API 和剧本回归。测试结果及下一验收切片见 [T09 验收基线](../../../docs/plans/2026-11-20-t09-acceptance-baseline.md)。
 

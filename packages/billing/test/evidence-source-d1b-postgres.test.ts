@@ -12,6 +12,7 @@ import { createIsolatedSourceBusinessAssembly } from "./support/source-business-
 import { assertIsolatedCombinedSourceDatabase } from "./support/source-combined-readiness.ts";
 import { assertIsolatedCodecDatabase } from "./support/source-codec-readiness.ts";
 import { testPrivateVerification } from './support/source-private-postgres.ts';
+import { buildInitializeVectors } from './support/source-initialize-vectors.ts';
 import { testInitializeAccess } from './support/source-initialize-access.ts';
 
 const schema = "source_ingest_d1b_fixture_v1";
@@ -537,6 +538,38 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
     });
     await t.test('independent private verifier isolated acceptance',async child=>{
       await testPrivateVerification(child,setup!,inspector!,url);
+    });
+    await t.test('initialize write material matches all fixed initial rows and byte costs',async()=>{
+      const vectors=buildInitializeVectors();
+      const values=Object.fromEntries(vectors.vectors.map(vector=>[vector.name,JSON.parse(vector.canonical)]));
+      const draft=await readFile(new URL('../../../docs/sql-drafts/evidence-source-d1b-initialize-material.sql',import.meta.url),'utf8');
+      await setup!.query(draft);
+      try {
+        const {identity,taskSource,snapshotSource,taskLink,snapshotLink,collectionBase,receipt}=values;
+        const proof={
+          verifiedByServiceId:identity.serviceId,binding:collectionBase.binding,ruleVersion:vectors.ruleVersion,
+          taskSource:{id:taskSource.id,version:taskSource.version,payload:taskSource.payload,
+            canonicalHex:taskSource.canonical,payloadFingerprint:taskSource.payload_fingerprint,
+            businessFingerprint:taskLink.business_fingerprint,producerServiceId:taskSource.producer_service_id,recordedAt:taskSource.recorded_at},
+          snapshotSource:{id:snapshotSource.id,version:snapshotSource.version,payload:snapshotSource.payload,
+            canonicalHex:snapshotSource.canonical,payloadFingerprint:snapshotSource.payload_fingerprint,
+            businessFingerprint:snapshotLink.business_fingerprint,producerServiceId:snapshotSource.producer_service_id,recordedAt:snapshotSource.recorded_at},
+          executionReference:identity.executionReference,executionFingerprint:collectionBase.execution_fingerprint,
+          quoteReference:{id:collectionBase.quote_record_id,version:collectionBase.quote_record_version},
+          quoteFingerprint:collectionBase.quote_fingerprint,
+        };
+        const sql='select source_ingest_d1b_initialize_material_v1.prepare($1,$2,$3,$4) as material';
+        const {operation: _operation,serviceId: _serviceId,...command}=identity;
+        const args=[command,proof,receipt.collectionId,receipt.committedAt];
+        const {material}=(await setup!.query(sql,args)).rows[0];
+        const {packageBytes,receiptCost}=vectors.budget;
+        const names=['collectionBase','taskSource','snapshotSource','taskLink','snapshotLink','receiptBase','member0','member1'];
+        assert.deepEqual(material,{...Object.fromEntries(names.map(name=>[name,values[name]])),packageBytes,receiptCost});
+        await assert.rejects(setup!.query(sql,[{...command,taskReference:command.snapshotReference},...args.slice(1)]),{message:'INTEGRITY_CONFLICT'});
+        await assert.rejects(inspector!.query(sql,args),{code:'42501'});
+      }finally{
+        await setup!.query('drop schema source_ingest_d1b_initialize_material_v1 cascade');
+      }
     });
     await t.test('isolated non-bypass initializer permission precursor',async child=>{
       await testInitializeAccess(child,setup!,inspector!,url);
