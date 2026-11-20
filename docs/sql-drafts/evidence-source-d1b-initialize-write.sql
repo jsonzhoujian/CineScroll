@@ -1,4 +1,4 @@
--- First initialization only, in the disposable PG16 fixture.
+-- First initialization and historical replay, in the disposable PG16 fixture.
 begin;
 do $guard$ begin
   if not (select rolsuper from pg_roles where rolname=session_user)
@@ -102,6 +102,77 @@ create policy initialize_insert on source_ingest_d1b_fixture_v1.workspace_budget
   using (source_ingest_d1b_initialize_write_v1.can_initialize_workspace(workspace_id))
   with check (source_ingest_d1b_initialize_write_v1.can_initialize_workspace(workspace_id));
 
+-- Read only committed initialization evidence. The shared key lookup must see
+-- all producers in an authorized workspace so a different producer conflicts.
+grant select on source_ingest_d1b_fixture_v1.ingest_receipt,
+  source_ingest_d1b_fixture_v1.receipt_source_member to novel_d1b_initializer;
+grant select(workspace_id,collection_id,kind,id,version,payload_fingerprint,canonical,payload)
+  on source_ingest_d1b_fixture_v1.source_version to novel_d1b_initializer;
+grant select(workspace_id,collection_id,kind,id,version,payload_fingerprint)
+  on source_ingest_d1b_fixture_v1.task_source_link,source_ingest_d1b_fixture_v1.snapshot_source_link
+  to novel_d1b_initializer;
+
+do $policies$
+declare target text;
+begin
+  foreach target in array array['ingest_receipt','receipt_source_member','source_version',
+    'task_source_link','snapshot_source_link'] loop
+    execute format('create policy initialize_replay on source_ingest_d1b_fixture_v1.%I
+      for select to novel_d1b_initializer using
+      (source_ingest_d1b_initialize_write_v1.can_initialize_workspace(workspace_id))',target);
+  end loop;
+end $policies$;
+
+create function source_ingest_d1b_initialize_write_v1.replay_initialize(
+  identity jsonb, identity_bytes bytea
+) returns jsonb language plpgsql volatile security invoker set search_path=pg_catalog,pg_temp as $body$
+declare
+  stored source_ingest_d1b_fixture_v1.ingest_receipt%rowtype;
+  reference_list jsonb;
+  expected_receipt jsonb;
+  digest text := encode(sha256(identity_bytes),'hex');
+begin
+  select * into stored from source_ingest_d1b_fixture_v1.ingest_receipt
+    where workspace_id=identity->>'workspaceId' and ingest_id=identity->>'ingestId';
+  if not found then return null; end if;
+  if stored.command_fingerprint is distinct from digest then raise exception 'CONFLICT'; end if;
+  if stored.command is distinct from identity or stored.command_canonical is distinct from identity_bytes
+    or stored.unit_id is distinct from identity->>'unitId' or stored.operation<>'initialize'
+    or stored.producer_service_id is distinct from identity->>'serviceId'
+    then raise exception 'INTEGRITY_CONFLICT'; end if;
+
+  select jsonb_agg(jsonb_build_object('kind',m.kind,'id',m.id,'version',m.version,
+    'payloadFingerprint',m.payload_fingerprint) order by m.ordinal) into reference_list
+  from source_ingest_d1b_fixture_v1.receipt_source_member m
+  join source_ingest_d1b_fixture_v1.source_version s
+    using(workspace_id,collection_id,kind,id,version,payload_fingerprint)
+  where m.workspace_id=stored.workspace_id and m.ingest_id=stored.ingest_id and m.collection_id=stored.collection_id
+    and source_ingest_d1b_fixture_v1.valid_document(s.payload,s.canonical,s.payload_fingerprint)
+    and ((m.ordinal=0 and m.kind='task' and jsonb_build_object('id',m.id,'version',m.version)=identity->'taskReference'
+      and exists(select 1 from source_ingest_d1b_fixture_v1.task_source_link t
+        where (t.workspace_id,t.collection_id,t.kind,t.id,t.version,t.payload_fingerprint)
+          =(m.workspace_id,m.collection_id,m.kind,m.id,m.version,m.payload_fingerprint)))
+      or (m.ordinal=1 and m.kind='snapshot' and jsonb_build_object('id',m.id,'version',m.version)=identity->'snapshotReference'
+      and exists(select 1 from source_ingest_d1b_fixture_v1.snapshot_source_link t
+        where (t.workspace_id,t.collection_id,t.kind,t.id,t.version,t.payload_fingerprint)
+          =(m.workspace_id,m.collection_id,m.kind,m.id,m.version,m.payload_fingerprint))));
+  if jsonb_array_length(reference_list) is distinct from 2 then raise exception 'INTEGRITY_CONFLICT'; end if;
+
+  expected_receipt := jsonb_build_object('protocolVersion',stored.protocol_version,'workspaceId',stored.workspace_id,
+    'ingestId',stored.ingest_id,'operation',stored.operation,'producerServiceId',stored.producer_service_id,
+    'commandFingerprint',digest,'collectionId',stored.collection_id,'unitId',stored.unit_id,
+    'generationAtCommit',stored.generation_at_commit,'headRevisionAtCommit',stored.head_revision_at_commit,
+    'status',stored.status,'sourceReferences',reference_list,
+    'committedAt',source_ingest_d1b_codec_v1.utc_millis(stored.committed_at));
+  if stored.receipt is distinct from expected_receipt
+    or stored.receipt_canonical is distinct from source_ingest_d1b_codec_v1.encode_document('receipt',expected_receipt)
+    or stored.receipt_fingerprint is distinct from encode(sha256(stored.receipt_canonical),'hex')
+    then raise exception 'INTEGRITY_CONFLICT'; end if;
+  return stored.receipt;
+end $body$;
+revoke all on function source_ingest_d1b_initialize_write_v1.replay_initialize(jsonb,bytea) from public;
+grant execute on function source_ingest_d1b_initialize_write_v1.replay_initialize(jsonb,bytea) to novel_d1b_initializer;
+
 create function source_ingest_d1b_initialize_write_v1.initialize_source_collection(
   command jsonb, expected_service text, expected_rule text
 ) returns jsonb
@@ -109,6 +180,9 @@ language plpgsql volatile security definer set search_path=pg_catalog,pg_temp as
 declare
   ws text := command->>'workspaceId';
   permitted jsonb;
+  identity jsonb;
+  identity_bytes bytea;
+  replayed jsonb;
   proof jsonb;
   material jsonb;
   package_bytes bigint;
@@ -119,9 +193,17 @@ begin
   permitted := source_ingest_d1b_fixture_v1.lock_authorization(ws,'initialize',null);
   if permitted->>'serviceId' is distinct from expected_service
     then raise exception 'FORBIDDEN' using errcode='42501'; end if;
+  if command ?| array['operation','serviceId'] then raise exception 'INVALID_COMMAND'; end if;
+  identity := command || jsonb_build_object('operation','initialize','serviceId',permitted->>'serviceId');
+  identity_bytes := source_ingest_d1b_codec_v1.encode_document('identity',identity);
+  replayed := source_ingest_d1b_initialize_write_v1.replay_initialize(identity,identity_bytes);
+  if replayed is not null then return replayed; end if;
   perform workspace_id from source_ingest_d1b_fixture_v1.workspace_budget
     where workspace_id=ws for update;
   if not found then raise exception 'NOT_FOUND'; end if;
+  -- A concurrent first write may have committed while this call waited on the budget row.
+  replayed := source_ingest_d1b_initialize_write_v1.replay_initialize(identity,identity_bytes);
+  if replayed is not null then return replayed; end if;
 
   proof := source_ingest_d1b_verify_v1.verify_initialize_business(command,expected_service,expected_rule);
   material := source_ingest_d1b_initialize_material_v1.prepare(command,proof,gen_random_uuid()::text,
@@ -163,8 +245,9 @@ exception
   when insufficient_privilege then raise exception 'FORBIDDEN' using errcode='42501';
   when unique_violation then raise exception 'CONFLICT';
   when raise_exception then
+    if sqlerrm='INVALID_CODEC_INPUT' then raise exception 'INVALID_COMMAND'; end if;
     if sqlerrm='CODEC_CAPACITY' then raise exception 'CAPACITY'; end if;
-    if sqlerrm in ('INVALID_COMMAND','NOT_FOUND','INTEGRITY_CONFLICT','CAPACITY','UNAVAILABLE') then raise; end if;
+    if sqlerrm in ('INVALID_COMMAND','CONFLICT','NOT_FOUND','INTEGRITY_CONFLICT','CAPACITY','UNAVAILABLE') then raise; end if;
     raise exception 'UNAVAILABLE';
   when query_canceled or others then raise exception 'UNAVAILABLE';
 end $body$;

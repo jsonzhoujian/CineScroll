@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import type { Pool } from 'pg';
+import { Client, type Pool } from 'pg';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const schema = 'source_ingest_d1b_fixture_v1';
 const writer = 'source_ingest_d1b_initialize_write_v1';
@@ -52,7 +53,33 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
       assert.equal(receipt.status,'initialized');
       assert.deepEqual(receipt.sourceReferences.map((reference: {kind: string})=>reference.kind),['task','snapshot']);
       assert.deepEqual(await read(),original);
-      await client.query('commit');
+      const contender = new Client(runtime.options);
+      await contender.connect();
+      try {
+        const leaderPid = (await client.query('select pg_backend_pid() pid')).rows[0].pid;
+        const contenderPid = (await contender.query('select pg_backend_pid() pid')).rows[0].pid;
+        const waiting = contender.query(invoke,[command,'init-collector']).then(
+          result => ({result}), error => ({error}));
+        try {
+          let blocked = false;
+          for (let attempt=0; attempt<100 && !blocked; attempt++) {
+            blocked = (await admin.query('select $1::int=any(pg_blocking_pids($2)) blocked',
+              [leaderPid,contenderPid])).rows[0].blocked;
+            if (!blocked) await delay(10);
+          }
+          assert.equal(blocked,true,'retry must wait for the first transaction');
+          assert.deepEqual(await read(),original);
+          await client.query('commit');
+          const outcome = await waiting;
+          if ('error' in outcome) throw outcome.error;
+          assert.deepEqual(outcome.result.rows[0].receipt,receipt);
+        } finally {
+          await client.query('rollback');
+          await waiting;
+        }
+      } finally {
+        await contender.end();
+      }
       const stored = await read();
       assert.deepEqual(stored.counts,[1,2,1,1,1,2]);
       assert.equal(stored.receipt_count,original.receipt_count+1);
@@ -65,7 +92,23 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
       assert.deepEqual(persisted.receipt,receipt);
       assert.equal(Number(stored.source_bytes)-Number(original.source_bytes),Number(persisted.package_bytes));
       assert.equal(Number(stored.receipt_bytes)-Number(original.receipt_bytes),persisted.accounted_bytes);
-      await assert.rejects(client.query(invoke,[command,'init-collector']),{message:'CONFLICT'});
+      const budgetLock = await admin.connect();
+      try {
+        await budgetLock.query('begin');
+        await budgetLock.query(`select workspace_id from ${schema}.workspace_budget where workspace_id='studio' for update`);
+        await client.query("set lock_timeout='250ms'");
+        assert.deepEqual((await client.query(invoke,[command,'init-collector'])).rows[0].receipt,receipt);
+      } finally {
+        try { await budgetLock.query('rollback'); } finally { budgetLock.release(); }
+      }
+      await assert.rejects(client.query(invoke,[{...command,unitId:'changed-unit'},'init-collector']),{message:'CONFLICT'});
+      await assert.rejects(client.query(invoke,[command,'init-hidden']),{code:'42501',message:'FORBIDDEN'});
+      await admin.query(`select ${schema}.set_test_grant_enabled('studio','init-collector',3,false)`);
+      try {
+        await assert.rejects(client.query(invoke,[command,'init-collector']),{code:'42501',message:'FORBIDDEN'});
+      } finally {
+        await admin.query(`select ${schema}.set_test_grant_enabled('studio','init-collector',4,true)`);
+      }
       assert.deepEqual(await read(),stored);
     } finally {
       try { await client.query('rollback'); } finally { client.release(); }
@@ -75,6 +118,9 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
     if (installed) {
       for (const table of tables) {
         await admin.query(`drop policy initialize_insert on ${schema}.${table}`);
+      }
+      for (const table of ['ingest_receipt','receipt_source_member','source_version','task_source_link','snapshot_source_link']) {
+        await admin.query(`drop policy initialize_replay on ${schema}.${table}`);
       }
       for (const {definition} of guards.rows) await admin.query(definition);
       await admin.query(`drop schema ${writer} cascade`);
