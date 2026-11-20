@@ -1,7 +1,9 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Pool } from 'pg';
+import { createEpisodeReconciliationWorker } from "../../api/src/episode-reconciliation-worker.ts";
 import { createEpisodeReconciliation } from "../../api/src/episode-reconciliation.ts";
 import { createEpisodeEvidencePublisher } from "../../api/src/episode-evidence-publisher.ts";
 import type { EpisodePlanVersion } from "../../script/src/index.ts";
@@ -27,13 +29,14 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
   const admin=new Pool({connectionString:url.href,max:1});
   let pool: Pool | undefined;
   let workerPool: Pool | undefined;
+  let reconciliationPool: Pool | undefined;
   try {
     assert.equal((await admin.query('show data_directory')).rows[0].data_directory,`${socket}/data`);
     assert.equal((await admin.query('show listen_addresses')).rows[0].listen_addresses,'');
-    await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login');
+    await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login; create role episode_reconciliation_worker login');
     for (const file of ['../migrations/0001_credit_ledger.sql','../migrations/0002_evidence_material.sql','../../script/migrations/0003_model_tasks.sql',
       '../../script/migrations/0004_model_task_results.sql','../../script/migrations/0005_model_task_recovery.sql',
-      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql']) {
+      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql','../migrations/0006_episode_reconciliation.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
     await admin.query('grant novel_app,novel_billing,novel_evidence,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
@@ -249,10 +252,59 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     await assert.rejects(unreported('studio',{limit:50,cursor:null}),{message:'alert unavailable'});
     await resumed('studio',{limit:50,cursor:null});
     assert.deepEqual(await ledger.entries(billingActor),entriesAfter);
+    await admin.query('grant novel_episode_reconciliation to episode_reconciliation_worker');
+    url.username='episode_reconciliation_worker';
+    reconciliationPool=new Pool({connectionString:url.href,max:2});
+    const workerOptions={...publisherOptions,pool:reconciliationPool,pageSize:1};
+    const initialWorker=createEpisodeReconciliationWorker(workerOptions);
+    assert.equal(initialWorker.worker.status().enabled,false);
+    await initialWorker.worker.start();
+    const checkpoint=async ()=>(await admin.query("select cursor from episode_reconciliation_checkpoints where workspace_id='studio'")).rows[0];
+    assert.equal(await checkpoint(),undefined);
+    const initial=await initialWorker.tick('studio');
+    assert.equal(initial.items.length,1);
+    assert.equal((await checkpoint()).cursor,initial.nextCursor);
+    await initialWorker.worker.stop();
+
+    await admin.query('alter table episode_reconciliation_alerts add constraint fixture_alert_failure check(false) not valid');
+    const restarted=createEpisodeReconciliationWorker({...workerOptions,pageSize:50});
+    try {
+      await assert.rejects(restarted.tick('studio'),{message:'EPISODE_RECONCILIATION_STORE_UNAVAILABLE'});
+      assert.equal((await checkpoint()).cursor,initial.nextCursor);
+    } finally {
+      await admin.query('alter table episode_reconciliation_alerts drop constraint fixture_alert_failure');
+    }
+    const continued=await restarted.tick('studio');
+    assert.equal(continued.items.length,5);
+    assert.equal(continued.nextCursor,null);
+    const durableAlerts=async ()=>(await admin.query('select task_id,code from episode_reconciliation_alerts order by task_id,code')).rows;
+    const storedAlerts=await durableAlerts();
+    assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
+    await restarted.tick('studio');
+    assert.deepEqual(await durableAlerts(),storedAlerts);
+    const concurrent=await Promise.all([initialWorker.tick('studio'),initialWorker.tick('studio')]);
+    assert.equal(new Set(concurrent.map(page=>page.items[0]?.taskId)).size,2);
+    assert.ok((await checkpoint()).cursor);
+    const background=createEpisodeReconciliationWorker({...workerOptions,pageSize:50,enabled:true,intervalMs:100});
+    const running=background.worker.start();
+    try {
+      for (let attempt=0; attempt<50 && (await checkpoint()).cursor!==null; attempt++) await delay(20);
+      assert.equal((await checkpoint()).cursor,null);
+    } finally {
+      await background.worker.stop();
+      await running;
+    }
+    assert.deepEqual(await durableAlerts(),storedAlerts);
+    assert.deepEqual(await ledger.entries(billingActor),entriesAfter);
+    assert.deepEqual((await reconciliationPool.query('select workspace_id from episode_reconciliation_alerts')).rows,[]);
+    await assert.rejects(reconciliationPool.query('select * from credit_ledger_versions'),{code:'42501'});
+    await assert.rejects(reconciliationPool.query('delete from episode_reconciliation_alerts'),{code:'42501'});
+
     const events=await admin.query('select kind from episode_execution_events where task_id in ($1,$2) order by kind',[first.id,byok.id]);
     assert.deepEqual(events.rows.map(row=>row.kind),['dispatch_started','invalid_response','not_sent']);
     await assert.rejects(pool.query('delete from episode_execution_events'),{code:'42501'});
   } finally {
+    await reconciliationPool?.end();
     await workerPool?.end();
     await pool?.end();
     await admin.end();
