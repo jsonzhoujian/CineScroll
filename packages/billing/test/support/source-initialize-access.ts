@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import type { TestContext } from 'node:test';
 import { assertInitializeAccessProfile } from './source-initialize-access-profile.ts';
+import { testInitializeWrite } from './source-initialize-write.ts';
 import { Pool } from 'pg';
 import { assertIsolatedPrivateVerificationDatabase } from './source-private-readiness.ts';
 
@@ -126,6 +127,9 @@ export async function testInitializeAccess(t:TestContext,admin:Pool,inspector:Po
     });
     await t.test('old closed private profile rejects access extension instead of learning it',async()=>{
       await assert.rejects(assertIsolatedPrivateVerificationDatabase(inspector),{message:'PRIVATE_VERIFY_DATABASE_NOT_READY'});
+    });
+    await t.test('real LOGIN initializes atomically with rollback and commit visibility',async()=>{
+      await testInitializeWrite(admin,runtime!,login,command);
     });
   }finally{
     const failures:string[]=[];const cleanup=async(stage:string,action:()=>Promise<unknown>)=>{try{await action();}catch{failures.push(stage);}};
