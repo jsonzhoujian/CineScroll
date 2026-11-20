@@ -143,4 +143,8 @@ Outbox 迁移需在账本及 `model_tasks` 迁移之后执行。提交角色仅�
 
 私有 Nest 宿主可显式注册 `EpisodeReconciliationOpsModule.forDatabase(pool, services)`。池使用仅继承 `novel_episode_alert_reader` 的登录。服务配置包含服务 ID、工作室白名单及 256 位随机 Bearer 令牌文本的 SHA-256 十六进制摘要。请求使用 `GET /internal/workspaces/:workspaceId/episode-reconciliation-alerts`。分页参数为 `limit`、`cursorTaskId` 和 `cursorCode`，游标两项须成对传入。服务身份由认证摘要映射，错误响应净化。公开生产 API 不注册该模块。
 
-下一切片在通知渠道确定并获准后添加持久送达记录、失败重试和渠道级幂等。
+## 飞书机器人告警发送适配
+
+首个通知渠道采用飞书自定义机器人。发送适配从服务端配置接收 Webhook，只传工作室、任务 ID 和告警代码。模拟传输覆盖成功、限流、拒绝、响应异常和断连。断连或响应不明归为送达未知，等待核对。
+
+下一切片将发送结果写入持久送达记录。按工作室、任务、告警代码和渠道去重，仅对明确拒收的限流结果安排自动重试。Webhook 凭据由部署环境提供。
