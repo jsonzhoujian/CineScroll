@@ -64,6 +64,7 @@ import { EpisodePlanTaskApiModule } from "./episode-plan-task-api.ts";
 import { EpisodePlanTaskContext, EpisodePlanTaskExecutor } from "./episode-plan-task-executor.ts";
 import { EpisodePlanTaskDispatcher } from "./episode-plan-task-dispatcher.ts";
 import { createEpisodeSubmissionRepository } from "./episode-submission.ts";
+import { PostgresEpisodeExecutionJournal } from "./episode-execution-journal.ts";
 import { EpisodeOutboxConsumer } from "./episode-outbox-consumer.ts";
 import { EpisodeOutboxDispatcher } from "./episode-outbox-dispatcher.ts";
 import { CreditLedgerService } from "../../billing/src/index.ts";
@@ -364,6 +365,7 @@ export function createProductionApi(config: ProductionApiConfig, ports: { modelF
         episodeAdmission: { workspaceIds: taskConfig.workspaceIds,providerIds: ["deepseek"] },
         generationPolicy: new PostgresGenerationPolicyReader(restrictedPool),idGenerator: () => `job_${randomUUID()}` });
       const executor = new EpisodePlanTaskExecutor({ tasks,projects,knowledge,script,
+        ...(episodeOutboxPool ? {journal:new PostgresEpisodeExecutionJournal(episodeOutboxPool)} : {}),
         model: new DeepSeekEpisodePlanModel(ports.modelFetch ? { fetch: ports.modelFetch } : {}) });
       let outbox: EpisodeOutboxDispatcher | undefined;
       if (episodeOutboxPool) {

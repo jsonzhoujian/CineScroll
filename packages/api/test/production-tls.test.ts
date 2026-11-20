@@ -163,7 +163,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
       "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../../script/migrations/0043_storyboard_reconciliation_retains.sql", "../../script/migrations/0044_storyboard_reconciliation_revisions.sql", "../../script/migrations/0045_storyboard_regeneration_tasks.sql", "../../script/migrations/0046_storyboard_regeneration_adoption.sql", "../../script/migrations/0047_storyboard_reconciliation_confirmation.sql", "../../script/migrations/0048_storyboard_reconciliation_created_at.sql", "../migrations/0001_model_rate_limits.sql",
       "../migrations/0002_generation_rate_limits.sql", "../../billing/migrations/0001_credit_ledger.sql",
-      "../../billing/migrations/0003_episode_submission_outbox.sql", "../../billing/migrations/0004_episode_outbox_consumer.sql"]) {
+      "../../billing/migrations/0003_episode_submission_outbox.sql", "../../billing/migrations/0004_episode_outbox_consumer.sql", "../../billing/migrations/0005_episode_execution_events.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
     // Identifiers are generated locally from hex UUIDs, not supplied by users.
@@ -311,6 +311,9 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const state=await admin.query("select dispatched_at,lease_token from episode_submission_outbox where workspace_id=$1 and task_id=$2",[workspaceId,episodeTaskId]);
       assert.ok(state.rows[0]?.dispatched_at);
       assert.equal(state.rows[0]?.lease_token,null);
+      const events=await admin.query("select kind,candidate_id from episode_execution_events where workspace_id=$1 and task_id=$2 order by kind",
+        [workspaceId,episodeTaskId]);
+      assert.deepEqual(events.rows,[{kind:"completed",candidate_id:plan.body.plan.id},{kind:"dispatch_started",candidate_id:null}]);
       assert.equal(modelCalls,2);
     } finally {
       await both.close();
@@ -368,11 +371,16 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         [workspaceId,interruptedEpisodeId])).rows[0];
       assert.ok(outbox?.dispatched_at);
       assert.equal(outbox?.lease_token,null);
+      const events=await admin.query("select kind,candidate_id from episode_execution_events where workspace_id=$1 and task_id=$2",
+        [workspaceId,interruptedEpisodeId]);
+      assert.deepEqual(events.rows,[{kind:"unknown",candidate_id:null}]);
       assert.equal(modelCalls,2);
     } finally { await recoveredEpisode.close(); }
     // Uncertainty intentionally occupies the only execution slot. Remove this disposable fixture
     // before exercising unrelated stages under the original workspace quota.
-    await admin.query(`with removed as (
+    await admin.query(`with events as (
+      delete from episode_execution_events where workspace_id=$1 and task_id=$2
+    ), removed as (
       delete from episode_submission_outbox where workspace_id=$1 and task_id=$2 returning task_id
     ) delete from model_tasks where workspace_id=$1 and id in (select task_id from removed)`,[workspaceId,interruptedEpisodeId]);
 

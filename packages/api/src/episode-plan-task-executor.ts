@@ -5,10 +5,12 @@ import { ModelTaskError, TaskExecutionError, type ModelTaskContextReader, type M
 import { EpisodePlanRunner, EpisodePlanModelError, type EpisodePlanGenerationRequest } from "@novel-adaptation/script/episode-plan-runner";
 import { StoryKnowledgeError, type StoryKnowledgeService } from "@novel-adaptation/story-knowledge";
 
+import type { EpisodeExecutionJournal } from "./episode-execution-journal.ts";
+
 type Projects = Pick<ProjectImportRepository, "findProjectAccess" | "findProject" | "findChapter">;
 type Credentials = { apiKey: string; providerId: string; modelId: string; processingRegion: "mainland" };
 export interface CredentialedEpisodePlanModel {
-  generate(request: EpisodePlanGenerationRequest, credentials: Credentials): Promise<unknown>;
+  generate(request: EpisodePlanGenerationRequest, credentials: Credentials,beforeSend?:()=>Promise<void>): Promise<unknown>;
 }
 /** Reads authoritative generation prerequisites, never client-supplied content. */
 export class EpisodePlanTaskContext implements ModelTaskContextReader {
@@ -32,12 +34,12 @@ export class EpisodePlanTaskContext implements ModelTaskContextReader {
     } catch (error) { if (error instanceof StoryKnowledgeError && error.code === "STAGE_RESULT_NOT_FOUND") return null; throw error; }
   }
 }
-type Options = { tasks: ModelTaskService; projects: Projects; knowledge: StoryKnowledgeService; script: ScriptService; model: CredentialedEpisodePlanModel };
+type Options = { tasks: ModelTaskService; projects: Projects; knowledge: StoryKnowledgeService; script: ScriptService; model: CredentialedEpisodePlanModel; journal?: EpisodeExecutionJournal };
 export class EpisodePlanTaskExecutor {
   readonly #options: Options;
   constructor(options: Options) { this.#options = options; }
   async recover(actor: Actor, id: string) {
-    return this.#options.tasks.recover(actor,id,async task => {
+    const recovered=await this.#options.tasks.recover(actor,id,async task => {
       if (task.input.stage !== "script" || task.input.resultType !== "episodePlan") throw new ModelTaskError("TASK_NOT_FOUND");
       const candidate = await this.#options.script.getEpisodePlanGeneration(actor,task.projectId,task.chapterId,task.id);
       if (!candidate || candidate.sourceVersionId !== task.input.sourceVersionId || task.input.upstreamConfirmedVersionIds.length !== 1
@@ -46,13 +48,27 @@ export class EpisodePlanTaskExecutor {
         || candidate.aspectRatio !== task.input.generationParameters.aspectRatio || candidate.narrativeMode !== task.input.generationParameters.narrativeMode) return null;
       return { candidateVersionId: candidate.id, extractionStatus: "succeeded" };
     });
+    if (recovered.dispatchOwner==="outbox" && this.#options.journal) {
+      await this.#options.journal.record(actor.workspaceId,id,recovered.result
+        ? {kind:"completed",candidateId:recovered.result.candidateVersionId} : {kind:"unknown"});
+    }
+    return recovered;
   }
   async run(actor: Actor, id: string, signal?: AbortSignal) {
     const { tasks, projects, knowledge, script, model } = this.#options;
     const task = await tasks.get(actor,id);
     if (task.input.stage !== "script" || task.input.resultType !== "episodePlan") throw new ModelTaskError("TASK_NOT_FOUND");
+    const journal=task.dispatchOwner==="outbox" ? this.#options.journal : undefined;
     return tasks.run(actor,id,async credentials => {
       let guardedError: unknown;
+      let crossedBoundary=false;
+      let attemptedBoundary=false;
+      let transportEntered=false;
+      const beforeSend=journal ? async ()=>{
+        attemptedBoundary=true;
+        await journal.record(actor.workspaceId,id,{kind:"dispatch_started"});
+        crossedBoundary=true;
+      } : undefined;
       try {
         let expectedActiveVersionId: string | null = null;
         try {
@@ -82,14 +98,30 @@ export class EpisodePlanTaskExecutor {
             // No user core-event classifier exists yet: conservatively require every accepted event.
             confirmedUpstreamContent: bible.facts.map(({ id,factType,statement }) => ({ id,factType,statement,isCoreEvent: factType === "event" })), approvedAdditionIds: [], lockedItemIds: [] } };
         const runner = new EpisodePlanRunner({ script, model: { async generate(snapshot) {
-          const response = await model.generate(snapshot,{ apiKey: credentials.apiKey, providerId: credentials.providerId, modelId: credentials.modelId, processingRegion: credentials.processingRegion });
+          transportEntered=true;
+          const response = await model.generate(snapshot,{ apiKey: credentials.apiKey, providerId: credentials.providerId, modelId: credentials.modelId, processingRegion: credentials.processingRegion },beforeSend);
           try { await readUpstream(); } catch (error) { guardedError = error; throw error; }
           return response;
         } } });
         const candidate = await runner.run(actor,request,expectedActiveVersionId);
+        if (journal) {
+          if (!crossedBoundary) throw new TaskExecutionError("EXECUTION_UNCERTAIN");
+          await journal.record(actor.workspaceId,id,{kind:"completed",candidateId:candidate.id});
+        }
         return { candidateVersionId: candidate.id, extractionStatus: "succeeded" };
       } catch (caught) {
         const error = guardedError ?? caught;
+        if (journal) {
+          const invalidResponse=crossedBoundary && error instanceof EpisodePlanModelError && error.code==="INVALID_RESPONSE";
+          const unknown=attemptedBoundary || transportEntered
+            && !(error instanceof EpisodePlanModelError && error.code==="INVALID_REQUEST");
+          try {
+            await journal.record(actor.workspaceId,id,{kind:invalidResponse ? "invalid_response" : unknown ? "unknown" : "not_sent"});
+          } catch {
+            if (unknown) throw new TaskExecutionError("EXECUTION_UNCERTAIN");
+          }
+          if (unknown && !invalidResponse) throw new TaskExecutionError("EXECUTION_UNCERTAIN");
+        }
         if (error instanceof TaskExecutionError) throw error;
         if (error instanceof ScriptUpstreamChangedError) throw new TaskExecutionError("UPSTREAM_CHANGED");
         if (error instanceof ModelTaskError && error.code === "POLICY_RESTRICTED") throw new TaskExecutionError("POLICY_RESTRICTED");

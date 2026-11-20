@@ -8,6 +8,7 @@ import { CreditLedgerService } from '../src/index.ts';
 import { PostgresCreditLedgerRepository } from '../src/postgres-ledger.ts';
 import { ModelTaskService } from '../../script/src/model-tasks.ts';
 import { InMemoryModelSettingsRepository, WorkspaceModelSettings } from '../../script/src/model-settings.ts';
+import { PostgresEpisodeExecutionJournal } from '../../api/src/episode-execution-journal.ts';
 import { assertEpisodeOutboxDatabase } from '../../api/src/episode-outbox-database-readiness.ts';
 import { EpisodeOutboxConsumer } from '../../api/src/episode-outbox-consumer.ts';
 import { createEpisodeSubmissionRepository } from '../../api/src/episode-submission.ts';
@@ -29,7 +30,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login');
     for (const file of ['../migrations/0001_credit_ledger.sql','../migrations/0002_evidence_material.sql','../../script/migrations/0003_model_tasks.sql',
       '../../script/migrations/0004_model_task_results.sql','../../script/migrations/0005_model_task_recovery.sql',
-      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql']) {
+      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
     await admin.query('grant novel_app,novel_billing,novel_evidence,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
@@ -178,6 +179,17 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       assert.equal(units[0]?.state,outcome==='succeeded'?'closed':outcome==='failed'?'released':'reconciling');
     }
     assert.equal((await ledger.balance(billingActor)).reserved,14);
+    const journal=new PostgresEpisodeExecutionJournal(pool);
+    await repository.transition('studio',first.id,0,'running',null);
+    await journal.record('studio',first.id,{kind:'dispatch_started'});
+    await assert.rejects(journal.record('studio',first.id,{kind:'dispatch_started'}),{message:'EPISODE_EXECUTION_JOURNAL_UNAVAILABLE'});
+    await assert.rejects(journal.record('studio',first.id,{kind:'not_sent'}),{message:'EPISODE_EXECUTION_JOURNAL_UNAVAILABLE'});
+    await journal.record('studio',first.id,{kind:'invalid_response'});
+    await repository.transition('studio',byok.id,0,'running',null);
+    await journal.record('studio',byok.id,{kind:'not_sent'});
+    const events=await admin.query('select kind from episode_execution_events order by kind');
+    assert.deepEqual(events.rows.map(row=>row.kind),['dispatch_started','invalid_response','not_sent']);
+    await assert.rejects(pool.query('delete from episode_execution_events'),{code:'42501'});
   } finally {
     await workerPool?.end();
     await pool?.end();

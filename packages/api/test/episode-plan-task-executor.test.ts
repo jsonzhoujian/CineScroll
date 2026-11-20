@@ -135,6 +135,28 @@ test("旧拆集扫描跳过 Outbox 任务的执行，仍恢复过期任务", asy
   assert.equal((await dispatcher.tick("w","recover")).items[0]?.reason,"EXECUTION_UNCERTAIN");
 });
 
+for (const scenario of ["not_sent","invalid_response","unknown"] as const) test(`拆集记录可信执行边界 ${scenario}`, async () => {
+  const f=await fixture(); await f.confirm(); const task=await f.submit();
+  const find=f.repository.find.bind(f.repository);
+  f.repository.find=async (...args)=>{
+    const found=await find(...args);
+    return found ? {...found,dispatchOwner:"outbox"} : null;
+  };
+  const events:string[]=[];
+  const model=new DeepSeekEpisodePlanModel({fetch:async()=>{
+    assert.deepEqual(events,["dispatch_started"]);
+    if (scenario==="unknown") throw new Error("test disconnect");
+    return Response.json({bad:true});
+  }});
+  const executor=new EpisodePlanTaskExecutor({...f,journal:{async record(_workspace,_task,event){ events.push(event.kind); }},
+    model:{generate(request,credentials,beforeSend) {
+      return model.generate(request,scenario==="not_sent" ? {...credentials,modelId:""} : credentials,beforeSend);
+    }}});
+  const outcome=await executor.run(f.actor,task.id);
+  assert.deepEqual(events,scenario==="not_sent" ? ["not_sent"] : ["dispatch_started",scenario]);
+  assert.equal(outcome.reason,scenario==="unknown" ? "EXECUTION_UNCERTAIN" : "INVALID_RESPONSE");
+});
+
 test("Outbox 重复投递复用拆集执行状态并恢复未知结果", async () => {
   const f=await fixture(); await f.confirm();
   const queued=await f.submit(), abandoned=await f.submit(), platform=await f.submit();

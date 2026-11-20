@@ -19,7 +19,7 @@ export class DeepSeekEpisodePlanModel implements CredentialedEpisodePlanModel {
     if (!Number.isInteger(this.#timeoutMs) || this.#timeoutMs < 1 || this.#timeoutMs > 300000) throw failure("INVALID_REQUEST");
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
-  async generate(request: EpisodePlanGenerationRequest,credentials: Parameters<CredentialedEpisodePlanModel["generate"]>[1]): Promise<unknown> {
+  async generate(request: EpisodePlanGenerationRequest,credentials: Parameters<CredentialedEpisodePlanModel["generate"]>[1],beforeSend?:()=>Promise<void>): Promise<unknown> {
     let body: string;
     try {
       assertEpisodePlanGenerationRequest(request); request = structuredClone(request); credentials = { ...credentials };
@@ -27,6 +27,7 @@ export class DeepSeekEpisodePlanModel implements CredentialedEpisodePlanModel {
       body = JSON.stringify({ model: credentials.modelId,stream: false,response_format: { type: "json_object" },messages: [{ role: "system",content: INSTRUCTIONS },{ role: "user",content: JSON.stringify(request) }] });
       if (Buffer.byteLength(body) > 2000000) throw new Error();
     } catch { throw failure("INVALID_REQUEST"); }
+    await beforeSend?.();
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const deadline = new Promise<never>((_resolve,reject) => { timer = setTimeout(() => { controller.abort(); reject(failure("PROVIDER_UNAVAILABLE")); },this.#timeoutMs); });
