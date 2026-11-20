@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Pool } from 'pg';
+import { createEpisodeEvidencePublisher } from "../../api/src/episode-evidence-publisher.ts";
+import type { EpisodePlanVersion } from "../../script/src/index.ts";
 import { createEpisodeSettlement } from '../../api/src/episode-settlement.ts';
 import { PostgresEvidenceMaterialRepository } from '../src/postgres-evidence.ts';
 import { CreditLedgerService } from '../src/index.ts';
@@ -143,9 +145,20 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     const evidence=new PostgresEvidenceMaterialRepository(pool);
     const settle=createEpisodeSettlement({repository,ledgerRepository:new PostgresCreditLedgerRepository(pool),
       source:evidence,serviceId:billingActor.serviceId,workspaceIds:['studio']});
+    const journal=new PostgresEpisodeExecutionJournal(pool);
+    let candidate: EpisodePlanVersion | null=null;
+    const publisherOptions={repository,journal,ledgerRepository:new PostgresCreditLedgerRepository(pool),
+      evidence,serviceId:billingActor.serviceId,workspaceIds:['studio'],ruleVersion:'test-rule',
+      plans:{getEpisodePlanGeneration:async()=>candidate}};
+    const publish=createEpisodeEvidencePublisher({...publisherOptions,assessSuccess:async()=>({
+      quoteId:'fixture-quote',priceVersion:'fixture-v1',amount:5,
+    })});
     for (const outcome of ['succeeded','failed','unknown'] as const) {
       const task=await submit(`settle-${outcome}`);
       const running=await repository.transition('studio',task.id,0,'running',null);
+      if (outcome!=='unknown') await journal.record('studio',task.id,{kind:'dispatch_started'});
+      if (outcome==='succeeded') await journal.record('studio',task.id,{kind:'completed',candidateId:'candidate-1'});
+      else await journal.record('studio',task.id,{kind:outcome==='failed'?'invalid_response':'unknown'});
       if (outcome==='succeeded') await repository.transition('studio',task.id,running.revision,'succeeded',null,
         {candidateVersionId:'candidate-1',extractionStatus:'succeeded'});
       if (outcome==='failed') await repository.transition('studio',task.id,running.revision,'failed','INVALID_RESPONSE');
@@ -159,8 +172,26 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
           validation:'passed',ruleVersion:'test-rule'}]:[],
         pricing:outcome==='succeeded'?{binding,id:'price',resultVersionId:'candidate-1',
           quoteId:'fixture-quote',priceVersion:'fixture-v1',origin:'quote',amount:5}:null};
-      await evidence.append('studio',material);
       if (outcome==='succeeded') {
+        await assert.rejects(publish('studio',task.id),{code:'INVALID_EVIDENCE'});
+        candidate={id:'candidate-1',parentVersionId:null,projectId:'p',chapterId:'c',sourceVersionId:'source-1',
+          storyBibleVersionId:'bible-1',targetDurationSeconds:180,aspectRatio:'9:16',narrativeMode:'narration',
+          generationJobId:task.id,episodes:[],majorAdaptationProposals:[],status:'candidate',createdBy:'owner',createdAt:'2026-11-20'};
+        await assert.rejects(createEpisodeEvidencePublisher(publisherOptions)('studio',task.id),{code:'INVALID_EVIDENCE'});
+        await assert.rejects(createEpisodeEvidencePublisher({...publisherOptions,assessSuccess:async()=>({
+          quoteId:'wrong',priceVersion:'fixture-v1',amount:5,
+        })})('studio',task.id),{code:'INVALID_EVIDENCE'});
+      }
+      const [publishedId,repeatedId]=await Promise.all([publish('studio',task.id),publish('studio',task.id)]);
+      assert.equal(publishedId,repeatedId);
+      const published=await evidence.get('studio',publishedId);
+      assert.ok(published);
+      assert.equal((published.material as {execution:{state:string}}).execution.state,material.execution.state);
+      if (outcome==='succeeded') {
+        await assert.rejects(createEpisodeEvidencePublisher({...publisherOptions,assessSuccess:async()=>({
+          quoteId:'fixture-quote',priceVersion:'fixture-v1',amount:6,
+        })})('studio',task.id),{code:'INVALID_EVIDENCE'});
+        assert.deepEqual(await evidence.get('studio',publishedId),published);
         await assert.rejects(settle('studio',task.id,'missing'),{code:'INVALID_EVIDENCE'});
         await evidence.append('studio',{...material,id:'other-price',pricing:{...material.pricing,quoteId:'wrong'},
           snapshot:{...material.snapshot,quoteId:'wrong'}});
@@ -169,17 +200,16 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
           pricing:{...material.pricing,resultVersionId:'other-candidate'}});
         await assert.rejects(settle('studio',task.id,'wrong-result'),{code:'INVALID_EVIDENCE'});
       }
-      const [receipt,replay]=await Promise.all([settle('studio',task.id,material.id),settle('studio',task.id,material.id)]);
+      const [receipt,replay]=await Promise.all([settle('studio',task.id,publishedId),settle('studio',task.id,publishedId)]);
       assert.deepEqual(receipt,replay);
       if (outcome==='unknown') assert.equal(receipt.reason,'EXECUTION_UNKNOWN');
-      const entries=(await ledger.entries(billingActor)).filter(entry=>entry.evidenceId===material.id);
+      const entries=(await ledger.entries(billingActor)).filter(entry=>entry.evidenceId===publishedId);
       assert.deepEqual(entries.map(entry=>[entry.operation,entry.amount]),
         outcome==='succeeded'?[['consume',5],['release',2]]:outcome==='failed'?[['release',7]]:[]);
       const {units}=await ledger.task(billingActor,task.id);
       assert.equal(units[0]?.state,outcome==='succeeded'?'closed':outcome==='failed'?'released':'reconciling');
     }
     assert.equal((await ledger.balance(billingActor)).reserved,14);
-    const journal=new PostgresEpisodeExecutionJournal(pool);
     await repository.transition('studio',first.id,0,'running',null);
     await journal.record('studio',first.id,{kind:'dispatch_started'});
     await assert.rejects(journal.record('studio',first.id,{kind:'dispatch_started'}),{message:'EPISODE_EXECUTION_JOURNAL_UNAVAILABLE'});
@@ -187,7 +217,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     await journal.record('studio',first.id,{kind:'invalid_response'});
     await repository.transition('studio',byok.id,0,'running',null);
     await journal.record('studio',byok.id,{kind:'not_sent'});
-    const events=await admin.query('select kind from episode_execution_events order by kind');
+    const events=await admin.query('select kind from episode_execution_events where task_id in ($1,$2) order by kind',[first.id,byok.id]);
     assert.deepEqual(events.rows.map(row=>row.kind),['dispatch_started','invalid_response','not_sent']);
     await assert.rejects(pool.query('delete from episode_execution_events'),{code:'42501'});
   } finally {
