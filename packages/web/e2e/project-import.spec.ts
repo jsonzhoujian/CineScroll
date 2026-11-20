@@ -24,6 +24,7 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
 
   await expect(page.getByRole("heading", { name: "第2章 风起" })).toBeVisible();
   await expect(page.getByLabel("当前原文版本状态")).toHaveText("已入卷 · 3 字");
+  await expect(page.getByRole("region", { name: "改编剧本" })).toHaveText(/当前原文尚无剧本/);
   const directory = page.getByRole("region", { name: "已保存章节目录" });
   await expect(directory.getByText("第1章 青芽微澜")).toBeVisible();
   await expect(directory.getByText("待后续处理 · 3 字")).toBeVisible();
@@ -126,7 +127,7 @@ test("用户从手机号登录完成多章节导入并查看重新导入差异",
   await mobile.getByRole("button", { name: "建议" }).click();
   await expect(mobile.getByText("暂无修改建议")).toBeVisible();
   await mobile.getByRole("button", { name: "通知" }).click();
-  await expect(mobile.getByText("暂无新通知")).toBeVisible();
+  await expect(mobile.getByText("暂无故事知识通知")).toBeVisible();
 });
 
 async function mockProjectImportApi(page: import("@playwright/test").Page) {
@@ -147,6 +148,16 @@ async function mockProjectImportApi(page: import("@playwright/test").Page) {
     const key = `${request.method()} ${url.pathname}`;
     const session = () => expect(request.headers().authorization).toBe("Bearer session-token");
     const device = () => expect(request.headers()["x-device-token"]).toBe("device-token");
+    if (request.method() === "GET" && /^\/(story-knowledge|episode-plan|script-content|settings|storyboard)-notifications$/.test(url.pathname)) {
+      session();
+      await route.fulfill({ headers,json: { notifications: [],nextCursor: null } });
+      return;
+    }
+    if (request.method() === "GET" && /^\/projects\/[^/]+\/chapters\/[^/]+\/script-content$/.test(url.pathname)) {
+      session();
+      await route.fulfill({ status: 404,headers,json: { code: "VERSION_NOT_FOUND" } });
+      return;
+    }
     if (key === "POST /auth/phone/challenges") {
       device();
       expect(request.postDataJSON()).toEqual({ phone: "13800138000" });

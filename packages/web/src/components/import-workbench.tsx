@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ApiClient, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type StoryboardView, type SourceVersionDiff } from "../lib/api";
+import { ApiClient, ApiClientError, type ScriptContentView, type Chapter, type ChapterInspection, type ImportedDocumentSummary, type StoryboardView, type SourceVersionDiff } from "../lib/api";
 import { buildDocumentRequest, type DocumentRequest, type ProjectDraft, validateProjectDraft } from "../lib/workflow";
 import { describeWorkbenchMode, type StageReadiness, switchWorkbenchMode, type WorkbenchMode, workbenchModes } from "../lib/workbench-mode";
 import { expectedWechatLoginMessage, isTrustedWechatAuthorizationUrl } from "../lib/wechat-flow";
@@ -51,6 +51,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [navigation, setNavigation] = useState<{ step: Step; mode: WorkbenchMode }>({ step: workspace ? "project" : "login", mode: "trace" });
   const { step, mode } = navigation;
+  const showTraceDesk = mode === "trace" && step === "version";
   const setStep = (nextStep: Step) => setNavigation((current) => ({ ...current, step: nextStep }));
   const [traceFragment,setTraceFragment] = useState<{ projectId: string; chapterId: string; sourceVersionId: string; fragmentId: string } | null>(null);
   const setMode = (nextMode: WorkbenchMode) => {
@@ -257,7 +258,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
     if (target.projectId !== project?.id || target.chapterId !== chapter?.id) return;
     setImpactTarget(target);
     setMode("storyboard");
-  }}><main className={`app-shell mode-${mode} step-${step}`}>
+  }}><main className={`app-shell mode-${mode} step-${step}`} data-trace-theme={showTraceDesk && chapter ? "studio" : undefined}>
     <header className="topbar">
       <a className="brand" href="#"><span className="seal">映</span><span><b>映卷</b><small>小说动态漫改编工作台</small></span></a>
       <nav className="modes" aria-label="工作模式">
@@ -324,6 +325,8 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
           ownerProjectId={project?.role === "owner" ? project.id : null}
           auditProjectId={project?.role === "owner" || project?.role === "reviewer" ? project.id : null} accountId={accountId} activeWorkspaceId={activeWorkspaceId}
           onSwitchWorkspace={id => api.switchWorkspace(id).then(onWorkspaceChange)} onOpenChapter={openProjectChapter} />}
+        {showTraceDesk && chapter && project && <VersionDesk key={JSON.stringify([project.id,chapter.id,chapter.activeSourceVersionId])} api={api} projectId={project.id} chapter={chapter} onReview={() => setMode("review")} canReimport={project?.role === "owner" || project?.role === "editor"} traceFragmentId={traceFragment?.projectId === project?.id && traceFragment?.chapterId === chapter.id
+          && traceFragment?.sourceVersionId === chapter.activeSourceVersionId ? traceFragment?.fragmentId : undefined} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
         {step !== "login" && <TaskStatusPanel key={project ? `${project.id}:${chapter?.id ?? "none"}:${chapter?.activeSourceVersionId ?? "none"}` : "global"} api={api} activeProjectId={project?.id} context={project && chapter ? { projectId: project.id, chapterId: chapter.id } : undefined} onReview={enterTaskReview} />}
         {step !== "login" && notificationsOpen && <div className="desktop-notifications"><TaskNotifications api={api} /></div>}
         <MobileCompanion tab={mobileTab} onTabChange={setMobileTab} step={step} project={project} chapter={chapter} api={api} />
@@ -358,8 +361,7 @@ function WorkspaceWorkbench({ api,workspace,onWorkspaceChange }: {
           <div className="inline-actions"><button className="text-button" onClick={() => setStep("source")}>返回修改原文</button><Action onClick={importChapter} busy={busy}>确认并创建原文版本</Action></div>
         </Panel>}
 
-        {mode === "trace" && step === "version" && chapter && <VersionDesk chapter={chapter} canReimport={project?.role === "owner" || project?.role === "editor"} traceFragmentId={traceFragment?.projectId === project?.id && traceFragment?.chapterId === chapter.id
-          && traceFragment?.sourceVersionId === chapter.versions.at(-1)?.id ? traceFragment?.fragmentId : undefined} importedDocument={importedDocument} importSavedChapter={importSavedChapter} reimportText={reimportText} setReimportText={setReimportText} reimport={reimport} busy={busy} diff={diff} />}
+
         {mode === "review" && taskReviewTarget && taskReviewTarget.project.id === project?.id && taskReviewTarget.chapter.id === chapter?.id
           ? <StoryKnowledgeWorkbench key={`task-review:${taskReviewTarget.expectedVersionId}`} api={api} project={taskReviewTarget.project} chapter={taskReviewTarget.chapter}
               expectedVersionId={taskReviewTarget.expectedVersionId} canManageStage={taskReviewTarget.project.role !== "editor"} cursor={reviewCursor}
@@ -390,12 +392,155 @@ function Field({ label, wide, children }: { label: string; wide?: boolean; child
 function Choice<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: ReadonlyArray<readonly [T, string]>; onChange(value: T): void }) { return <fieldset className="choice"><legend>{label}</legend><div>{options.map(([id, name]) => <button type="button" key={id} className={value === id ? "active" : ""} onClick={() => onChange(id)}>{name}</button>)}</div></fieldset>; }
 function Action({ children, onClick, busy }: { children: React.ReactNode; onClick(): void; busy: boolean }) { return <button className="button primary action" onClick={onClick} disabled={busy}>{busy ? "处理中…" : children}<span>→</span></button>; }
 
-function VersionDesk({ chapter, canReimport, traceFragmentId, importedDocument, importSavedChapter, reimportText, setReimportText, reimport, busy, diff }: { chapter: Chapter; canReimport: boolean; traceFragmentId: string | undefined; importedDocument: ImportedDocumentSummary | null; importSavedChapter(index: number): void; reimportText: string; setReimportText(value: string): void; reimport(): void; busy: boolean; diff: SourceVersionDiff | null }) {
-  const version = chapter.versions.at(-1)!;
-  return <div className="version-desk"><div className="version-head"><div><span className="eyebrow">原文版本 {String(version.ordinal).padStart(2,'0')}</span><h2>{chapter.title}</h2></div><span className="version-badge" aria-label="当前原文版本状态">已入卷 · {version.characterCount} 字</span></div>
-    <div className="version-grid"><section className="manuscript"><div className="paper-head"><span>原文片段</span><small>{version.id}</small></div>{version.fragments.map((fragment) => <article key={fragment.id} aria-current={fragment.id === traceFragmentId ? "true" : undefined}><small>{fragment.id}</small><p>{fragment.text}</p></article>)}</section>
-      {canReimport && <aside className="reimport" aria-label="重新导入">{importedDocument && <div className="saved-directory" role="region" aria-label="已保存章节目录"><span className="eyebrow">已保存章节目录</span>{importedDocument.chapters.map((item) => <p key={item.index}><span><b>{item.title}</b><small>{item.status === "imported" ? "已入卷" : "待后续处理"} · {item.characterCount} 字</small></span>{item.status === "pending" && <button onClick={() => importSavedChapter(item.index)} disabled={busy}>现在处理</button>}</p>)}</div>}<span className="eyebrow">重新导入</span><h3>比较新版本</h3><p>原版本不会被覆盖。修改正文后创建版本 {version.ordinal + 1}。</p><textarea aria-label="新版本正文" value={reimportText} onChange={(event) => setReimportText(event.target.value)} /><button className="button secondary" onClick={reimport} disabled={busy}>生成差异</button>
-        {diff && <div className="diff"><Diff title="新增" tone="add" items={diff.added} /><Diff title="删除" tone="remove" items={diff.removed} /><Diff title="未变化" tone="same" items={diff.unchanged} /></div>}</aside>}</div></div>;
+type TraceScript = ScriptContentView["version"];
+
+function VersionDesk({ api, projectId, chapter, onReview, canReimport, traceFragmentId, importedDocument, importSavedChapter, reimportText, setReimportText, reimport, busy, diff }: {
+  api: ApiClient; projectId: string; chapter: Chapter; onReview(): void; canReimport: boolean; traceFragmentId?: string;
+  importedDocument: ImportedDocumentSummary | null; importSavedChapter(index: number): void;
+  reimportText: string; setReimportText(value: string): void; reimport(): void; busy: boolean; diff: SourceVersionDiff | null;
+}) {
+  const version = chapter.versions.find(item => item.id === chapter.activeSourceVersionId) ?? chapter.versions.at(-1)!;
+  const [script,setScript] = useState<TraceScript | null>(null);
+  const [notice,setNotice] = useState("正在读取改编剧本…");
+  const [elementId,setElementId] = useState<string | null>(null);
+  const [fragmentId,setFragmentId] = useState<string | null>(traceFragmentId ?? null);
+  const sourcePane = useRef<HTMLDivElement>(null);
+  const chapterId = chapter.id, sourceVersionId = version.id;
+
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      try {
+        const query = new URL(window.location.href).searchParams;
+        const matchingContext = readTraceContext(query,projectId,chapterId,sourceVersionId);
+        const pinned = matchingContext && query.get("scriptCursorFromStoryboard") === "1" ? query.get("scriptCursorVersion") : null;
+        const response = pinned
+          ? await api.getScriptVersion(projectId,chapterId,pinned)
+          : await api.getScriptContent(projectId,chapterId);
+        if (!active) return;
+        const next = response.version;
+        if (next.projectId !== projectId || next.chapterId !== chapterId || next.sourceVersionId !== sourceVersionId
+          || (pinned ? next.id !== pinned || next.status !== "confirmed" : !("current" in response && response.current))) {
+          setNotice("当前原文暂无可对应的剧本版本。");
+          return;
+        }
+        setScript(next);
+        const preferred = matchingContext ? query.get("scriptElement") : null;
+        const selected = next.elements.find(item => item.id === preferred) ?? next.elements.find(item => storyReferences(item).includes(traceFragmentId ?? ""));
+        setElementId(selected?.id ?? null);
+        setNotice(next.elements.length ? "" : "该版本暂无剧本内容。");
+      } catch (error) {
+        if (active) setNotice(error instanceof ApiClientError && error.status === 404 ? "当前原文尚无剧本。" : "暂时无法读取剧本，请到审核工作台核对。");
+      }
+    }
+    void load();
+    return () => { active = false; };
+  },[api,projectId,chapterId,sourceVersionId,traceFragmentId]);
+
+  useEffect(() => {
+    const pane = sourcePane.current;
+    const selected = pane?.querySelector('[aria-current="true"]');
+    if (!pane || !selected || pane.scrollHeight <= pane.clientHeight) return;
+    const bounds = pane.getBoundingClientRect(), row = selected.getBoundingClientRect();
+    if (row.top < bounds.top || row.bottom > bounds.bottom) {
+      pane.scrollTop += row.top - bounds.top;
+    }
+  },[fragmentId]);
+
+  const fragments = new Map(version.fragments.map(fragment => [fragment.id,fragment]));
+  const fragmentLabel = (id: string) => {
+    const ordinal = fragments.get(id)?.ordinal;
+    return ordinal === undefined ? id : `片段 ${String(ordinal).padStart(2,"0")}`;
+  };
+  const selectedElement = script?.elements.find(element => element.id === elementId);
+  const references = selectedElement ? storyReferences(selectedElement).filter(id => fragments.has(id)) : [];
+  const suggestions = script?.suggestions?.filter(item => item.elementId === elementId);
+  const sceneTitles = new Map(script?.scenes.map(scene => [scene.id,scene.title]));
+  const typeLabels: Record<string,string> = { dialogue: "对白",action: "动作",narration: "旁白",environment: "环境",sound: "声音" };
+  const transformationLabels: Record<string,string> = { retained: "保留",compressed: "精简",merged: "合并",visualized: "画面化",actionized: "动作化",narrated: "旁白化",sonified: "声音化" };
+
+  function selectFragment(id: string) {
+    setFragmentId(id);
+    const related = script?.elements.find(element => storyReferences(element).includes(id));
+    setElementId(related?.id ?? null);
+  }
+
+  return <div className="version-desk trace-desk">
+    <header className="version-head">
+      <div><span className="eyebrow">原文版本 {String(version.ordinal).padStart(2,"0")}</span><h2>{chapter.title}</h2></div>
+      <span className="version-badge" aria-label="当前原文版本状态">已入卷 · {version.characterCount} 字</span>
+    </header>
+    <div className="trace-grid">
+      <section className="manuscript" aria-label="原文片段">
+        <header className="trace-pane-head"><h3>原文片段</h3><small>{version.fragments.length} 段</small></header>
+        <div className="trace-pane-content" ref={sourcePane}>{version.fragments.map(fragment =>
+          <article key={fragment.id} aria-current={fragment.id === fragmentId ? "true" : undefined}
+            className={references.includes(fragment.id) ? "trace-linked" : undefined}>
+            <button type="button" aria-pressed={fragment.id === fragmentId} onClick={() => selectFragment(fragment.id)}>
+              <small>{fragmentLabel(fragment.id)}</small><span>{fragment.text}</span>
+            </button>
+          </article>)}</div>
+      </section>
+      <section className="trace-script" aria-label="改编剧本">
+        <header className="trace-pane-head"><h3>改编剧本</h3>{script && <small>{script.status === "confirmed" ? "正式版本" : "候选版本"} · {script.elements.length} 项</small>}</header>
+        <div className="trace-pane-content">
+          {notice && <p className="trace-empty">{notice}</p>}
+          {script?.elements.map(element => {
+            const refs = storyReferences(element).filter(id => fragments.has(id));
+            return <button key={element.id} type="button" className="trace-script-block" aria-pressed={element.id === elementId} onClick={() => {
+              setElementId(element.id);
+              setFragmentId(refs[0] ?? null);
+            }}>
+              <span className="trace-script-meta"><b>{typeLabels[element.elementType] ?? element.elementType}</b><small>{sceneTitles.get(element.sceneId)}</small></span>
+              {element.speaker && <strong className="trace-speaker">{element.speaker}</strong>}
+              <span className="trace-script-text">{element.text}</span>
+            </button>;
+          })}
+        </div>
+      </section>
+      <aside className="trace-inspector" aria-label="依据与审核">
+        <header className="trace-pane-head"><h3>依据与审核</h3></header>
+        <div className="trace-pane-content">
+          <section className="trace-inspector-section" aria-live="polite">
+            <h4>原文依据</h4>
+            {selectedElement ? <>
+              {references.map(id => {
+                const transformation = selectedElement.provenance.find(item => item.type === "source_fragment" && item.fragmentId === id)?.transformation;
+                return <button key={id} className="trace-reference" type="button" onClick={() => setFragmentId(id)}>
+                  {fragmentLabel(id)}{transformation && transformationLabels[transformation] ? ` · ${transformationLabels[transformation]}` : ""}
+                </button>;
+              })}
+              {!references.length && <p>这一剧本项暂无当前原文片段可定位。</p>}
+            </> : <p>{fragmentId ? "未选中对应的剧本项。" : "选择原文片段或剧本项查看对应关系。"}</p>}
+          </section>
+          {suggestions?.length ? <section className="trace-inspector-section"><h4>修改建议</h4>
+            {suggestions.map(item => <div className="trace-suggestion" key={item.id}><p>{item.text}</p><small>{item.status === "accepted" ? "已接受" : item.status === "rejected" ? "已拒绝" : "待审核"}</small></div>)}
+          </section> : null}
+          <button className="trace-action" type="button" onClick={onReview}>进入审核工作台</button>
+          {canReimport && <section className="reimport" aria-label="重新导入">
+            {importedDocument && <div className="saved-directory" role="region" aria-label="已保存章节目录"><h4>已保存章节目录</h4>{importedDocument.chapters.map(item => <p key={item.index}><span><b>{item.title}</b><small>{item.status === "imported" ? "已入卷" : "待后续处理"} · {item.characterCount} 字</small></span>{item.status === "pending" && <button type="button" className="trace-reference" onClick={() => importSavedChapter(item.index)} disabled={busy}>现在处理</button>}</p>)}</div>}
+            <h4>重新导入</h4><p>保存后创建版本 {version.ordinal + 1}。</p>
+            <textarea aria-label="新版本正文" value={reimportText} onChange={event => setReimportText(event.target.value)} />
+            <button type="button" className="trace-action" onClick={reimport} disabled={busy}>生成差异</button>
+            {diff && <div className="diff"><Diff title="新增" tone="add" items={diff.added} /><Diff title="删除" tone="remove" items={diff.removed} /><Diff title="未变化" tone="same" items={diff.unchanged} /></div>}
+          </section>}
+        </div>
+      </aside>
+    </div>
+  </div>;
+}
+
+function readTraceContext(query: URLSearchParams, projectId: string, chapterId: string, sourceVersionId: string): boolean {
+  try {
+    const context: unknown = JSON.parse(query.get("scriptReviewContext") ?? "null");
+    return Array.isArray(context) && context[0] === projectId && context[1] === chapterId && context[2] === sourceVersionId;
+  } catch {
+    return false;
+  }
+}
+
+function storyReferences(element: TraceScript["elements"][number]): string[] {
+  return [...new Set(element.provenance.flatMap(item => item.type === "source_fragment" && item.fragmentId ? [item.fragmentId] : []))];
 }
 function Diff({ title, tone, items }: { title: string; tone: string; items: string[] }) { return <div className={`diff-group ${tone}`} role="group" aria-label={`${title}内容`}><b>{title} · {items.length}</b>{items.map((item, index) => <p key={`${tone}-${index}`}>{item}</p>)}</div>; }
 

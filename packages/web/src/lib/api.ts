@@ -77,7 +77,7 @@ export type ScriptContentView = { episodes?: Array<{ id: string;ordinal: number 
   status?: "candidate" | "confirmed";qualityReportId?: string;confirmedBy?: string;confirmedAt?: string;
   id: string;jobId: string;projectId: string;chapterId: string;sourceVersionId: string;planVersionId: string;generationStatus: string;
   retry?: { scopeKeys: string[];expectedActiveVersionId: string;retryOfJobId: string };
-  scenes: Array<{ id: string;title: string;episodeId?: string;ordinal?: number }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;ordinal?: number;lockedBy?: string;lockedAt?: string;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
+  scenes: Array<{ id: string;title: string;episodeId?: string;ordinal?: number }>;elements: Array<{ id: string;sceneId: string;text: string;elementType: string;speaker?: string;ordinal?: number;lockedBy?: string;lockedAt?: string;provenance: Array<{ type: string;fragmentId?: string;transformation?: string;additionId?: string }> }>;
   failures: Array<{ scopeKey: string;code: string;retryable: boolean }>;
 } };
 export type ScriptQualityView = { task: { id: string;state: string;reason: string | null;projectId: string;chapterId: string;input: { resultType: string;qualityTarget: { candidateVersionId: string } } };report: null | { id: string;candidateVersionId: string;ruleVersion: string;passed: boolean;coverage: number;reasons: string[];assessment?: { episodes: Array<{ episodeId: string;estimatedSeconds: number }> } } };

@@ -1,0 +1,122 @@
+/* Trace layout consumes semantic tokens. Additional themes can override only this block. */
+[data-trace-theme="studio"] {
+  --trace-workspace: #eff2f3;
+  --trace-surface: #fff;
+  --trace-rail: #f6f8f8;
+  --trace-text: #17272b;
+  --trace-secondary: #53666b;
+  --trace-border: #dce4e5;
+  --trace-accent: #006c60;
+  --trace-accent-text: #fff;
+  --trace-selection: #e6f3ef;
+  --trace-chrome: #172629;
+  --trace-chrome-text: #e1eae9;
+  --trace-chrome-accent: #aee6d4;
+  --trace-font: "Instrument Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+[data-trace-theme] {
+  background: var(--trace-workspace);
+  color: var(--trace-text);
+  font-family: var(--trace-font);
+}
+
+[data-trace-theme] .topbar {
+  background: var(--trace-chrome);
+  color: var(--trace-chrome-text);
+  border-color: transparent;
+}
+[data-trace-theme] .topbar .seal,
+[data-trace-theme] .topbar .modes button.active {
+  background: var(--trace-chrome-accent);
+  color: var(--trace-chrome);
+  border-radius: 6px;
+}
+[data-trace-theme] .topbar .modes { background: transparent; border: 0; gap: 6px; }
+[data-trace-theme] .topbar .modes button,
+[data-trace-theme] .topbar .top-meta,
+[data-trace-theme] .topbar .top-meta button,
+[data-trace-theme] .topbar .brand small { color: var(--trace-chrome-text); }
+[data-trace-theme] .topbar .modes button { white-space: nowrap; }
+[data-trace-theme] .topbar .top-meta i { background: var(--trace-chrome-accent); }
+[data-trace-theme] .body-grid { display: block; }
+[data-trace-theme] .step-rail,
+[data-trace-theme] .context-panel,
+[data-trace-theme] .ambient-mark { display: none; }
+[data-trace-theme] .work-area { max-width: 1680px; padding: 23px clamp(16px,3vw,48px) 64px; margin-inline: auto; }
+[data-trace-theme] .work-area > .text-button { color: var(--trace-secondary); margin: 0 14px 8px 0; padding: 3px 0; }
+.trace-desk.version-desk { max-width: none; margin-top: 24px; animation: none; }
+.trace-desk .version-head { align-items: center; gap: 12px; margin-bottom: 20px; }
+.trace-desk .version-head h2 { margin: 5px 0 0; color: var(--trace-text); font-size: clamp(24px,3vw,38px); font-weight: 650; letter-spacing: -.03em; }
+.trace-desk .eyebrow { color: var(--trace-secondary); font: 12px var(--trace-font); letter-spacing: .02em; }
+.trace-desk .version-badge { color: var(--trace-accent); background: var(--trace-selection); border: 0; border-radius: 6px; white-space: nowrap; }
+.trace-grid {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1.55fr) minmax(0,.94fr);
+  align-items: stretch;
+  border: 1px solid var(--trace-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--trace-surface);
+}
+.trace-grid > * { min-width: 0; }
+.trace-grid > * + * { border-inline-start: 1px solid var(--trace-border); }
+.trace-grid .manuscript { min-height: 0; background: var(--trace-rail); border: 0; box-shadow: none; }
+.trace-inspector { background: var(--trace-rail); }
+.trace-pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--trace-border); }
+.trace-desk h3, .trace-desk h4 { margin: 0; color: var(--trace-text); font-size: 14px; }
+.trace-desk small { color: var(--trace-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.trace-pane-content { display: grid; align-content: start; gap: 8px; padding: 12px; }
+.trace-grid .manuscript article,
+.trace-grid .manuscript article[aria-current="true"] { padding: 0; outline: 0; border: 0; background: transparent; box-shadow: none; }
+.trace-grid .manuscript button,
+.trace-script-block {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--trace-text);
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.trace-grid .manuscript small, .trace-grid .manuscript span { display: block; }
+.trace-grid .manuscript span, .trace-script-text { line-height: 1.75; font-size: 14px; white-space: pre-wrap; }
+.trace-script-block { border-color: var(--trace-border); }
+.trace-grid .manuscript button:hover, .trace-script-block:hover { border-color: var(--trace-accent); }
+.trace-grid .manuscript button[aria-pressed="true"],
+.trace-grid .trace-script-block[aria-pressed="true"] {
+  border-color: var(--trace-accent);
+  background: var(--trace-selection);
+}
+.trace-grid .manuscript .trace-linked button:not([aria-pressed="true"]) { background: var(--trace-selection); }
+.trace-script-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.trace-script-meta b { color: var(--trace-accent); font-size: 12px; }
+.trace-empty, .trace-inspector p { margin: 6px 0; color: var(--trace-secondary); line-height: 1.65; font-size: 13px; overflow-wrap: anywhere; }
+.trace-inspector-section, .trace-grid .reimport { padding: 10px 4px; }
+.trace-inspector-section + .trace-inspector-section, .trace-grid .reimport { border-top: 1px solid var(--trace-border); }
+.trace-grid .reimport { border-inline: 0; border-bottom: 0; margin-top: 7px; background: transparent; }
+.trace-grid .reimport textarea { min-height: 90px; height: 110px; padding: 8px; color: var(--trace-text); background: var(--trace-surface); border: 1px solid var(--trace-border); border-radius: 6px; }
+.trace-suggestion { padding-block: 4px; }
+.trace-reference, .trace-action { padding: 6px 9px; border: 1px solid var(--trace-border); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
+.trace-reference { margin: 6px 5px 0 0; background: var(--trace-surface); color: var(--trace-accent); }
+.trace-action { justify-self: start; background: var(--trace-accent); color: var(--trace-accent-text); border-color: transparent; }
+.trace-desk button:disabled { opacity: .55; cursor: default; }
+.trace-desk :focus-visible { outline: 2px solid var(--trace-accent); outline-offset: 2px; }
+@media (max-width: 920px) {
+  .trace-grid { grid-template-columns: minmax(0,1fr) minmax(0,1.35fr); }
+  .trace-grid .trace-inspector { grid-column: 1 / -1; border-inline-start: 0; border-top: 1px solid var(--trace-border); }
+}
+
+@media (min-width: 921px) {
+  .trace-pane-content {
+    max-block-size: max(340px, calc(100svh - 275px));
+    overflow-y: auto;
+  }
+}
+
+.trace-speaker { display: block; margin-block: 4px 2px; font-size: 13px; }
+
+[data-trace-theme] .trace-desk + .task-panel { margin-top: 24px; }

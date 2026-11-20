@@ -1299,6 +1299,15 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await expect(panel.getByLabel("镜头原文依据")).toContainText("原文雨落");
   await page.getByRole("button",{ name: "追溯",exact: true }).click();
   await expect(page.locator('.manuscript [aria-current="true"]')).toContainText("原文雨落");
+  const traceSource = page.getByRole("region",{ name: "原文片段",exact: true });
+  const traceScript = page.getByRole("region",{ name: "改编剧本",exact: true });
+  const traceInspector = page.getByRole("complementary",{ name: "依据与审核",exact: true });
+  const adapted = traceScript.getByRole("button",{ name: /庭院落雨/ });
+  await expect(adapted).toHaveAttribute("aria-pressed","true");
+  await adapted.click();
+  await expect(traceSource.getByRole("button",{ name: /原文雨落/ })).toHaveAttribute("aria-pressed","true");
+  await expect(traceInspector.getByRole("button",{ name: "f",exact: true })).toBeVisible();
+
   await page.getByRole("button",{ name: "审核",exact: true }).click();
   await page.getByRole("button",{ name: "读取拆集方案",exact: true }).click();
   await expect(page.getByRole("button",{ name: "庭院落雨",exact: true })).toHaveAttribute("aria-pressed","true");
