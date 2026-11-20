@@ -327,13 +327,19 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     } finally { await deliveryPool.end(); }
     let workerSendCount=0;
     let timeoutRequests=0;
+    let rejectedRequests=0;
+    const fixtureWebhook='https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000';
     const sendTimeout=createEpisodeFeishuAlertSender(
-      'https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000',
+      fixtureWebhook,
       async ()=>{
         timeoutRequests++;
         throw new DOMException('Request timed out','TimeoutError');
       },
     );
+    const sendRejected=createEpisodeFeishuAlertSender(fixtureWebhook,async ()=>{
+      rejectedRequests++;
+      return new Response(null,{status:403});
+    });
     const workerPhases=[
       {name:'initial start',taskId:'hidden',status:'delivered',attempts:1,calls:1},
       {name:'restart after delivery',taskId:'hidden',status:'delivered',attempts:1,calls:1},
@@ -347,9 +353,11 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       {name:'restart after exhaustion',taskId:'always-limited',status:'exhausted',attempts:5,calls:8},
       {name:'request timeout',taskId:'timed-out',status:'unknown',attempts:1,calls:9},
       {name:'restart after timeout',taskId:'timed-out',status:'unknown',attempts:1,calls:9},
+      {name:'request rejected',taskId:'rejected',status:'rejected',attempts:1,calls:10},
+      {name:'restart after rejection',taskId:'rejected',status:'rejected',attempts:1,calls:10},
     ];
     for (const phase of workerPhases) {
-      if (phase.name==='rate limited' || phase.name==='continuous rate limit attempt 1' || phase.name==='request timeout') {
+      if (['rate limited','continuous rate limit attempt 1','request timeout','request rejected'].includes(phase.name)) {
         await admin.query("insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('other',$1,'EXECUTION_UNKNOWN')",[phase.taskId]);
       }
       if (phase.name==='restart after retry due' || (phase.taskId==='always-limited' && phase.attempts>1 && phase.name!=='restart after exhaustion')) {
@@ -361,6 +369,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
         send:async alert=>{
           workerSendCount++;
           if (alert.taskId==='timed-out') return sendTimeout(alert);
+          if (alert.taskId==='rejected') return sendRejected(alert);
           return alert.taskId==='always-limited' || workerSendCount===2?'retryable':'delivered';
         },
       });
@@ -380,6 +389,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
       }
     }
     assert.equal(timeoutRequests,1);
+    assert.equal(rejectedRequests,1);
     await admin.query("delete from episode_alert_deliveries where workspace_id='other'; delete from episode_reconciliation_alerts where workspace_id='other'");
 
     assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
