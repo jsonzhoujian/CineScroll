@@ -65,6 +65,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
   const shotHeading = useRef<HTMLHeadingElement>(null);
   const impactView = useRef<StoryboardView | null>(null);
   const [shotId,setShotId] = useState("");
+  const [fragmentCursor,setFragmentCursor] = useState<{ shotId: string; fragmentId: string } | null>(null);
   const [scopes,setScopes] = useState<string[]>([]);
   const [busy,setBusy] = useState(false);
   const [notice,setNotice] = useState("");
@@ -121,6 +122,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
 
   function selectShot(id: string, fragmentId?: string) {
     setShotId(id);
+    setFragmentCursor(fragmentId ? { shotId: id,fragmentId } : null);
     if (!view) return;
     const url = new URL(window.location.href);
     writeStoryboardCursor(url.searchParams,view,id,fragmentId);
@@ -259,15 +261,18 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
   const elements = view?.scriptElements.filter(element => element.sceneId === selected?.sceneId && selected.scriptElementIds.includes(element.id)) ?? [];
   const evidence = selected?.provenance.filter(item => item.type === "source_fragment" && item.sourceVersionId === view?.version.sourceVersionId) ?? [];
   const fragments = view?.sourceFragments.filter(fragment => evidence.some(item => item.fragmentId === fragment.id)) ?? [];
+  const selectedFragment = fragments.find(fragment => fragmentCursor?.shotId === shotId && fragment.id === fragmentCursor.fragmentId) ?? fragments[0];
   const status = task && taskPresentation(task);
   const canStartAnother = task && (task.state === "succeeded" || task.state === "failed" || task.state === "paused" && task.reason !== "EXECUTION_UNCERTAIN");
   const retryEnabled = ready && !!view?.current && !!view.version.jobId && task?.id === view.version.jobId && !task.input.storyboardRegeneration && !!model && !pending.current;
 
-  return <section className="mode-workspace storyboard task-panel" aria-label="分镜候选生成与追溯">
-    <h2>分镜工作台</h2>
-    {!ready && <p>正式内容尚未解锁</p>}
-    <p role="status">{notice}</p>
-    <div className="desktop-task-action">
+  return <section className="mode-workspace storyboard task-panel storyboard-studio" aria-label="分镜候选生成与追溯">
+    <header className="storyboard-studio-head">
+      <h2>分镜工作台</h2>
+      {!ready && <span className="review-chip" data-review-state="pending">正式内容尚未解锁</span>}
+    </header>
+    <p className="storyboard-studio-notice" role="status">{notice}</p>
+    <div className="desktop-task-action storyboard-generation">
       <button type="button" disabled={busy || !ready || !!pending.current} onClick={() => void act(async () => {
         const next = (await api.modelConfiguration()).configuration;
         setModels(next?.tested && next.processingRegion === "mainland" && next.providerId === "deepseek" ? next : null);
@@ -337,15 +342,19 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
     }}>返回分镜任务列表</button>}
     {task?.state === "succeeded" && task.result && <button type="button" disabled={busy || !!pending.current} onClick={() => void act(load)}>载入分镜候选</button>}
     {view && <div className="storyboard-candidate">
-      <h3>{view.formalRead ? (pinnedPublication ? `正式分镜 · 发布 ${pinnedPublication}` : "正式分镜") : view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
+      <header className="storyboard-candidate-head"><h3>{view.formalRead ? (pinnedPublication ? `正式分镜 · 发布 ${pinnedPublication}` : "正式分镜") : view.reviewId ? "项目审核候选" : "分镜候选"}</h3>
+        <span className="review-chip" data-review-state={view.formalRead || view.confirmed ? "confirmed" : "pending"}>
+          {view.formalRead || view.confirmed ? "已确认" : view.reviewId ? "待审核" : "候选"}
+        </span>
+      </header>
       {view.confirmed && !view.formalRead && <p>当前镜头内容已正式确认</p>}
       {!!view.episodeDurations?.length && <ul aria-label="逐集时长">
         {view.episodeDurations.map(episode => <li key={episode.id}>{episode.title} · {episode.seconds === null ? "超出显示范围" : `${Number(episode.seconds.toPrecision(12))} 秒`}
           { ` · 目标 ${episode.targetSeconds} 秒` }</li>)}
       </ul>}
-      {view.permissions?.canConfirm && <div className="desktop-task-action">
+      {view.permissions?.canConfirm && <div className="desktop-task-action storyboard-confirmation">
         <label>分镜确认理由<input maxLength={2000} value={confirmationReason} onChange={event => setConfirmationReason(event.target.value)} /></label>
-        <button type="button" disabled={busy || !confirmationReason.trim()} onClick={() => void saveReview({
+        <button className="review-confirm" type="button" disabled={busy || !confirmationReason.trim()} onClick={() => void saveReview({
           kind: "confirm",requestId: crypto.randomUUID(),expectedRevision: view.revision!,
           expectedPublicationId: view.publicationId ?? null,reason: confirmationReason.trim(),
         })}>确认正式分镜</button>
@@ -468,7 +477,7 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
             });
           }}>
             <label>重新确认原因<input name="reason" required maxLength={2000} /></label>
-            <button disabled={busy}>确认并发布核对候选</button>
+            <button className="review-confirm" disabled={busy}>确认并发布核对候选</button>
           </form>}
         {reconciliation.upstreamChanged && reconciliation.currentUpstream && !reconciliationDraft && <button type="button"
           className="desktop-task-action" disabled={busy} onClick={() => void act(async () => {
@@ -478,14 +487,18 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
           })}>创建分镜核对候选</button>}
       </section>}
       {!view.current && <p>正式上游已变化，此候选仅供历史追溯。</p>}
-      <div className="mode-sheet">
-        <section aria-label="镜头列表">
-          <h4>镜头</h4>
+      <div className="storyboard-shot-grid">
+        <section className="storyboard-shot-list" aria-label="镜头列表">
+          <header><h4>镜头</h4><small>{view.version.shots.length} 个</small></header>
           <ol>{view.version.shots.map(shot => <li key={shot.id}>
-            <button type="button" aria-pressed={shotId === shot.id} onClick={() => selectShot(shot.id)}>{shot.visual}</button>
+            <button className="storyboard-shot-choice" type="button" aria-label={shot.visual} aria-pressed={shotId === shot.id} onClick={() => selectShot(shot.id)}>
+              <small aria-hidden="true">{String(shot.ordinal).padStart(2,"0")} · {shot.durationSeconds} 秒</small>
+              <span>{shot.visual}</span>
+              {view.lockedShotIds?.includes(shot.id) && <small aria-hidden="true">已锁定</small>}
+            </button>
           </li>)}</ol>
         </section>
-        {selected && <section aria-label="镜头详情">
+        {selected && <section className="storyboard-shot-detail" aria-label="镜头详情">
           <h4 ref={shotHeading} tabIndex={-1}>{selected.visual}</h4>
           {view.current && view.version.jobId === task?.id && task?.input.storyboardRegeneration &&
             (adoptedShots[task.id]?.includes(selected.id) ? <p>已纳入核对候选</p> :
@@ -496,17 +509,21 @@ export function StoryboardWorkbench({ api, projectId, chapterId, active, canRead
                 setNotice("已将所选镜头纳入核对候选。");
               })}>采用此重生镜头</button>)}
 
-          <p>镜头 {selected.ordinal} · {selected.durationSeconds} 秒 · {selected.shotSize} · {selected.cameraAngle}</p>
+          <p className="storyboard-shot-meta">镜头 {selected.ordinal} · {selected.durationSeconds} 秒 · {selected.shotSize} · {selected.cameraAngle}</p>
           <dl>{[["动作",selected.action],["台词",selected.speech],["运镜",selected.cameraMovement],["声音",selected.sound],["情绪",selected.emotion],["角色",selected.characters.join("、")],["资产",selected.assetIds.join("、")]].filter(([,value]) => value).map(([label,value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-          <h5>剧本元素</h5>
-          <ul aria-label="关联剧本元素">{elements.map(element => <li key={element.id}>{element.text}</li>)}</ul>
-          <h5>原文依据</h5>
-          <ul aria-label="镜头原文依据">{fragments.map(fragment => <li key={fragment.id}><button type="button" onClick={() => selectShot(selected.id,fragment.id)}>{fragment.text}</button></li>)}
-            {selected.provenance.filter(item => item.type === "approved_addition").map((item,i) => <li key={i}>获批改编新增 {item.additionId}</li>)}
-          </ul>
           {view.reviewId && view.revision !== undefined && <StoryboardShotReview key={JSON.stringify([view.reviewId,view.revision,selected.id])}
             view={view} shot={selected} busy={busy} onSave={saveReview} />}
         </section>}
+        {selected && <aside className="storyboard-shot-evidence" aria-label="镜头依据">
+          <h4>镜头依据</h4>
+          <h5>剧本元素</h5>
+          <ul aria-label="关联剧本元素">{elements.map(element => <li key={element.id}>{element.text}</li>)}</ul>
+          <h5>原文依据</h5>
+          <ul aria-label="镜头原文依据">{fragments.map(fragment => <li key={fragment.id}><button type="button" aria-pressed={selectedFragment?.id === fragment.id} onClick={() => selectShot(selected.id,fragment.id)}>{fragment.text}</button></li>)}
+            {selected.provenance.filter(item => item.type === "approved_addition").map((item,i) => <li key={i}>获批改编新增 {item.additionId}</li>)}
+          </ul>
+          {!fragments.length && !selected.provenance.some(item => item.type === "approved_addition") && <p>当前镜头暂无可显示的原文依据。</p>}
+        </aside>}
       </div>
       {view.version.failures.length > 0 && <fieldset>
         <legend>失败范围</legend>

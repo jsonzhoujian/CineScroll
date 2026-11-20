@@ -16,6 +16,8 @@
   --studio-warning-surface: #fff4df;
   --studio-danger: #9a3835;
   --studio-danger-surface: #fbece9;
+  --review-state-fg: var(--studio-secondary);
+  --review-state-bg: var(--studio-rail);
   --studio-font: "Instrument Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -49,3 +51,34 @@
 [data-workbench-theme] .ambient-mark { display: none; }
 [data-workbench-theme] .work-area { max-width: 1680px; padding: 23px clamp(16px,3vw,48px) 64px; margin-inline: auto; }
 [data-workbench-theme] .work-area > .text-button { color: var(--studio-secondary); margin: 0 14px 8px 0; padding: 3px 0; }
+
+[data-workbench-theme] :is(.state-confirmed,[data-review-state="confirmed"],[data-review-state="accepted"]) {
+  --review-state-fg: var(--studio-accent);
+  --review-state-bg: var(--studio-selection);
+}
+[data-workbench-theme] :is(.state-candidate,.state-needs_resolution,[data-review-state="pending"]) {
+  --review-state-fg: var(--studio-warning);
+  --review-state-bg: var(--studio-warning-surface);
+}
+[data-workbench-theme] [data-review-state="rejected"] {
+  --review-state-fg: var(--studio-danger);
+  --review-state-bg: var(--studio-danger-surface);
+}
+[data-workbench-theme] .review-suggestion {
+  margin-block: 10px; padding: 12px; border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-rail);
+}
+[data-workbench-theme] .review-suggestion > .review-chip { margin-inline-start: 8px; }
+[data-workbench-theme] .review-chip {
+  display: inline-block; width: fit-content; padding: 3px 8px; border-radius: 999px;
+  background: var(--review-state-bg); color: var(--review-state-fg); font-size: 12px;
+}
+[data-workbench-theme] .review-suggestion .review-chip { margin-block: 4px; }
+[data-workbench-theme] .review-suggestion > b { color: var(--studio-text); overflow-wrap: anywhere; }
+[data-workbench-theme] .review-suggestion > small { color: var(--review-state-fg); }
+[data-workbench-theme] .review-confirm {
+  padding: 9px 16px; border: 1px solid var(--studio-accent); border-radius: 6px;
+  background: var(--studio-accent); color: var(--studio-accent-text); font-weight: 600;
+}
+[data-workbench-theme] .review-confirm:disabled {
+  background: var(--studio-rail); border-color: var(--studio-border); color: var(--studio-secondary); opacity: 1; cursor: not-allowed;
+}

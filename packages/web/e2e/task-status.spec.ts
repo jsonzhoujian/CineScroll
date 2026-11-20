@@ -1305,6 +1305,12 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await panel.getByRole("button",{ name: "雨打空庭",exact: true }).click();
   await expect(panel.getByLabel("关联剧本元素")).toContainText("庭院落雨");
   await expect(panel.getByLabel("镜头原文依据")).toContainText("原文雨落");
+  await expect(page.locator("main.mode-storyboard")).toHaveAttribute("data-workbench-theme","studio");
+  const selectedShotButton = panel.getByRole("region",{ name: "镜头列表" }).getByRole("button",{ name: "雨打空庭",exact: true });
+  await expect(selectedShotButton).toHaveAttribute("aria-pressed","true");
+  const shotEvidence = panel.getByRole("complementary",{ name: "镜头依据" });
+  await expect(shotEvidence.getByRole("button",{ name: "原文雨落",exact: true })).toHaveAttribute("aria-pressed","true");
+
   await page.getByRole("button",{ name: "追溯",exact: true }).click();
   await expect(page.locator('.manuscript [aria-current="true"]')).toContainText("原文雨落");
   const traceSource = page.getByRole("region",{ name: "原文片段",exact: true });
@@ -1368,10 +1374,13 @@ test("分镜候选显式载入、逐镜追溯与所选失败范围重试", async
   await audit.getByLabel("审核理由").fill("可见动作更明确");
   await audit.getByRole("button",{ name: "提交镜头建议" }).click();
   await expect(audit.getByText(/待裁决/)).toBeVisible();
+  await expect(audit.locator('[data-review-state="pending"]')).toContainText("待裁决");
   await expect(panel.getByRole("button",{ name: "积水倒影",exact: true })).toBeVisible();
   await audit.getByLabel("审核理由").fill("已核对正式剧本");
   await audit.getByRole("button",{ name: "接受建议 1" }).click();
-  await expect(audit.getByText(/已接受/)).toContainText("建议人 editor");
+  const acceptedSuggestion = audit.locator('[data-review-state="accepted"]');
+  await expect(acceptedSuggestion.getByText("已接受",{ exact: true })).toBeVisible();
+  await expect(acceptedSuggestion).toContainText("建议人 editor");
   await expect(audit.getByText("裁决人 reviewer · 已核对正式剧本")).toBeVisible();
   await expect(panel.getByRole("button",{ name: "雨水映出屋檐",exact: true })).toBeVisible();
   await panel.getByLabel("分镜确认理由").fill("尝试确认");
