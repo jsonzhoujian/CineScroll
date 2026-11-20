@@ -139,4 +139,8 @@ Outbox 迁移需在账本及 `model_tasks` 迁移之后执行。提交角色仅�
 
 内部读取端口要求调用宿主提供已认证的服务身份，并按静态配置校验工作室。专用数据库角色只读告警列，RLS 按当前事务的工作室隔离数据。每页最多 50 条，游标由任务 ID 和告警代码组成，返回告警记录时间。隔离 PG16 验证分页、越权拒绝、缺少工作室上下文时不可见及写入权限拒绝。API 和计费类型检查通过。
 
-下一切片把读取端口接入已认证的内部运维宿主。通知渠道获准后再实现送达记录和失败重试。
+## 私有运维告警 HTTP 装配
+
+私有 Nest 宿主可显式注册 `EpisodeReconciliationOpsModule.forDatabase(pool, services)`。池使用仅继承 `novel_episode_alert_reader` 的登录。服务配置包含服务 ID、工作室白名单及 256 位随机 Bearer 令牌文本的 SHA-256 十六进制摘要。请求使用 `GET /internal/workspaces/:workspaceId/episode-reconciliation-alerts`。分页参数为 `limit`、`cursorTaskId` 和 `cursorCode`，游标两项须成对传入。服务身份由认证摘要映射，错误响应净化。公开生产 API 不注册该模块。
+
+下一切片在通知渠道确定并获准后添加持久送达记录、失败重试和渠道级幂等。

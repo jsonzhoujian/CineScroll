@@ -13,6 +13,7 @@
     "./episode-plan-task-executor": "./src/episode-plan-task-executor.ts",
     "./episode-plan-task-dispatcher": "./src/episode-plan-task-dispatcher.ts",
     "./episode-plan-tasks": "./src/episode-plan-task-api.ts",
+    "./episode-reconciliation-ops": "./src/episode-reconciliation-ops.ts",
     "./deepseek-episode-model": "./src/deepseek-episode-model.ts",
     "./settings-tasks": "./src/settings-task-api.ts",
     "./settings": "./src/settings-api.ts",

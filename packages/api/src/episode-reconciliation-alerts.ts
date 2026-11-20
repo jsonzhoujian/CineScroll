@@ -2,6 +2,9 @@ import type { Pool } from "pg";
 
 const codes=["PLATFORM_SUCCESS_DISABLED","EXECUTION_UNKNOWN","INVALID_EVIDENCE","RECONCILIATION_UNAVAILABLE"] as const;
 type Code=typeof codes[number];
+export function isEpisodeReconciliationAlertCode(value:unknown):value is Code {
+  return typeof value==="string" && codes.some(code=>code===value);
+}
 type Cursor={taskId:string;code:Code};
 type Actor={serviceId:string;workspaceId:string};
 
@@ -20,7 +23,7 @@ export function createEpisodeReconciliationAlertReader(pool:Pool,policy:{
     if (actor.serviceId!==serviceId || !workspaces.has(workspaceId)) throw new Error("FORBIDDEN");
     const {limit,cursor}=structuredClone(page);
     if (!Number.isInteger(limit) || limit<1 || limit>50 || (cursor!==null
-      && (!cursor || !identifier(cursor.taskId) || !codes.includes(cursor.code)))) throw new Error("INVALID_CURSOR");
+      && (!cursor || !identifier(cursor.taskId) || !isEpisodeReconciliationAlertCode(cursor.code)))) throw new Error("INVALID_CURSOR");
     const client=await pool.connect().catch(()=>{throw new Error("EPISODE_ALERTS_UNAVAILABLE");});
     let discard=false;
     try {
