@@ -80,3 +80,5 @@ WHERE a.workspace_id = 'local-feishu-test'
 GitHub Actions 的「拆集告警回归」在推送和 PR 时运行。验证 PR 触发时，在运行详情确认事件为 `pull_request`，再查看 `episode-alert` 作业摘要。预期为通过 2 项，失败、跳过和取消均为 0 项。
 
 作业会启动隔离的 PostgreSQL 16，运行拆集对账集成测试及飞书发送器测试。有测试跳过时，作业失败。测试使用替身发送器，无需配置真实飞书 Webhook。
+
+同一次分支推送可能同时产生 `push` 和 `pull_request` 两条运行记录。验收时在 PR 的「Checks」中打开 `episode-alert`，并核对运行对应当前 PR 的最新提交。
