@@ -24,10 +24,11 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
   const ca = await readFile(process.env.TEST_TLS_CA_PATH!, "utf8");
   const admin = new Pool({ connectionString: databaseUrl, ssl: { ca, rejectUnauthorized: true } });
   const suffix = randomUUID().replaceAll("-", "");
-  const login = `model_${suffix}`, extraRole = `extra_${suffix}`;
+  const login = `model_${suffix}`, outboxLogin = `outbox_${suffix}`, extraRole = `extra_${suffix}`;
   const workspaceId = `w_${suffix}`, userId = `u_${suffix}`;
   const sessionSecret = "0123456789abcdef0123456789abcdef";
   const restrictedUrl = new URL(databaseUrl); restrictedUrl.username = login; restrictedUrl.password = "";
+  const outboxUrl = new URL(restrictedUrl); outboxUrl.username = outboxLogin;
   const config = {
     databaseUrl, databaseTlsCa: ca, sessionSecret, deviceTokenSecret: "abcdef0123456789abcdef0123456789",
     trustedProxyHops: 0, smsEndpoint: "https://sms.example/verify", smsApiKey: "fixture",
@@ -127,13 +128,14 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
         evidence: [{ sourceVersionId: input.sourceVersionId, fragmentId: input.input.sourceFragments[0].id }] } }] };
     return Response.json({ object: "chat.completion", model: "m", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(extraction) } }] });
   };
-  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false) => {
+  const start = async (databaseTlsCa = ca, tasksEnabled = false, episodesEnabled = false, scriptsEnabled = false, settingsEnabled = false, storyboardEnabled = false, outboxEnabled = false) => {
     const production = createProductionApi({ ...config, modelSettings: { ...config.modelSettings, databaseTlsCa },
       ...(storyboardEnabled ? { storyboardTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(settingsEnabled ? { settingsTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
       ...(tasksEnabled ? { storyTasks: { enabled: true, workspaceIds: [workspaceId], intervalMs: 100 } } : {}),
       ...(scriptsEnabled ? { scriptTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}),
-      ...(episodesEnabled ? { episodeTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100 } } : {}) }, { modelFetch });
+      ...(episodesEnabled ? { episodeTasks: { enabled: true,workspaceIds: [workspaceId],intervalMs: 100,
+        ...(outboxEnabled ? {outbox:{enabled:true,databaseUrl:outboxUrl.href}} : {}) } } : {}) }, { modelFetch });
     try {
       const ref = await Test.createTestingModule({ imports: [production.module] }).compile();
       const app = ref.createNestApplication();
@@ -160,12 +162,15 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       "../../script/migrations/0008_generation_policy_reason.sql", "../../script/migrations/0009_workspace_task_limits.sql",
       "../../script/migrations/0010_episode_plans.sql", "../../script/migrations/0011_episode_task_scan.sql",
       "../../script/migrations/0012_episode_task_list.sql", "../../script/migrations/0013_script_content.sql", "../../script/migrations/0014_script_review.sql", "../../script/migrations/0015_script_retry.sql", "../../script/migrations/0016_script_publication.sql", "../../script/migrations/0017_script_confirmed_head.sql", "../../script/migrations/0018_script_revision.sql", "../../script/migrations/0019_script_revision_transitions.sql", "../../script/migrations/0020_script_revision_confirmation.sql", "../../script/migrations/0021_script_revision_change_scope.sql", "../../script/migrations/0022_script_impacts.sql", "../../script/migrations/0023_script_revision_lock_audit.sql", "../../script/migrations/0024_script_revision_rejection.sql", "../../script/migrations/0025_settings_candidates.sql", "../../script/migrations/0026_settings_dependencies.sql", "../../script/migrations/0027_settings_tasks.sql", "../../script/migrations/0028_settings_review.sql", "../../script/migrations/0029_settings_regeneration_tasks.sql", "../../script/migrations/0030_settings_regeneration_results.sql", "../../script/migrations/0031_settings_reconciliation.sql", "../../script/migrations/0032_settings_source_reconciliation.sql", "../../script/migrations/0033_settings_pending_regeneration.sql", "../../script/migrations/0034_settings_failure_decisions.sql", "../../script/migrations/0035_episode_plan_source_head.sql", "../../script/migrations/0036_script_source_publication.sql", "../../script/migrations/0037_storyboard_candidates.sql", "../../script/migrations/0038_storyboard_tasks.sql", "../../script/migrations/0039_storyboard_review_submissions.sql", "../../script/migrations/0040_storyboard_review_operations.sql", "../../script/migrations/0041_storyboard_confirmation.sql", "../../script/migrations/0042_storyboard_reconciliation.sql", "../../script/migrations/0043_storyboard_reconciliation_retains.sql", "../../script/migrations/0044_storyboard_reconciliation_revisions.sql", "../../script/migrations/0045_storyboard_regeneration_tasks.sql", "../../script/migrations/0046_storyboard_regeneration_adoption.sql", "../../script/migrations/0047_storyboard_reconciliation_confirmation.sql", "../../script/migrations/0048_storyboard_reconciliation_created_at.sql", "../migrations/0001_model_rate_limits.sql",
-      "../migrations/0002_generation_rate_limits.sql"]) {
+      "../migrations/0002_generation_rate_limits.sql", "../../billing/migrations/0001_credit_ledger.sql",
+      "../../billing/migrations/0003_episode_submission_outbox.sql", "../../billing/migrations/0004_episode_outbox_consumer.sql"]) {
       await admin.query(await readFile(new URL(path, import.meta.url), "utf8"));
     }
     // Identifiers are generated locally from hex UUIDs, not supplied by users.
     await admin.query(`create role ${login} login nosuperuser nocreatedb nocreaterole nobypassrls`);
     await admin.query(`grant novel_app to ${login}`);
+    await admin.query(`create role ${outboxLogin} login nosuperuser nocreatedb nocreaterole nobypassrls`);
+    await admin.query(`grant novel_app,novel_billing,novel_episode_submission,novel_episode_outbox_consumer to ${outboxLogin}`);
     await admin.query(`create role ${extraRole} nologin`);
     await admin.query("insert into identity_accounts(user_id,workspace_id,wechat_open_id) values($1,$2,$1)", [userId, workspaceId]);
     await admin.query("insert into workspace_model_members(workspace_id,user_id,role) values($1,$2,'owner')", [workspaceId, userId]);
@@ -250,8 +255,34 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     await admin.query("alter table episode_plan_heads disable trigger episode_plan_head_transition");
     try { await assert.rejects(async () => { const bad = await start(ca,false,true); await bad.close(); }, { message: "EPISODE_TASK_DATABASE_NOT_READY" }); }
     finally { await admin.query("alter table episode_plan_heads enable trigger episode_plan_head_transition"); }
-    const both = await start(ca,true,true);
+    const episodeSubmitPath = `/projects/${projectId}/chapters/${chapterId}/episode-plan-tasks`;
+    const outboxApp = await start(ca,false,true,false,false,false,true);
     let episodeTaskId: string;
+    try {
+      await outboxApp.episodeWorker!.stop();
+      const submitted = await outboxApp.http.post(episodeSubmitPath).set("authorization",bearer)
+        .send({configurationVersionId:version!,modelId:"m",requestId:"fixture-episode"}).expect(201);
+      episodeTaskId = submitted.body.id;
+      assert.equal(submitted.body.state,"queued");
+      const snapshot = await admin.query(`select v.state_json from credit_ledger_heads h
+        join credit_ledger_versions v on (v.workspace_id,v.revision)=(h.workspace_id,h.active_revision)
+        where h.workspace_id=$1`,[workspaceId]);
+      const ledger = snapshot.rows[0]!.state_json;
+      assert.deepEqual(ledger.entries,[]);
+      assert.equal(ledger.tasks[0].snapshot.responsibility,"byok");
+      assert.equal(ledger.tasks[0].snapshot.taskId,episodeTaskId);
+    } finally { await outboxApp.close(); }
+    const legacyEpisodeApp = await start(ca,false,true);
+    try {
+      for (let attempt=0; attempt<50 && !legacyEpisodeApp.episodeWorker!.status().lastScanAt; attempt++) {
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      assert.ok(legacyEpisodeApp.episodeWorker!.status().lastScanAt);
+      const queued=await legacyEpisodeApp.http.get(`/episode-plan-tasks/${episodeTaskId}`).set("authorization",bearer).expect(200);
+      assert.equal(queued.body.state,"queued");
+      assert.equal(modelCalls,1);
+    } finally { await legacyEpisodeApp.close(); }
+    const both = await start(ca,true,true,false,false,false,true);
     try {
       assert.notEqual(both.worker,both.episodeWorker);
       const path = `/projects/${projectId}/chapters/${chapterId}/episode-plan-tasks`;
@@ -259,7 +290,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       await both.http.get(`/projects/${projectId}/chapters/${chapterId}/episode-plan`).expect(401);
       const submitted = await both.http.post(path).set("authorization",bearer)
         .send({ configurationVersionId: version!,modelId: "m",requestId: "fixture-episode" }).expect(201);
-      episodeTaskId = submitted.body.id;
+      assert.equal(submitted.body.id,episodeTaskId);
       let status;
       for (let attempt = 0; attempt < 50; attempt++) {
         status = await both.http.get(`/episode-plan-tasks/${episodeTaskId}`).set("authorization",bearer).expect(200);
@@ -272,13 +303,21 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(plan.body.plan.id,status!.body.result.candidateVersionId);
       await both.http.post(`/projects/${projectId}/chapters/${chapterId}/episode-plan/confirm`).set("authorization",bearer)
         .send({ expectedActiveVersionId: plan.body.plan.id }).expect(201);
+      for (let attempt=0; attempt<50; attempt++) {
+        const state=await admin.query("select dispatched_at from episode_submission_outbox where workspace_id=$1 and task_id=$2",[workspaceId,episodeTaskId]);
+        if (state.rows[0]?.dispatched_at) break;
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      const state=await admin.query("select dispatched_at,lease_token from episode_submission_outbox where workspace_id=$1 and task_id=$2",[workspaceId,episodeTaskId]);
+      assert.ok(state.rows[0]?.dispatched_at);
+      assert.equal(state.rows[0]?.lease_token,null);
       assert.equal(modelCalls,2);
     } finally {
       await both.close();
       assert.equal(both.worker!.status().state,"stopped");
       assert.equal(both.episodeWorker!.status().state,"stopped");
     }
-    const episodeRestart = await start(ca,true,true);
+    const episodeRestart = await start(ca,true,true,false,false,false,true);
     try {
       const plan = await episodeRestart.http.get(`/projects/${projectId}/chapters/${chapterId}/episode-plan`).set("authorization",bearer).expect(200);
       assert.equal(plan.body.plan.status,"confirmed");
@@ -301,6 +340,43 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       assert.equal(listed.body.tasks.length,1);
       assert.equal(modelCalls,2);
     } finally { await episodeRestart.close(); }
+    await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
+    const interruptedEpisode = await start(ca,false,true,false,false,false,true);
+    let interruptedEpisodeId: string;
+    try {
+      await interruptedEpisode.episodeWorker!.stop();
+      const queued = await interruptedEpisode.http.post(episodeSubmitPath).set("authorization",bearer)
+        .send({configurationVersionId:version!,modelId:"m",requestId:"fixture-episode-uncertain"}).expect(201);
+      interruptedEpisodeId=queued.body.id;
+      await admin.query(`update model_tasks set state='running',revision=revision+1,
+        lease_expires_at=clock_timestamp()-interval '1 second' where workspace_id=$1 and id=$2`,[workspaceId,interruptedEpisodeId]);
+      await admin.query(`update episode_submission_outbox set lease_token=gen_random_uuid(),
+        lease_until=clock_timestamp()-interval '1 second' where workspace_id=$1 and task_id=$2`,[workspaceId,interruptedEpisodeId]);
+    } finally { await interruptedEpisode.close(); }
+    const recoveredEpisode = await start(ca,false,true,false,false,false,true);
+    try {
+      for (let attempt=0; attempt<50; attempt++) {
+        const row=(await admin.query("select dispatched_at from episode_submission_outbox where workspace_id=$1 and task_id=$2",
+          [workspaceId,interruptedEpisodeId])).rows[0];
+        if (row?.dispatched_at) break;
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      const status=await recoveredEpisode.http.get(`/episode-plan-tasks/${interruptedEpisodeId}`).set("authorization",bearer).expect(200);
+      assert.equal(status.body.state,"paused");
+      assert.equal(status.body.reason,"EXECUTION_UNCERTAIN");
+      const outbox=(await admin.query("select dispatched_at,lease_token from episode_submission_outbox where workspace_id=$1 and task_id=$2",
+        [workspaceId,interruptedEpisodeId])).rows[0];
+      assert.ok(outbox?.dispatched_at);
+      assert.equal(outbox?.lease_token,null);
+      assert.equal(modelCalls,2);
+    } finally { await recoveredEpisode.close(); }
+    // Uncertainty intentionally occupies the only execution slot. Remove this disposable fixture
+    // before exercising unrelated stages under the original workspace quota.
+    await admin.query(`with removed as (
+      delete from episode_submission_outbox where workspace_id=$1 and task_id=$2 returning task_id
+    ) delete from model_tasks where workspace_id=$1 and id in (select task_id from removed)`,[workspaceId,interruptedEpisodeId]);
+
+
     await admin.query("update model_rate_limits set window_started_at=now()-interval '61 seconds' where workspace_id=$1 and action='generate'",[workspaceId]);
     await admin.query("alter table script_content_heads disable trigger script_content_head_transition");
     try { await assert.rejects(() => start(ca,false,false,true),{ message: "SCRIPT_CONTENT_DATABASE_NOT_READY" }); }
@@ -1232,7 +1308,7 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
     try { await assert.rejects(start, { message: "MODEL_DATABASE_NOT_READY" }); }
     finally { await admin.query("grant insert on model_settings_audit to novel_app"); }
   } finally {
-    try { await admin.query(`drop role if exists ${login}`); }
+    try { await admin.query(`drop role if exists ${login}; drop role if exists ${outboxLogin}`); }
     finally {
       try { await admin.query(`drop role if exists ${extraRole}`); }
       finally { await admin.end(); }
