@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Pool } from 'pg';
+import { createEpisodeSettlement } from '../../api/src/episode-settlement.ts';
+import { PostgresEvidenceMaterialRepository } from '../src/postgres-evidence.ts';
 import { CreditLedgerService } from '../src/index.ts';
 import { PostgresCreditLedgerRepository } from '../src/postgres-ledger.ts';
 import { ModelTaskService } from '../../script/src/model-tasks.ts';
@@ -25,12 +27,12 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     assert.equal((await admin.query('show data_directory')).rows[0].data_directory,`${socket}/data`);
     assert.equal((await admin.query('show listen_addresses')).rows[0].listen_addresses,'');
     await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login');
-    for (const file of ['../migrations/0001_credit_ledger.sql','../../script/migrations/0003_model_tasks.sql',
+    for (const file of ['../migrations/0001_credit_ledger.sql','../migrations/0002_evidence_material.sql','../../script/migrations/0003_model_tasks.sql',
       '../../script/migrations/0004_model_task_results.sql','../../script/migrations/0005_model_task_recovery.sql',
       '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
-    await admin.query('grant novel_app,novel_billing,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
+    await admin.query('grant novel_app,novel_billing,novel_evidence,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
     await admin.query('grant novel_episode_outbox_consumer to episode_outbox_worker');
     url.username='episode_submission';
     pool=new Pool({connectionString:url.href,max:3});
@@ -52,9 +54,10 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     assert.throws(()=>createEpisodeSubmissionRepository(pool!,{
       serviceId:'episode-test',workspaceIds:['studio'],platformQuotes:[quote,quote],
     }),{message:'EPISODE_QUOTE_CONFIG_INVALID'});
-    const service=new ModelTaskService({settings,repository:createEpisodeSubmissionRepository(pool,{
+    const repository=createEpisodeSubmissionRepository(pool,{
       serviceId:'episode-test',workspaceIds:['studio'],platformQuotes:[quote],
-    }),
+    });
+    const service=new ModelTaskService({settings,repository,
       contextReader:{read:async()=>({stage:'script',resultType:'episodePlan',sourceVersionId:'source-1',
         upstreamConfirmedVersionIds:['bible-1'],generationParameters:{targetDurationSeconds:180,aspectRatio:'9:16',narrativeMode:'narration'}})},
       generationPolicy:{isAllowed:async()=>true},episodeAdmission:{workspaceIds:['studio'],providerIds:['deepseek']},
@@ -135,6 +138,46 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     assert.deepEqual((await workerPool.query('select task_id from episode_submission_outbox')).rows,[]);
     await assert.rejects(workerPool.query('select * from model_tasks'),{code:'42501'});
     await assert.rejects(workerPool.query('delete from episode_submission_outbox'),{code:'42501'});
+    await ledger.grant(billingActor,{eventId:'settlement-seed',grantId:'settlement-seed',amount:21,source:'fixture'});
+    const evidence=new PostgresEvidenceMaterialRepository(pool);
+    const settle=createEpisodeSettlement({repository,ledgerRepository:new PostgresCreditLedgerRepository(pool),
+      source:evidence,serviceId:billingActor.serviceId,workspaceIds:['studio']});
+    for (const outcome of ['succeeded','failed','unknown'] as const) {
+      const task=await submit(`settle-${outcome}`);
+      const running=await repository.transition('studio',task.id,0,'running',null);
+      if (outcome==='succeeded') await repository.transition('studio',task.id,running.revision,'succeeded',null,
+        {candidateVersionId:'candidate-1',extractionStatus:'succeeded'});
+      if (outcome==='failed') await repository.transition('studio',task.id,running.revision,'failed','INVALID_RESPONSE');
+      const binding={workspaceId:'studio',taskId:task.id,unitId:'episode-plan',projectId:'p',chapterId:'c',
+        sourceVersionId:'source-1',upstreamVersionIds:['bible-1']};
+      const material={id:`evidence-${outcome}`,formatVersion:1,ruleVersion:'test-rule',binding,
+        snapshot:{binding,responsibility:'platform',quoteId:'fixture-quote',priceVersion:'fixture-v1',reserved:7},
+        execution:{binding,id:'execution',state:outcome==='succeeded'?'completed':outcome==='failed'?'invalid_response':'unknown',
+          closed:outcome!=='unknown'},
+        results:outcome==='succeeded'?[{binding,id:'candidate-1',executionId:'execution',original:true,persisted:true,
+          validation:'passed',ruleVersion:'test-rule'}]:[],
+        pricing:outcome==='succeeded'?{binding,id:'price',resultVersionId:'candidate-1',
+          quoteId:'fixture-quote',priceVersion:'fixture-v1',origin:'quote',amount:5}:null};
+      await evidence.append('studio',material);
+      if (outcome==='succeeded') {
+        await assert.rejects(settle('studio',task.id,'missing'),{code:'INVALID_EVIDENCE'});
+        await evidence.append('studio',{...material,id:'other-price',pricing:{...material.pricing,quoteId:'wrong'},
+          snapshot:{...material.snapshot,quoteId:'wrong'}});
+        await assert.rejects(settle('studio',task.id,'other-price'),{code:'INVALID_EVIDENCE'});
+        await evidence.append('studio',{...material,id:'wrong-result',results:[{...material.results[0],id:'other-candidate'}],
+          pricing:{...material.pricing,resultVersionId:'other-candidate'}});
+        await assert.rejects(settle('studio',task.id,'wrong-result'),{code:'INVALID_EVIDENCE'});
+      }
+      const [receipt,replay]=await Promise.all([settle('studio',task.id,material.id),settle('studio',task.id,material.id)]);
+      assert.deepEqual(receipt,replay);
+      if (outcome==='unknown') assert.equal(receipt.reason,'EXECUTION_UNKNOWN');
+      const entries=(await ledger.entries(billingActor)).filter(entry=>entry.evidenceId===material.id);
+      assert.deepEqual(entries.map(entry=>[entry.operation,entry.amount]),
+        outcome==='succeeded'?[['consume',5],['release',2]]:outcome==='failed'?[['release',7]]:[]);
+      const {units}=await ledger.task(billingActor,task.id);
+      assert.equal(units[0]?.state,outcome==='succeeded'?'closed':outcome==='failed'?'released':'reconciling');
+    }
+    assert.equal((await ledger.balance(billingActor)).reserved,14);
   } finally {
     await workerPool?.end();
     await pool?.end();

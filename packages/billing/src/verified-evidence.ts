@@ -1,4 +1,4 @@
-import type { BillingAccess, BillingActor, SettlementEvidence, SettlementEvidenceReader } from "./index.ts";
+import type { BillingAccess, BillingActor, SettlementEvidence } from "./index.ts";
 
 /** Trusted, consistent immutable source only; not a model response or client payload. */
 export interface EvidenceMaterialSource { read(workspaceId: string, evidenceId: string): Promise<unknown> }
@@ -20,7 +20,7 @@ function binding(value: unknown): string {
   return JSON.stringify([...names.map(key => record[key]), record.upstreamVersionIds]);
 }
 
-export function createVerifiedSettlementEvidenceReader(options: { access: BillingAccess; source: EvidenceMaterialSource }): SettlementEvidenceReader {
+export function createVerifiedSettlementEvidenceReader(options: { access: BillingAccess; source: EvidenceMaterialSource }) {
   const authorize = options.access.authorize.bind(options.access), read = options.source.read.bind(options.source);
   return Object.freeze({ async read(actor: BillingActor, evidenceId: string): Promise<SettlementEvidence> {
     let caller: BillingActor;
