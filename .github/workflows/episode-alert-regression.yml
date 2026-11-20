@@ -1,0 +1,37 @@
+name: 拆集告警回归
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  episode-alert:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 安装项目依赖
+        run: |
+          npm install --global pnpm@12.4.0
+          pnpm install --frozen-lockfile
+      - name: 准备 PostgreSQL 16
+        run: |
+          brew list --versions postgresql@16 || brew install postgresql@16
+      - name: 运行拆集告警集成测试
+        shell: bash
+        run: |
+          pg_bin="$(brew --prefix postgresql@16)/bin"
+          test_dir="$(mktemp -d /private/tmp/source-d1b.XXXXXX)"
+          trap '"$pg_bin/pg_ctl" -D "$test_dir/data" -m fast -w stop >/dev/null 2>&1 || true; rm -rf -- "$test_dir"' EXIT
+
+          "$pg_bin/initdb" -D "$test_dir/data" -A trust --no-locale -U postgres
+          "$pg_bin/pg_ctl" -D "$test_dir/data" -l "$test_dir/postgres.log" \
+            -o "-c listen_addresses='' -k $test_dir -p 55720" -w start
+
+          export TEST_EPISODE_SUBMISSION_DATABASE_URL="postgresql://postgres@localhost:55720/postgres?host=$test_dir"
+          node --test packages/billing/test/episode-plan-submission-postgres.test.ts \
+            packages/api/test/episode-feishu-alert.test.ts
