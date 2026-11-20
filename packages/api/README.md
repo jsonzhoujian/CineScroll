@@ -51,3 +51,25 @@ For browser WeChat login, `wechatRedirectUri` must be the public HTTPS web callb
 | `EPISODE_FEISHU_WEBHOOK` | 从本地密钥配置注入的飞书机器人地址 |
 
 Worker 会领取该工作室已经存在的待投递告警。请使用测试工作室。若数据库中暂无该工作室的告警，Worker 会等待写入。需要绕过包管理器时可运行 `node packages/api/src/local-feishu-worker.ts`。
+
+### 本地验收与排查
+
+在 `local-feishu-test` 提交测试拆集任务并模拟执行结果未知后，对账流程生成了 `EXECUTION_UNKNOWN`。飞书群已确认收到同一任务的告警，PostgreSQL 记录为 `delivered`，`attempts = 1`。
+
+出现新告警时，用有权读取该测试工作室记录的本地数据库账号查询。将示例任务 ID 替换为待核对的任务 ID。
+
+```sql
+SELECT a.task_id, a.code, d.status, d.attempts, d.retry_at
+FROM episode_reconciliation_alerts AS a
+LEFT JOIN episode_alert_deliveries AS d
+  ON d.workspace_id = a.workspace_id
+  AND d.task_id = a.task_id
+  AND d.code = a.code
+  AND d.channel = 'feishu'
+WHERE a.workspace_id = 'local-feishu-test'
+  AND a.task_id = '<任务 ID>';
+```
+
+- 无查询结果时，先核对工作室与任务 ID，再检查对账流程是否已生成告警。有告警且 `status` 为空时，检查飞书 Worker 是否运行、工作室配置是否匹配。
+- `delivered` 表示飞书接口确认送达，可按任务 ID 在群里核对。`retryable` 会在 `retry_at` 到期后重试，最多尝试 5 次。
+- `unknown` 表示投递结果未确认。先查群消息，Worker 不会自动重试。`rejected` 或 `exhausted` 时，检查 Webhook 配置和飞书机器人返回结果。
