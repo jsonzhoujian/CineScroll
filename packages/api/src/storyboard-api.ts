@@ -414,9 +414,31 @@ Req()(ProjectStoryboardAuditController.prototype,"audit",0);
 Param("projectId")(ProjectStoryboardAuditController.prototype,"audit",1);
 Query()(ProjectStoryboardAuditController.prototype,"audit",2);
 
+class StoryboardNotificationsController {
+  private readonly services: Services;
+  constructor(services: Services) { this.services = services; }
+
+  list(req: { actor: Actor },query: Record<string,unknown>) {
+    if (Object.keys(query).some(key => key !== "limit" && key !== "cursor")) throw new BadRequestException();
+    const limit = query.limit === undefined ? 20
+      : typeof query.limit === "string" && /^[1-9]\d?$/.test(query.limit) ? Number(query.limit) : NaN;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new BadRequestException();
+    const cursor = query.cursor === undefined ? null : id(query.cursor);
+    return respond(() => this.services.tasks.listTaskNotifications(req.actor,{ limit,cursor },"storyboardContent"));
+  }
+}
+Controller("storyboard-notifications")(StoryboardNotificationsController);
+UseGuards(SessionGuard)(StoryboardNotificationsController);
+Inject(SERVICES)(StoryboardNotificationsController,undefined,0);
+const storyboardNotifications = Object.getOwnPropertyDescriptor(StoryboardNotificationsController.prototype,"list")!;
+Get()(StoryboardNotificationsController.prototype,"list",storyboardNotifications);
+Header("Cache-Control","no-store")(StoryboardNotificationsController.prototype,"list",storyboardNotifications);
+Req()(StoryboardNotificationsController.prototype,"list",0);
+Query()(StoryboardNotificationsController.prototype,"list",1);
+
 export class StoryboardApiModule {
   static register(services: Services): DynamicModule {
     return { module: StoryboardApiModule,providers: [{ provide: SESSION_VERIFIER,useValue: services.sessionVerifier },{ provide: SERVICES,useValue: services }] };
   }
 }
-Module({ controllers: [StoryboardController,ProjectStoryboardAuditController],providers: [SessionGuard] })(StoryboardApiModule);
+Module({ controllers: [StoryboardController,ProjectStoryboardAuditController,StoryboardNotificationsController],providers: [SessionGuard] })(StoryboardApiModule);

@@ -825,6 +825,18 @@ test("TLS生产装配使用受限登录完成Key保存、重启读取、订阅�
       const full = (await storyboardApp.http.post(root).set("authorization",bearer)
         .send({ ...selection,requestId: "tls-storyboard-complete" }).expect(201)).body;
       assert.equal((await waitForResult(full.id)).result.extractionStatus,"succeeded");
+      const storyboardNotificationPath = "/storyboard-notifications";
+      await storyboardApp.http.get(storyboardNotificationPath).expect(401);
+      await storyboardApp.http.get(storyboardNotificationPath).set("authorization",bearer).query({ limit: 51 }).expect(400);
+      const unknownStoryboardTaskId = `storyboard_interrupted_${suffix}`;
+      await seedExpiredTask(full.id,unknownStoryboardTaskId);
+      const unknownStoryboard = await waitForResult(unknownStoryboardTaskId);
+      assert.equal(unknownStoryboard.reason,"EXECUTION_UNCERTAIN");
+      const storyboardNotices = await storyboardApp.http.get(storyboardNotificationPath).set("authorization",bearer)
+        .expect("Cache-Control","no-store").expect(200);
+      assert.deepEqual(new Map(storyboardNotices.body.notifications.map((item: { taskId: string;outcome: string }) => [item.taskId,item.outcome])),
+        new Map([[original.id,"succeeded"],[retry.id,"succeeded"],[full.id,"succeeded"],[unknownStoryboardTaskId,"execution_unknown"]]));
+      await admin.query("delete from model_tasks where workspace_id=$1 and id=$2",[workspaceId,unknownStoryboardTaskId]);
       const fullReview = (await storyboardApp.http.post(`${root}/${full.id}/review`).set("authorization",bearer).expect(201)).body.id;
       const publishOperation = `${root}/reviews/${fullReview}/operations`;
       await storyboardApp.http.post(publishOperation).set("authorization",bearer)

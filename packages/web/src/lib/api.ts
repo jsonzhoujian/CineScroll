@@ -195,7 +195,7 @@ export type StoryKnowledgeTask = { id: string; projectId: string; chapterId: str
   result: { candidateVersionId: string; extractionStatus: string } | null };
 export type EpisodeTask = StoryKnowledgeTask & { input: { stage: "script"; resultType: "episodePlan"; sourceVersionId: string; upstreamConfirmedVersionIds: string[] } };
 
-export type NotificationTaskKind = "episodePlan" | "scriptContent" | "settingsContent";
+export type NotificationTaskKind = "episodePlan" | "scriptContent" | "settingsContent" | "storyboardContent";
 export type TaskNotification = {
   taskId: string; projectId: string; chapterId: string; outcome: "succeeded" | "execution_unknown";
 };
@@ -282,7 +282,7 @@ export class ApiClient {
   listStoryboardTasks(p: string,c: string,cursor: string | null = null) {
     return this.request<{ tasks: StoryboardTask[]; nextCursor: string | null }>(`${storyboardPath(p,c)}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,{ method: "GET" },"session");
   }
-  getStoryboardTask(p: string,c: string,id: string) { return this.request<StoryboardTask>(`${storyboardPath(p,c)}/${encodeURIComponent(id)}`,{ method: "GET" },"session"); }
+  getStoryboardTask(p: string,c: string,id: string) { return this.request<StoryboardTask>(`${storyboardPath(p,c)}/${encodeURIComponent(id)}`,{ method: "GET",cache: "no-store" },"session"); }
   getStoryboardCandidate(p: string,c: string,id: string) { return this.request<StoryboardView>(`${storyboardPath(p,c)}/${encodeURIComponent(id)}/candidate`,{ method: "GET" },"session"); }
   submitStoryboard(p: string,c: string,input: StoryboardSubmission & Partial<StoryboardRetry>) {
     return this.request<StoryboardTask>(`${storyboardPath(p,c)}${input.scopeKeys ? "/retries" : ""}`,{ method: "POST",body: JSON.stringify(input) },"session");
@@ -323,7 +323,7 @@ export class ApiClient {
   listTaskNotifications(kind: NotificationTaskKind, cursor?: string) {
     const query = cursor ? `?${new URLSearchParams({ cursor })}` : "";
     return this.request<{ notifications: TaskNotification[]; nextCursor: string | null }>(
-      `/${kind === "episodePlan" ? "episode-plan" : kind === "scriptContent" ? "script-content" : "settings"}-notifications${query}`,{ method: "GET",cache: "no-store" },"session");
+      `/${{ episodePlan: "episode-plan",scriptContent: "script-content",settingsContent: "settings",storyboardContent: "storyboard" }[kind]}-notifications${query}`,{ method: "GET",cache: "no-store" },"session");
   }
   listEpisodeTasks(p: string,c: string,cursor: string | null = null) {
     const query = new URLSearchParams({ limit: "20" }); if (cursor) query.set("cursor",cursor);

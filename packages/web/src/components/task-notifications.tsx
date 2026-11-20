@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ApiClientError, type ApiClient, type TaskNotification, type EpisodePlanView, type EpisodeTask, type ScriptContentTask, type SettingsTask, type NotificationTaskKind } from "../lib/api";
+import { ApiClientError, type ApiClient, type TaskNotification, type EpisodePlanView, type EpisodeTask, type ScriptContentTask, type SettingsTask, type StoryboardTask, type NotificationTaskKind } from "../lib/api";
 
+type NotificationTask = EpisodeTask | ScriptContentTask | SettingsTask | StoryboardTask;
 type NotificationPage = Awaited<ReturnType<ApiClient["listTaskNotifications"]>>;
 
 export function TaskNotifications({ api }: { api: ApiClient }) {
@@ -10,15 +11,16 @@ export function TaskNotifications({ api }: { api: ApiClient }) {
     <Notifications api={api} kind="episodePlan" />
     <Notifications api={api} kind="scriptContent" />
     <Notifications api={api} kind="settingsContent" />
+    <Notifications api={api} kind="storyboardContent" />
   </>;
 }
 
 function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKind }) {
-  const label = { episodePlan: "拆集",scriptContent: "剧本",settingsContent: "文字设定" }[kind];
+  const label = { episodePlan: "拆集",scriptContent: "剧本",settingsContent: "文字设定",storyboardContent: "分镜" }[kind];
   const [page,setPage] = useState<NotificationPage | null>(null);
   const [busy,setBusy] = useState(true);
   const [error,setError] = useState("");
-  const [task,setTask] = useState<EpisodeTask | ScriptContentTask | SettingsTask | null>(null);
+  const [task,setTask] = useState<NotificationTask | null>(null);
   const [candidate,setCandidate] = useState<EpisodePlanView["plan"] | null>(null);
 
   const fetchPage = useCallback(async (cursor?: string) => {
@@ -68,18 +70,21 @@ function Notifications({ api, kind }: { api: ApiClient; kind: NotificationTaskKi
     setTask(null);
     setCandidate(null);
     await perform(async () => {
-      const result = kind === "episodePlan"
-        ? await api.getEpisodeTask(notification.taskId)
-        : kind === "scriptContent"
-          ? await api.getScriptContentTask(notification.taskId)
-          : await api.getSettingsTask(notification.taskId);
+      const { taskId, projectId, chapterId } = notification;
+      const readTask = {
+        episodePlan: () => api.getEpisodeTask(taskId),
+        scriptContent: () => api.getScriptContentTask(taskId),
+        settingsContent: () => api.getSettingsTask(taskId),
+        storyboardContent: () => api.getStoryboardTask(projectId,chapterId,taskId),
+      };
+      const result = await readTask[kind]();
       if (result.id !== notification.taskId || result.projectId !== notification.projectId
         || result.chapterId !== notification.chapterId || result.input.resultType !== kind) throw new Error("Invalid task");
       setTask(result);
     },"无法打开原任务，请刷新通知或联系项目负责人。");
   }
 
-  async function loadCandidate(selectedTask: EpisodeTask | ScriptContentTask | SettingsTask) {
+  async function loadCandidate(selectedTask: NotificationTask) {
     setCandidate(null);
     await perform(async () => {
       const { plan, current } = await api.getEpisodePlan(selectedTask.projectId,selectedTask.chapterId);
