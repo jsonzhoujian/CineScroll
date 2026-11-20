@@ -1,3 +1,4 @@
+import { createEpisodeReconciliationAlertReader } from "../../api/src/episode-reconciliation-alerts.ts";
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -36,7 +37,7 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     await admin.query('create role novel_app nologin; create role episode_submission login; create role episode_outbox_worker login; create role episode_reconciliation_worker login');
     for (const file of ['../migrations/0001_credit_ledger.sql','../migrations/0002_evidence_material.sql','../../script/migrations/0003_model_tasks.sql',
       '../../script/migrations/0004_model_task_results.sql','../../script/migrations/0005_model_task_recovery.sql',
-      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql','../migrations/0006_episode_reconciliation.sql']) {
+      '../migrations/0003_episode_submission_outbox.sql','../migrations/0004_episode_outbox_consumer.sql','../migrations/0005_episode_execution_events.sql','../migrations/0006_episode_reconciliation.sql','../migrations/0007_episode_reconciliation_alert_reader.sql']) {
       await admin.query(await readFile(new URL(file,import.meta.url),'utf8'));
     }
     await admin.query('grant novel_app,novel_billing,novel_evidence,novel_episode_submission,novel_episode_outbox_consumer to episode_submission');
@@ -279,6 +280,28 @@ test('拆集请求同事务保存任务、冻结额度及 Outbox', {
     assert.equal(continued.nextCursor,null);
     const durableAlerts=async ()=>(await admin.query('select task_id,code from episode_reconciliation_alerts order by task_id,code')).rows;
     const storedAlerts=await durableAlerts();
+    await admin.query(`create role episode_alert_reader login; grant novel_episode_alert_reader to episode_alert_reader;
+      insert into episode_reconciliation_checkpoints(workspace_id) values('other');
+      insert into episode_reconciliation_alerts(workspace_id,task_id,code) values('other','hidden','EXECUTION_UNKNOWN')`);
+    url.username='episode_alert_reader';
+    const readerPool=new Pool({connectionString:url.href,max:1});
+    try {
+      const list=createEpisodeReconciliationAlertReader(readerPool,{serviceId:'ops',workspaceIds:['studio']});
+      const actor={serviceId:'ops',workspaceId:'studio'};
+      await assert.rejects(list({...actor,workspaceId:'other'},{limit:1,cursor:null}),{message:'FORBIDDEN'});
+      await assert.rejects(list({...actor,serviceId:'other'},{limit:1,cursor:null}),{message:'FORBIDDEN'});
+      await assert.rejects(list(actor,{limit:51,cursor:null}),{message:'INVALID_CURSOR'});
+      const page=await list(actor,{limit:1,cursor:null});
+      assert.ok(page.nextCursor);
+      const tail=await list(actor,{limit:50,cursor:page.nextCursor});
+      assert.equal(tail.nextCursor,null);
+      assert.deepEqual([...page.items,...tail.items].map(item=>({task_id:item.taskId,code:item.code})),storedAlerts);
+      assert.deepEqual((await readerPool.query('select task_id from episode_reconciliation_alerts')).rows,[]);
+      await assert.rejects(readerPool.query('delete from episode_reconciliation_alerts'),{code:'42501'});
+      await assert.rejects(readerPool.query('select * from episode_reconciliation_checkpoints'),{code:'42501'});
+    } finally { await readerPool.end(); }
+    await admin.query("delete from episode_reconciliation_alerts where workspace_id='other'");
+
     assert.deepEqual(new Set(storedAlerts.map(row=>row.code)),new Set(['EXECUTION_UNKNOWN','INVALID_EVIDENCE','PLATFORM_SUCCESS_DISABLED']));
     await restarted.tick('studio');
     assert.deepEqual(await durableAlerts(),storedAlerts);
