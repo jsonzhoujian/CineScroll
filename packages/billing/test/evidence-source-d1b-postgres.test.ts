@@ -565,6 +565,11 @@ test("D1b closed draft creates atomically in a fresh socket-only PG16 instance",
         const {packageBytes,receiptCost}=vectors.budget;
         const names=['collectionBase','taskSource','snapshotSource','taskLink','snapshotLink','receiptBase','member0','member1'];
         assert.deepEqual(material,{...Object.fromEntries(names.map(name=>[name,values[name]])),packageBytes,receiptCost});
+        const duplicateSql='select source_ingest_d1b_initialize_material_v1.prepare($1,$2,$3,$4,true) as material';
+        const duplicateArgs=[{...command,ingestId:values.duplicateIdentity.ingestId},...args.slice(1)];
+        const duplicate=(await setup!.query(duplicateSql,duplicateArgs)).rows[0].material;
+        assert.deepEqual(duplicate,{...material,packageBytes:0,receiptCost:vectors.budget.alreadyRegistered.receiptBytes,
+          receiptBase:values.duplicateBase,member0:values.duplicateMember0,member1:values.duplicateMember1});
         await assert.rejects(setup!.query(sql,[{...command,taskReference:command.snapshotReference},...args.slice(1)]),{message:'INTEGRITY_CONFLICT'});
         await assert.rejects(inspector!.query(sql,args),{code:'42501'});
       }finally{

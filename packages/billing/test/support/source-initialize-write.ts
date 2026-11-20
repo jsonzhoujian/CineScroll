@@ -158,6 +158,42 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
     } finally {
       try { await client.query('rollback'); } finally { client.release(); }
     }
+    const beforeDuplicate=await read();
+    const duplicate={...command,ingestId:'duplicate-1'};
+    const {receipt: duplicateReceipt}=(await runtime.query(invoke,[duplicate,'init-collector'])).rows[0];
+    assert.equal(duplicateReceipt.status,'already_registered');
+    assert.equal(duplicateReceipt.headRevisionAtCommit,1);
+    const afterDuplicate=await read();
+    assert.deepEqual(afterDuplicate.counts,[1,2,1,1,2,4]);
+    assert.equal(afterDuplicate.source_count,beforeDuplicate.source_count);
+    assert.equal(afterDuplicate.source_bytes,beforeDuplicate.source_bytes);
+    const receiptCost=Number(afterDuplicate.receipt_bytes)-Number(beforeDuplicate.receipt_bytes);
+    assert.ok(receiptCost>0);
+    assert.deepEqual((await runtime.query(invoke,[duplicate,'init-collector'])).rows[0].receipt,duplicateReceipt);
+    await assert.rejects(runtime.query(invoke,[{...duplicate,ingestId:'duplicate-2',
+      taskReference:{id:'task',version:'v2'}},'init-collector']),{message:'CONFLICT'});
+    assert.deepEqual(await read(),afterDuplicate);
+
+    const seedBudget=async (bytes: number)=>{
+      await admin.query(`begin; alter table ${schema}.workspace_budget disable trigger test_business_row;
+        update ${schema}.workspace_budget set receipt_count=1023,receipt_bytes=${bytes} where workspace_id='studio';
+        alter table ${schema}.workspace_budget enable always trigger test_business_row; commit`);
+    };
+    await seedBudget(16777216-receiptCost+1);
+    const beforeOverflow=await read();
+    const boundary={...command,ingestId:'duplicate-2'};
+    await assert.rejects(runtime.query(invoke,[boundary,'init-collector']),{message:'CAPACITY'});
+    assert.deepEqual(await read(),beforeOverflow);
+    await seedBudget(16777216-receiptCost);
+    assert.equal((await runtime.query(invoke,[boundary,'init-collector'])).rows[0].receipt.status,'already_registered');
+    const full=await read();
+    assert.equal(full.receipt_count,1024);
+    assert.equal(Number(full.receipt_bytes),16777216);
+    assert.deepEqual(full.counts,[1,2,1,1,3,6]);
+    await assert.rejects(runtime.query(invoke,[{...boundary,ingestId:'duplicate-3'},'init-collector']),{message:'CAPACITY'});
+    assert.deepEqual((await runtime.query(invoke,[duplicate,'init-collector'])).rows[0].receipt,duplicateReceipt);
+    assert.deepEqual(await read(),full);
+
     const recoveryWorkspace='recovery';
     const fixture=sourceBusinessFixture();
     fixture.tasks[0].binding.workspaceId=recoveryWorkspace;
@@ -189,7 +225,7 @@ export async function testInitializeWrite(admin: Pool, runtime: Pool, login: str
       for (const table of tables) {
         await admin.query(`drop policy initialize_insert on ${schema}.${table}`);
       }
-      for (const table of ['ingest_receipt','receipt_source_member','source_version','task_source_link','snapshot_source_link']) {
+      for (const table of ['ingest_receipt','receipt_source_member','collection','source_version','task_source_link','snapshot_source_link']) {
         await admin.query(`drop policy initialize_replay on ${schema}.${table}`);
       }
       for (const {definition} of guards.rows) await admin.query(definition);

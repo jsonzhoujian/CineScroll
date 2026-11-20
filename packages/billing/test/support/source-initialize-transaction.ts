@@ -7,7 +7,7 @@ interface Connection {
   release(destroy?: boolean): void;
 }
 
-const declaredErrors = new Set(['INVALID_COMMAND','CONFLICT','NOT_FOUND','INTEGRITY_CONFLICT','CAPACITY']);
+const declaredErrors = new Set(['INVALID_COMMAND','CONFLICT','NOT_FOUND','INTEGRITY_CONFLICT','CAPACITY','STATE_BLOCKED']);
 
 export class InitializeCommitUnknown extends Error {
   readonly code = 'UNAVAILABLE';

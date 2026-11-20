@@ -1,4 +1,4 @@
--- First initialization and historical replay, in the disposable PG16 fixture.
+-- Initialization, receipt-only registration and historical replay, in the disposable PG16 fixture.
 begin;
 do $guard$ begin
   if not (select rolsuper from pg_roles where rolname=session_user)
@@ -20,7 +20,7 @@ create schema source_ingest_d1b_initialize_write_v1;
 revoke all on schema source_ingest_d1b_initialize_write_v1 from public;
 grant usage on schema source_ingest_d1b_initialize_write_v1,
   source_ingest_d1b_initialize_material_v1 to novel_d1b_initializer;
-grant execute on function source_ingest_d1b_initialize_material_v1.prepare(jsonb,jsonb,text,timestamptz),
+grant execute on function source_ingest_d1b_initialize_material_v1.prepare(jsonb,jsonb,text,timestamptz,boolean),
   source_ingest_d1b_codec_v1.budget_bytes(jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb),
   source_ingest_d1b_fixture_v1.valid_binding(jsonb,text,text,text),
   source_ingest_d1b_fixture_v1.valid_document(jsonb,bytea,text),
@@ -34,7 +34,7 @@ grant select(workspace_id,receipt_count,receipt_bytes,source_count,source_bytes)
   on source_ingest_d1b_fixture_v1.workspace_budget to novel_d1b_initializer;
 
 -- The existing ALWAYS row triggers stay installed. Only inserted initialization rows
--- and the four allowed budget deltas are admitted for the non-login initializer.
+-- and the allowed budget deltas are admitted for the non-login initializer.
 create or replace function source_ingest_d1b_fixture_v1.deny_draft_write() returns trigger
 language plpgsql set search_path=pg_catalog,pg_temp as $body$
 begin
@@ -50,8 +50,9 @@ language plpgsql set search_path=pg_catalog,pg_temp as $body$
 begin
   if current_user='novel_d1b_initializer' then
     if TG_TABLE_NAME='workspace_budget' and TG_OP='UPDATE' then
-      if NEW.receipt_count=OLD.receipt_count+1 and NEW.source_count=OLD.source_count+2
-        and NEW.receipt_bytes>OLD.receipt_bytes and NEW.source_bytes>OLD.source_bytes
+      if NEW.receipt_count=OLD.receipt_count+1 and NEW.receipt_bytes>OLD.receipt_bytes
+        and ((NEW.source_count=OLD.source_count+2 and NEW.source_bytes>OLD.source_bytes)
+          or (NEW.source_count=OLD.source_count and NEW.source_bytes=OLD.source_bytes))
         and (to_jsonb(NEW)-array['receipt_count','source_count','receipt_bytes','source_bytes'])
           = (to_jsonb(OLD)-array['receipt_count','source_count','receipt_bytes','source_bytes']) then
         return NEW;
@@ -105,17 +106,19 @@ create policy initialize_insert on source_ingest_d1b_fixture_v1.workspace_budget
 -- Read only committed initialization evidence. The shared key lookup must see
 -- all producers in an authorized workspace so a different producer conflicts.
 grant select on source_ingest_d1b_fixture_v1.ingest_receipt,
-  source_ingest_d1b_fixture_v1.receipt_source_member to novel_d1b_initializer;
+  source_ingest_d1b_fixture_v1.receipt_source_member,source_ingest_d1b_fixture_v1.collection to novel_d1b_initializer;
 grant select(workspace_id,collection_id,kind,id,version,payload_fingerprint,canonical,payload)
   on source_ingest_d1b_fixture_v1.source_version to novel_d1b_initializer;
-grant select(workspace_id,collection_id,kind,id,version,payload_fingerprint)
+grant select(workspace_id,collection_id,kind,id,version,payload_fingerprint,business_fingerprint,projection_rule_version)
   on source_ingest_d1b_fixture_v1.task_source_link,source_ingest_d1b_fixture_v1.snapshot_source_link
   to novel_d1b_initializer;
+grant select(quote_record_id,quote_record_version,quote_fingerprint)
+  on source_ingest_d1b_fixture_v1.snapshot_source_link to novel_d1b_initializer;
 
 do $policies$
 declare target text;
 begin
-  foreach target in array array['ingest_receipt','receipt_source_member','source_version',
+  foreach target in array array['ingest_receipt','receipt_source_member','collection','source_version',
     'task_source_link','snapshot_source_link'] loop
     execute format('create policy initialize_replay on source_ingest_d1b_fixture_v1.%I
       for select to novel_d1b_initializer using
@@ -189,6 +192,8 @@ declare
   new_receipt_bytes bigint;
   source_row jsonb;
   receipt_row jsonb;
+  existing source_ingest_d1b_fixture_v1.collection%rowtype;
+  new_source_count integer;
 begin
   permitted := source_ingest_d1b_fixture_v1.lock_authorization(ws,'initialize',null);
   if permitted->>'serviceId' is distinct from expected_service
@@ -205,24 +210,66 @@ begin
   replayed := source_ingest_d1b_initialize_write_v1.replay_initialize(identity,identity_bytes);
   if replayed is not null then return replayed; end if;
 
+  -- The workspace budget lock serializes every initialization writer for this unit.
+  select * into existing from source_ingest_d1b_fixture_v1.collection
+    where workspace_id=ws and unit_id=command->>'unitId';
+  if found then
+    if existing.generation<>1 or existing.head_revision<>1 or existing.member_count<>2
+      or existing.history_count<>0 or existing.unresolved_count<>0
+      or existing.current_seal_id is not null or existing.final_seal_id is not null
+      then raise exception 'STATE_BLOCKED'; end if;
+    if command->'taskReference' is distinct from jsonb_build_object('id',existing.task_id,'version',existing.task_version)
+      or command->'snapshotReference' is distinct from jsonb_build_object('id',existing.snapshot_id,'version',existing.snapshot_version)
+      or command->'executionReference' is distinct from jsonb_build_object('id',existing.execution_id,'version',existing.execution_version)
+      then raise exception 'CONFLICT'; end if;
+  end if;
+
   proof := source_ingest_d1b_verify_v1.verify_initialize_business(command,expected_service,expected_rule);
-  material := source_ingest_d1b_initialize_material_v1.prepare(command,proof,gen_random_uuid()::text,
-    date_trunc('milliseconds',clock_timestamp()));
+  material := source_ingest_d1b_initialize_material_v1.prepare(command,proof,
+    coalesce(existing.collection_id,gen_random_uuid()::text),date_trunc('milliseconds',clock_timestamp()),
+    existing.collection_id is not null);
   package_bytes := (material->>'packageBytes')::bigint;
   new_receipt_bytes := (material->>'receiptCost')::bigint;
+  new_source_count := case when existing.collection_id is null then 2 else 0 end;
 
-  insert into source_ingest_d1b_fixture_v1.collection
-    select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.collection,
-      (material->'collectionBase') || jsonb_build_object('package_bytes',package_bytes));
-  for source_row in select unnest(array[material->'taskSource',material->'snapshotSource']) loop
-    insert into source_ingest_d1b_fixture_v1.source_version
-      select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.source_version,
-        source_row || jsonb_build_object('canonical',chr(92)||'x'||(source_row->>'canonical')));
-  end loop;
-  insert into source_ingest_d1b_fixture_v1.task_source_link
-    select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.task_source_link,material->'taskLink');
-  insert into source_ingest_d1b_fixture_v1.snapshot_source_link
-    select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.snapshot_source_link,material->'snapshotLink');
+  if existing.collection_id is null then
+    insert into source_ingest_d1b_fixture_v1.collection
+      select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.collection,
+        (material->'collectionBase') || jsonb_build_object('package_bytes',package_bytes));
+    for source_row in select unnest(array[material->'taskSource',material->'snapshotSource']) loop
+      insert into source_ingest_d1b_fixture_v1.source_version
+        select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.source_version,
+          source_row || jsonb_build_object('canonical',chr(92)||'x'||(source_row->>'canonical')));
+    end loop;
+    insert into source_ingest_d1b_fixture_v1.task_source_link
+      select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.task_source_link,material->'taskLink');
+    insert into source_ingest_d1b_fixture_v1.snapshot_source_link
+      select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.snapshot_source_link,material->'snapshotLink');
+  else
+    if (to_jsonb(existing)-'package_bytes') is distinct from material->'collectionBase'
+      then raise exception 'CONFLICT'; end if;
+    for source_row in select unnest(array[material->'taskSource',material->'snapshotSource']) loop
+      if not exists(select 1 from source_ingest_d1b_fixture_v1.source_version s
+        where s.workspace_id=ws and s.collection_id=existing.collection_id and s.kind=source_row->>'kind'
+          and s.id=source_row->>'id' and s.version=source_row->>'version'
+          and s.payload_fingerprint=source_row->>'payload_fingerprint' and s.payload=source_row->'payload'
+          and s.canonical=decode(source_row->>'canonical','hex'))
+        then raise exception 'CONFLICT'; end if;
+    end loop;
+    if not exists(select 1 from source_ingest_d1b_fixture_v1.task_source_link t
+      where (t.workspace_id,t.collection_id,t.id,t.version,t.payload_fingerprint)
+      =(ws,existing.collection_id,existing.task_id,existing.task_version,material#>>'{taskLink,payload_fingerprint}')
+        and t.business_fingerprint=existing.task_fingerprint
+        and t.projection_rule_version=material#>>'{taskLink,projection_rule_version}')
+      or not exists(select 1 from source_ingest_d1b_fixture_v1.snapshot_source_link t
+      where (t.workspace_id,t.collection_id,t.id,t.version,t.payload_fingerprint)
+      =(ws,existing.collection_id,existing.snapshot_id,existing.snapshot_version,material#>>'{snapshotLink,payload_fingerprint}')
+        and t.business_fingerprint=existing.snapshot_fingerprint
+        and t.projection_rule_version=material#>>'{snapshotLink,projection_rule_version}'
+        and (t.quote_record_id,t.quote_record_version,t.quote_fingerprint)
+          =(existing.quote_record_id,existing.quote_record_version,existing.quote_fingerprint))
+      then raise exception 'INTEGRITY_CONFLICT'; end if;
+  end if;
   receipt_row := material->'receiptBase';
   insert into source_ingest_d1b_fixture_v1.ingest_receipt
     select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.ingest_receipt,
@@ -235,8 +282,8 @@ begin
     select * from jsonb_populate_record(null::source_ingest_d1b_fixture_v1.receipt_source_member,material->'member1');
   update source_ingest_d1b_fixture_v1.workspace_budget as budget set
     receipt_count=budget.receipt_count+1, receipt_bytes=budget.receipt_bytes+new_receipt_bytes,
-    source_count=budget.source_count+2, source_bytes=budget.source_bytes+package_bytes
-    where workspace_id=ws and budget.receipt_count<1024 and budget.source_count<=4094
+    source_count=budget.source_count+new_source_count, source_bytes=budget.source_bytes+package_bytes
+    where workspace_id=ws and budget.receipt_count<1024 and budget.source_count+new_source_count<=4096
       and budget.receipt_bytes+new_receipt_bytes<=16777216
       and budget.source_bytes+package_bytes<=33554432;
   if not found then raise exception 'CAPACITY'; end if;
@@ -247,7 +294,7 @@ exception
   when raise_exception then
     if sqlerrm='INVALID_CODEC_INPUT' then raise exception 'INVALID_COMMAND'; end if;
     if sqlerrm='CODEC_CAPACITY' then raise exception 'CAPACITY'; end if;
-    if sqlerrm in ('INVALID_COMMAND','CONFLICT','NOT_FOUND','INTEGRITY_CONFLICT','CAPACITY','UNAVAILABLE') then raise; end if;
+    if sqlerrm in ('INVALID_COMMAND','CONFLICT','STATE_BLOCKED','NOT_FOUND','INTEGRITY_CONFLICT','CAPACITY','UNAVAILABLE') then raise; end if;
     raise exception 'UNAVAILABLE';
   when query_canceled or others then raise exception 'UNAVAILABLE';
 end $body$;

@@ -19,7 +19,7 @@ revoke all on schema source_ingest_d1b_initialize_material_v1 from public;
 
 -- The future writer must obtain proof from the private verifier in the same transaction.
 create function source_ingest_d1b_initialize_material_v1.prepare(
-  command jsonb, proof jsonb, collection_id text, committed_at timestamptz
+  command jsonb, proof jsonb, collection_id text, committed_at timestamptz, existing_collection boolean default false
 ) returns jsonb language plpgsql stable security invoker set search_path=pg_catalog,pg_temp as $body$
 declare
   service_id text := proof->>'verifiedByServiceId';
@@ -27,6 +27,8 @@ declare
   identity_bytes bytea;
   receipt jsonb;
   receipt_bytes bytea;
+  receipt_status text := case when existing_collection then 'already_registered' else 'initialized' end;
+  budget jsonb;
   row_scope jsonb := jsonb_build_object('workspace_id',command->>'workspaceId','collection_id',collection_id);
   receipt_scope jsonb := row_scope || jsonb_build_object('ingest_id',command->>'ingestId');
   source_scope jsonb := row_scope || '{"revision":1,"predecessor_version":null,"introduced_generation":1}'::jsonb;
@@ -89,22 +91,24 @@ begin
   receipt := jsonb_build_object('protocolVersion','source-ingest-v1','workspaceId',command->>'workspaceId',
     'ingestId',command->>'ingestId','operation','initialize','producerServiceId',service_id,
     'commandFingerprint',encode(sha256(identity_bytes),'hex'),'collectionId',collection_id,
-    'unitId',command->>'unitId','generationAtCommit',1,'headRevisionAtCommit',1,'status','initialized',
+    'unitId',command->>'unitId','generationAtCommit',1,'headRevisionAtCommit',1,'status',receipt_status,
     'sourceReferences',source_refs,'committedAt',commit_time);
   receipt_bytes := source_ingest_d1b_codec_v1.encode_document('receipt',receipt);
   receipt_base := receipt_scope || jsonb_build_object('protocol_version','source-ingest-v1',
     'operation','initialize','producer_service_id',service_id,'command',identity,
     'command_canonical',encode(identity_bytes,'hex'),'command_fingerprint',receipt->>'commandFingerprint',
     'unit_id',command->>'unitId','generation_at_commit',1,'head_revision_at_commit',1,
-    'status','initialized','committed_at',commit_time,'receipt',receipt,
+    'status',receipt_status,'committed_at',commit_time,'receipt',receipt,
     'receipt_canonical',encode(receipt_bytes,'hex'),'receipt_fingerprint',encode(sha256(receipt_bytes),'hex'));
 
+  budget := source_ingest_d1b_codec_v1.budget_bytes(collection_base,source_rows[1],source_rows[2],
+    link_rows[1],link_rows[2],receipt_base,member_rows[1],member_rows[2]);
+  if existing_collection then budget := budget || '{"packageBytes":0}'::jsonb; end if;
   return jsonb_build_object('collectionBase',collection_base,'taskSource',source_rows[1],
     'snapshotSource',source_rows[2],'taskLink',link_rows[1],'snapshotLink',link_rows[2],
     'receiptBase',receipt_base,'member0',member_rows[1],'member1',member_rows[2])
-    || source_ingest_d1b_codec_v1.budget_bytes(collection_base,source_rows[1],source_rows[2],
-      link_rows[1],link_rows[2],receipt_base,member_rows[1],member_rows[2]);
+    || budget;
 end $body$;
 
-revoke all on function source_ingest_d1b_initialize_material_v1.prepare(jsonb,jsonb,text,timestamptz) from public;
+revoke all on function source_ingest_d1b_initialize_material_v1.prepare(jsonb,jsonb,text,timestamptz,boolean) from public;
 commit;
